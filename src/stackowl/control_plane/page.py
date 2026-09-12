@@ -173,6 +173,35 @@ INDEX_HTML: Final = """<!doctype html>
 
   main { padding:20px; display:flex; flex-direction:column; gap:20px;
          max-width:1180px; margin:0 auto; }
+  .dest { display:flex; flex-direction:column; gap:20px; }
+
+  /* THE RAIL. On a wide screen it sits under the header as a row of machined
+     tabs; on a phone it becomes a fixed bar at the BOTTOM, which is the one
+     layout decision that separates an app from a page — a top tab bar on a
+     6-inch screen is a menu you reach for, a bottom bar is a control you rest
+     on. Five destinations is the ceiling for that pattern and the reason the
+     eight panels were grouped rather than listed. */
+  #rail {
+    display:flex; gap:2px; background:var(--panel); padding:4px;
+    box-shadow:inset 0 0 0 1px var(--line); clip-path:var(--chamfer);
+  }
+  .navbtn {
+    flex:1 1 0; min-width:0; appearance:none; cursor:pointer;
+    background:transparent; border:0; color:var(--fg-mute);
+    font:600 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+    padding:12px 8px 11px; position:relative;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    transition:color .16s var(--ease), background .16s var(--ease);
+  }
+  .navbtn:hover { color:var(--fg-dim); background:var(--sunk); }
+  .navbtn.on { color:var(--fg); background:var(--sunk); }
+  /* The only saturated pixel in the chrome, and it marks WHERE YOU ARE — which
+     is a fact, not a verdict, so it is the brand hue and never a status hue. */
+  .navbtn.on::after {
+    content:""; position:absolute; left:8px; right:8px; top:0; height:2px;
+    background:var(--brand);
+  }
+  .navbtn:focus-visible { outline:2px solid var(--brand); outline-offset:-2px; }
 
   /* A panel is CHAMFERED, not rounded. One 45-degree cut, asymmetric, machined —
      and nothing like the uniform 12px radius with an accent bar that every
@@ -254,6 +283,21 @@ INDEX_HTML: Final = """<!doctype html>
   @media (max-width:640px) {
     :root { --notch:6px; }
     main { padding:14px; gap:14px; }
+    .dest { gap:14px; }
+
+    /* THE BAR GOES TO THE THUMB. `position:fixed` with the safe-area inset is
+       what makes it read as an app chrome rather than a row of links that
+       happened to scroll away; `main` carries the matching bottom padding so
+       the last panel is never sitting under it. */
+    #rail {
+      position:fixed; left:0; right:0; bottom:0; z-index:6;
+      clip-path:none; border-top:1px solid var(--line-2); box-shadow:none;
+      padding:4px 4px calc(env(safe-area-inset-bottom) + 4px);
+      gap:0;
+    }
+    .navbtn { font-size:10px; letter-spacing:.1em; padding:11px 4px 10px; }
+    .navbtn.on::after { left:6px; right:6px; }
+    main { padding-bottom:calc(env(safe-area-inset-bottom) + 76px); }
     section { padding:14px 14px 16px; }
     header { padding:calc(env(safe-area-inset-top) + 12px) 14px 12px; }
     .origin { margin-left:0; order:3; width:100%; text-align:center; }
@@ -312,101 +356,116 @@ INDEX_HTML: Final = """<!doctype html>
        session is kept for this tab only and never written to a cookie.</p>
   </section>
 
-  <section id="health" hidden>
-    <h2>Subsystems</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Subsystem</th><th>Status</th><th>Message</th>
-                 <th>Remedy</th><th>Latency</th></tr></thead>
-      <tbody id="healthrows"></tbody>
-    </table></div>
-  </section>
+  <!-- FIVE DESTINATIONS, BUILT FROM `PANELS` AND NEVER LISTED HERE. Eight
+       panels stacked on one scroll is a document; one destination at a time,
+       with a bar under your thumb, is an app. The buttons are created by the
+       script from each panel's `dest`, so this element is a mount point rather
+       than a sixth enumeration — a nav written in markup would be the
+       hand-written list `PANELS` exists to have deleted. -->
+  <nav id="rail" hidden></nav>
 
-  <section id="schedules" hidden>
-    <h2>Schedules</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Job</th><th>Handler</th><th>Schedule</th><th>State</th>
-                 <th>Next run</th><th>Failures</th><th>Last error</th></tr></thead>
-      <tbody id="schedulerows"></tbody>
-    </table></div>
-  </section>
+  <div class="dest" id="destoverview" hidden>
+    <section id="health" hidden>
+      <h2>Subsystems</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Subsystem</th><th>Status</th><th>Message</th>
+                   <th>Remedy</th><th>Latency</th></tr></thead>
+        <tbody id="healthrows"></tbody>
+      </table></div>
+    </section>
+  </div>
 
-  <section id="config" hidden>
-    <h2>Settings</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Key</th><th>Value</th></tr></thead>
-      <tbody id="configrows"></tbody>
-    </table></div>
-    <p class="note">What is CONFIGURED, not what is effective — a default nobody
-       set does not appear here, exactly as <code>/config list</code> behaves.
-       Credentials read <code>***</code>.</p>
-  </section>
+  <div class="dest" id="destwork" hidden>
+    <section id="tasks" hidden>
+      <h2>Work in flight</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Task</th><th>Owl</th><th>Status</th><th>Blocked</th>
+                   <th>Attempts</th><th>Next run</th><th>Last error</th></tr></thead>
+        <tbody id="taskrows"></tbody>
+      </table></div>
+      <p class="note">UNFINISHED work only — completed and failed rows are history.
+         <strong>Blocked</strong> says why a pending row is not moving:
+         <code>terminal_parent</code> means its parent finished, so the loop will
+         never run it, and that is correct rather than stuck. <code>none</code>
+         means the loop may take it now.</p>
+    </section>
+    <section id="schedules" hidden>
+      <h2>Schedules</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Job</th><th>Handler</th><th>Schedule</th><th>State</th>
+                   <th>Next run</th><th>Failures</th><th>Last error</th></tr></thead>
+        <tbody id="schedulerows"></tbody>
+      </table></div>
+    </section>
+  </div>
 
-  <section id="skills" hidden>
-    <h2>Skill ownership</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Owl</th><th>Skills</th><th>Owned</th></tr></thead>
-      <tbody id="skillrows"></tbody>
-    </table></div>
-    <p class="note">Which owl owns which skill. An owl with none does not appear —
-       ownership is recorded per pair, not per owl.</p>
-  </section>
+  <div class="dest" id="destagents" hidden>
+    <section id="agents" hidden>
+      <h2>Agents</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Agent</th><th>Role</th><th>Tier</th><th>Authority</th>
+                   <th>Skills (card / owned)</th><th>In flight</th><th>Turns/3d</th></tr></thead>
+        <tbody id="agentrows"></tbody>
+      </table></div>
+      <p class="note"><strong>Authority</strong> is computed by the same
+         <code>effective_bounds</code> fold the enforcement path uses.
+         <code>unbounded</code> does not mean "default" — the function's own
+         docstring calls it <em>genuinely unbounded</em>, and the gate then reads
+         it as unrestricted. An unbounded agent may use every tool on the platform.
+         <strong>Skills</strong> shows two numbers because there are two answers:
+         what the agent's card declares, and what the ownership table records. They
+         disagree today, and merging them would hide that.</p>
+    </section>
+    <section id="interactions" hidden>
+      <h2>How the agents interact</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>When</th><th>Kind</th><th>From</th><th>To</th><th>Outcome</th><th>What</th></tr></thead>
+        <tbody id="edgerows"></tbody>
+      </table></div>
+      <p class="note" id="edgenote"></p>
+    </section>
+  </div>
 
-  <section id="interactions" hidden>
-    <h2>How the agents interact</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>When</th><th>Kind</th><th>From</th><th>To</th><th>Outcome</th><th>What</th></tr></thead>
-      <tbody id="edgerows"></tbody>
-    </table></div>
-    <p class="note" id="edgenote"></p>
-  </section>
+  <div class="dest" id="destmemory" hidden>
+    <section id="memory" hidden>
+      <h2>Memory</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>About</th><th>Remembered</th><th>Durability</th></tr></thead>
+        <tbody id="curatedrows"></tbody>
+      </table></div>
+      <p class="note">What the platform has been told to remember, from
+         <code>~/.stackowl/memory</code> — the same notes <code>/memory search</code>
+         reads. <code>user</code> is about you; the rest are per-owl working notes.</p>
+      <h2>Learned from doing the work</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Kind</th><th>Lesson</th><th>When</th></tr></thead>
+        <tbody id="lessonrows"></tbody>
+      </table></div>
+      <p class="note" id="memorynote"></p>
+    </section>
+    <section id="skills" hidden>
+      <h2>Skill ownership</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Owl</th><th>Skills</th><th>Owned</th></tr></thead>
+        <tbody id="skillrows"></tbody>
+      </table></div>
+      <p class="note">Which owl owns which skill. An owl with none does not appear —
+         ownership is recorded per pair, not per owl.</p>
+    </section>
+  </div>
 
-  <section id="memory" hidden>
-    <h2>Memory</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>About</th><th>Remembered</th><th>Durability</th></tr></thead>
-      <tbody id="curatedrows"></tbody>
-    </table></div>
-    <p class="note">What the platform has been told to remember, from
-       <code>~/.stackowl/memory</code> — the same notes <code>/memory search</code>
-       reads. <code>user</code> is about you; the rest are per-owl working notes.</p>
-    <h2>Learned from doing the work</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Kind</th><th>Lesson</th><th>When</th></tr></thead>
-      <tbody id="lessonrows"></tbody>
-    </table></div>
-    <p class="note" id="memorynote"></p>
-  </section>
-
-  <section id="agents" hidden>
-    <h2>Agents</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Agent</th><th>Role</th><th>Tier</th><th>Authority</th>
-                 <th>Skills (card / owned)</th><th>In flight</th><th>Turns/3d</th></tr></thead>
-      <tbody id="agentrows"></tbody>
-    </table></div>
-    <p class="note"><strong>Authority</strong> is computed by the same
-       <code>effective_bounds</code> fold the enforcement path uses.
-       <code>unbounded</code> does not mean "default" — the function's own
-       docstring calls it <em>genuinely unbounded</em>, and the gate then reads
-       it as unrestricted. An unbounded agent may use every tool on the platform.
-       <strong>Skills</strong> shows two numbers because there are two answers:
-       what the agent's card declares, and what the ownership table records. They
-       disagree today, and merging them would hide that.</p>
-  </section>
-
-  <section id="tasks" hidden>
-    <h2>Work in flight</h2>
-    <div class="wrap"><table>
-      <thead><tr><th>Task</th><th>Owl</th><th>Status</th><th>Blocked</th>
-                 <th>Attempts</th><th>Next run</th><th>Last error</th></tr></thead>
-      <tbody id="taskrows"></tbody>
-    </table></div>
-    <p class="note">UNFINISHED work only — completed and failed rows are history.
-       <strong>Blocked</strong> says why a pending row is not moving:
-       <code>terminal_parent</code> means its parent finished, so the loop will
-       never run it, and that is correct rather than stuck. <code>none</code>
-       means the loop may take it now.</p>
-  </section>
+  <div class="dest" id="destsystem" hidden>
+    <section id="config" hidden>
+      <h2>Settings</h2>
+      <div class="wrap"><table>
+        <thead><tr><th>Key</th><th>Value</th></tr></thead>
+        <tbody id="configrows"></tbody>
+      </table></div>
+      <p class="note">What is CONFIGURED, not what is effective — a default nobody
+         set does not appear here, exactly as <code>/config list</code> behaves.
+         Credentials read <code>***</code>.</p>
+    </section>
+  </div>
 
   <p class="note" id="status"></p>
 </main>
@@ -552,16 +611,61 @@ INDEX_HTML: Final = """<!doctype html>
   // four tables vanished behind `HTTP 503`, which reads as a dead platform
   // rather than as one unwired subsystem. It gets strictly worse as A05.5/6/7
   // add routes, so the shape is fixed here rather than the instance.
+  // `dest` IS THE FIFTH FIELD AND IT IS DELIBERATELY A LABEL, not an id with a
+  // label beside it. A `DESTINATIONS` array would be a second enumeration, and
+  // this page has already paid twice for one: the destination's element id is
+  // DERIVED (`"dest" + lowercase`), its button text IS this string, and the
+  // order of the rail is the order these first appear. Nothing to keep in sync.
   var PANELS = [
-    { id: "health",    path: "/api/v1/health",    render: renderHealth },
-    { id: "schedules", path: "/api/v1/schedules", render: renderSchedules },
-    { id: "config",    path: "/api/v1/config",    render: renderConfig },
-    { id: "skills",    path: "/api/v1/skills",    render: renderSkills },
-    { id: "tasks",     path: "/api/v1/tasks",     render: renderTasks },
-    { id: "agents",    path: "/api/v1/agents",    render: renderAgents },
-    { id: "memory",    path: "/api/v1/memory",    render: renderMemory },
-    { id: "interactions", path: "/api/v1/interactions", render: renderInteractions }
+    { id: "health",       path: "/api/v1/health",       render: renderHealth,       dest: "Overview" },
+    { id: "tasks",        path: "/api/v1/tasks",        render: renderTasks,        dest: "Work" },
+    { id: "schedules",    path: "/api/v1/schedules",    render: renderSchedules,    dest: "Work" },
+    { id: "agents",       path: "/api/v1/agents",       render: renderAgents,       dest: "Agents" },
+    { id: "interactions", path: "/api/v1/interactions", render: renderInteractions, dest: "Agents" },
+    { id: "memory",       path: "/api/v1/memory",       render: renderMemory,       dest: "Memory" },
+    { id: "skills",       path: "/api/v1/skills",       render: renderSkills,       dest: "Memory" },
+    { id: "config",       path: "/api/v1/config",       render: renderConfig,       dest: "System" }
   ];
+
+  function destId(label) { return "dest" + label.toLowerCase(); }
+
+  //: The destinations, in the order `PANELS` first names them. Computed, so the
+  //: only way to add one is to give a panel a `dest` nothing else uses.
+  function destinations() {
+    var seen = [];
+    PANELS.forEach(function (p) {
+      if (seen.indexOf(p.dest) === -1) { seen.push(p.dest); }
+    });
+    return seen;
+  }
+
+  function showDest(label) {
+    destinations().forEach(function (d) {
+      var el = $(destId(d));
+      if (el) { el.hidden = d !== label; }
+    });
+    NAVBTNS.forEach(function (b) {
+      b.className = b._dest === label ? "navbtn on" : "navbtn";
+    });
+    CURRENT = label;
+  }
+
+  var NAVBTNS = [];
+  var CURRENT = null;
+
+  function buildRail() {
+    if (NAVBTNS.length) { return; }
+    var rail = $("rail");
+    destinations().forEach(function (d) {
+      var b = document.createElement("button");
+      b.className = "navbtn";
+      b.textContent = d;
+      b._dest = d;
+      b.addEventListener("click", function () { showDest(d); });
+      rail.appendChild(b);
+      NAVBTNS.push(b);
+    });
+  }
 
   function renderInteractions(payload) {
     var body = $("edgerows");
@@ -738,10 +842,27 @@ INDEX_HTML: Final = """<!doctype html>
         });
         var ok = results.filter(function (r) { return r.status === "fulfilled"; });
         if (!ok.length) { say(failed.join(" · ")); return; }
-        var sched = results[1].status === "fulfilled"
-          ? (results[1].value.schedules || []).length : null;
-        var cfg = results[2].status === "fulfilled"
-          ? (results[2].value.settings || []).length : null;
+        // THE RAIL APPEARS ONLY WHEN THERE IS SOMETHING TO NAVIGATE. Building it
+        // before sign-in would offer five destinations over eight empty panels.
+        buildRail();
+        $("rail").hidden = false;
+        showDest(CURRENT || destinations()[0]);
+        // BY ID, NOT BY POSITION — and the position was load-bearing. These two
+        // lines read `results[1]` and `results[2]`, which are `schedules` and
+        // `config` only while `PANELS` is in the order it happened to be
+        // written in. Grouping the panels into destinations REORDERS that
+        // array, and the status line would then have reported the config
+        // payload's `schedules` (always absent, so `0 schedules`) with nothing
+        // failing: the harness answers every route with a payload carrying
+        // every shape, so both readings return 0 and the swap is invisible.
+        // Array order was a sixth hand-written enumeration wearing no list.
+        function countOf(panelId, field) {
+          var i = PANELS.findIndex(function (p) { return p.id === panelId; });
+          if (i < 0 || results[i].status !== "fulfilled") { return null; }
+          return (results[i].value[field] || []).length;
+        }
+        var sched = countOf("schedules", "schedules");
+        var cfg = countOf("config", "settings");
         var parts = [];
         if (sched !== null) { parts.push(sched + " schedule" + (sched === 1 ? "" : "s")); }
         if (cfg !== null) { parts.push(cfg + " setting" + (cfg === 1 ? "" : "s")); }
@@ -797,6 +918,16 @@ INDEX_HTML: Final = """<!doctype html>
     // A05.2 remembered one of them, which is why the enumeration is gone rather
     // than corrected.
     PANELS.forEach(function (p) { $(p.id).hidden = true; });
+    // AND THE SHELL AROUND THEM. Hiding eight panels while leaving five
+    // destination wrappers and a rail on screen would answer "forget" with an
+    // empty app rather than a signed-out one — and a wrapper left visible is
+    // the same disclosure shape as the settings table that survived forget
+    // before `PANELS` became the single enumeration.
+    destinations().forEach(function (d) {
+      var el = $(destId(d));
+      if (el) { el.hidden = true; }
+    });
+    $("rail").hidden = true;
     say("token forgotten");
   });
 

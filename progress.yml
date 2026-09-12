@@ -51942,7 +51942,8 @@ items:
       No vendor or competitor names in `src/`: research may name them, the source may not.
     depends_on: ['A05.7']
     blocks: []
-    stages: {brainstorm: done, architect: done, implement: partial, cleanup: done, test: done, validate: partial, document: partial}
+    doc: docs/reference-mapping/designs/A05.10.md
+    stages: {brainstorm: done, architect: done, implement: partial, cleanup: done, test: done, validate: partial, document: done}
     brainstorm_2026_09_12_BY_BMAD_PARTY_as_he_asked: >-
       Four agents in parallel — UX, research, architecture, visual identity. **TWO of
       them independently found a LIVE BUG** while reading the page (the dead
@@ -52023,6 +52024,60 @@ items:
       direction. Worth stating because it changes what step B should NOT conclude: a
       design built on 17 edges may be designing around a measurement artefact rather than
       a small graph. The edge count is a floor, not the population.
+    implement_step_B1_2026_09_12_five_destinations_and_the_order_that_was_load_bearing: >-
+      THE SHELL. Eight panels on one scroll is a document; one destination at a time with a
+      bar under your thumb is an app, and that is the single change the operator's word
+      "website" was about. Five destinations — Overview / Work / Agents / Memory / System —
+      over the same eight panels, `position:fixed` at the BOTTOM under 640px with the
+      safe-area inset, a tab rail under the header above it.
+      **AND IT ADDED NO ENUMERATION.** `dest` is a fifth field on `PANELS` and it is a
+      LABEL, not an id with a label beside it: the element id is DERIVED (`"dest" +
+      lowercase`), the button text IS the string, and the rail's order is the order the
+      labels first appear. A `DESTINATIONS` array would have been a sixth hand-written list
+      on a page that has already paid twice for one — and `test_the_panel_list_is_written_ONCE`
+      would have caught it anyway, since its regex matches every `{ id: "…"` in the script.
+      MEASURED before and after: page 32,280 -> 38,776 bytes; CSS 8,619 -> 10,894; media
+      queries UNCHANGED at 3 (the phone rules went inside the existing 640px block);
+      destination wrappers 0 -> 5; sections, tables and inline SVG all unchanged.
+    THE_ORDER_OF_PANELS_WAS_A_SIXTH_ENUMERATION_WEARING_NO_LIST: >-
+      The item's best catch, and grouping the panels is what exposed it. `load()` built the
+      status line from `results[1]` and `results[2]` — a POSITIONAL index into `PANELS`,
+      correct only while that array stayed in the order it was first typed in. Grouping into
+      destinations REORDERS it, so the status line would have reported the config payload's
+      `schedules`.
+      **NO TEST COULD HAVE SEEN IT, and that is the part worth keeping.** The executing
+      harness answered EVERY route with one shared payload carrying every shape, so the
+      positional and the by-id readings produce the byte-identical string
+      `0 schedules · 0 settings` — MEASURED by running both against the old fixture. A
+      fixture that cannot show the bug proves nothing. The harness now answers `/schedules`
+      with three and `/config` with two, and only then does reverting to the positional read
+      fail anything. Read by id now, via `PANELS.findIndex`.
+    the_two_kinds_of_hidden_are_why_four_behavioural_guards_needed_NO_edit: >-
+      A destination wrapper's `hidden` means "not the screen you are on"; a section's
+      `hidden` means "this panel has no data". Keeping them separate is what let
+      `test_a_healthy_platform_renders_every_section` go on asserting that a healthy platform
+      renders ALL EIGHT — under a real browser the wrapper hides its children, under the stub
+      DOM it does not, and the property each guard was written to test is unchanged. The
+      alternative — toggling `section.hidden` for navigation — would have made every one of
+      those four guards assert something weaker while still passing, which is the worst
+      possible outcome for a guard.
+    the_guards_and_what_each_mutation_proved: >-
+      Seven new tripwires in the one file that EXECUTES the page, with its single harness
+      extended rather than copied. MUTATION-PROVEN, each restored from a file copy and
+      re-run green: a panel pointing at a destination with no wrapper -> bijection fails; a
+      wrapper deleted from markup -> bijection fails; `showDest` revealing everything -> the
+      one-destination test fails; the positional read restored -> the by-id test fails; the
+      rail listed in markup -> the mount-point test fails; a second `<script>` block -> ten
+      of twelve fail; forget leaving the rail up -> the sign-out test fails.
+      **The bijection is the one no other guard could ever replace**: a panel whose `dest`
+      has no wrapper renders into a container the rail never shows, and every existing guard
+      would still report it visible, because the stub DOM has no parent/child hiding. It is
+      silent by construction and a test is the only place it can be caught.
+    and_the_NON_GREEDY_script_regex_is_no_longer_a_named_hazard: >-
+      A05.10's own record listed it as outstanding: `re.search(r"<script>(.*?)</script>")`
+      would hand the executing guard a FRAGMENT if a second block ever appeared, and every
+      test in that file would go green having run nothing. One assertion —
+      `INDEX_HTML.count("<script>") == 1` — retires it. Naming a hazard is not closing one.
     what_step_A_deliberately_does_NOT_do: >-
       No JS restructure, so every behavioural tripwire keeps testing what it was written
       to test. Still outstanding and named rather than implied: the five-destination
@@ -52031,6 +52086,28 @@ items:
       first paint, and no verdict**), and the page's own going-blind mode — the
       `<script>` extraction regex is NON-GREEDY, so a second `<script>` block would make
       the one executing guard silently check a fragment.
+    validated_LIVE_2026_09_12_11_45_after_start_sh_step_B1: >-
+      Restarted; core up 11:45:26Z, control plane listening. Checked against the SERVED
+      page fetched over the network (`curl http://127.0.0.1:8787/`, 38,836 bytes), never
+      read off disk: the five destination wrappers served are exactly the five `dest`
+      labels `PANELS` declares — `agents, memory, overview, system, work`, BIJECTION True
+      in both directions; the rail is served as an EMPTY mount point; `<script>` blocks
+      **1**; the `position:fixed … bottom:0` bottom-bar rule is present; external
+      references **none**. `GET /` **200 text/html; charset=utf-8**.
+      Reachable on every interface this box holds — 127.0.0.1, 192.168.1.184 (wifi),
+      192.168.1.160 (ethernet), 172.17.0.1, 10.10.100.15 — all **200**.
+      STILL PARTIAL, and the closing_check says which half: record rows and the synthesis
+      layer are not built. The shell is.
+    and_the_URL_I_HAND_HIM_DECAYS_which_is_measured_not_anecdotal: >-
+      The wifi address moved THREE TIMES in five hours on 2026-09-12 — `192.168.1.176` at
+      07:13, `.181` at 10:41, `.184` at 11:46 — so a URL written into a report is wrong by
+      the next loop, and I gave him a stale one once already. The ethernet address
+      `192.168.1.160` answered 200 on every check today and is the one to quote.
+      THE CAUSE IS THAT NOTHING ANNOUNCES ITS OWN REACHABLE URLS. `_warn_if_unreachable`
+      logs WHETHER the bind can serve anyone but this machine (`reachable_off_this_machine`)
+      and never WHERE — so the one line an operator would grep for the address does not
+      carry it. Not built here: this item is the page, and that is the server's boot line.
+      Named rather than filed, because naming a gap is not closing it.
     validated_LIVE_2026_09_12_07_13_after_start_sh: >-
       Restarted and checked against the RUNNING SERVER over the network from
       `http://192.168.1.176:8787`, not read off disk. `/` **200** `text/html` 31,807b;
@@ -52043,8 +52120,17 @@ items:
       `prefers-reduced-motion`, the inline mark — and **`theme-color` exactly TWICE**,
       one per colour scheme, with four `clip-path` rules carrying the chamfer.
       `gap_check` independently flipped **HOLDS -> REFUTED**.
+    the_closing_check_was_asking_for_the_design_this_item_REFUTED: >-
+      It read CLOSEABLE on `data-label` — the `td::before{content:attr(data-label)}`
+      responsive-table trick that this item's own brainstorm measured and REJECTED (13
+      columns, values to 262 characters, ~800px for one agent row on a phone). So the
+      check could only ever have closed on the design the record says NOT to build, and
+      would have stayed OPEN forever if step B were built correctly. Same shape as an
+      escalation whose premise mirrored a field that later changed: the check was derived
+      from a PROPOSAL, and nothing re-read it when the proposal was refuted. It asks for
+      the record-row class and the synthesis layer now, which are what is actually left.
     closing_check: >-
-      uv run python -c "from stackowl.control_plane.page import INDEX_HTML as H; import re; print('CLOSEABLE the shell renders records rather than tables' if 'data-label' in H or 'recordrow' in H else 'OPEN step B (record rows, five destinations, synthesis layer) is not built')" 2>/dev/null | tail -1
+      uv run python -c "from stackowl.control_plane.page import INDEX_HTML as H; missing=[n for n,t in (('record rows','class=\"record\"'),('synthesis','class=\"rollup\"')) if t not in H]; print('OPEN step B: '+', '.join(missing)+' not built — the five-destination shell IS' if missing else 'CLOSEABLE the shell renders records with a verdict above them')" 2>/dev/null | tail -1
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A07.1

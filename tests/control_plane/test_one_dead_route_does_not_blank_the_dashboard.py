@@ -119,10 +119,20 @@ const SKILLS_STATUS = Number(process.argv[3]);
 const PROBED = "/api/v1/skills";
 const EMPTY = { subsystems: [], schedules: [], settings: [], owls: [], tasks: [],
                 wired: true };
+// DISTINGUISHABLE PER ROUTE, and that is the whole point of these three lines.
+// Every route used to answer the SAME empty payload, so the status line could
+// read `results[1]` and `results[2]` — a POSITIONAL index into `PANELS` — and no
+// assertion here could tell that from reading the right panels: both give 0.
+// Grouping the panels into destinations reorders that array, so the positional
+// read would have reported the config payload's schedules. A fixture that cannot
+// show the bug proves nothing; these counts are what make the swap visible.
+const COUNTS = { "/api/v1/schedules": { schedules: [1, 2, 3] },
+                 "/api/v1/config": { settings: [1, 2] } };
 global.fetch = (path) => {
   const status = path === PROBED ? SKILLS_STATUS : 200;
   const body = path === PROBED && status !== 200
-    ? Object.assign({}, EMPTY, { wired: false }) : EMPTY;
+    ? Object.assign({}, EMPTY, { wired: false })
+    : Object.assign({}, EMPTY, COUNTS[path] || {});
   return Promise.resolve({
     status, ok: status >= 200 && status < 300,
     json: () => Promise.resolve(body),
@@ -135,11 +145,32 @@ eval(fs.readFileSync(process.argv[2], "utf8"));
 // the test, which derives it from `_SECTIONS`.
 const NAMES = JSON.parse(process.argv[4]);
 const visible = () => NAMES.filter((id) => els[id] && els[id].hidden === false);
+// The DESTINATION wrappers, read the same way the sections are: by asking the
+// DOM what ended up visible, never by trusting what the script says it did.
+const shown = () => Object.keys(els)
+  .filter((k) => k.startsWith("dest") && els[k].hidden === false).sort();
+const buttons = () => (els.rail ? els.rail.children : []);
+const labels = () => buttons().map((b) => b.textContent);
+const active = () => buttons().filter((b) => /\bon\b/.test(b.className))
+                              .map((b) => b.textContent);
 setTimeout(() => {
   const after_load = visible();
+  const nav = labels();
+  const on_load = { shown: shown(), active: active() };
+  // Drive EVERY destination through its own button, not just one — a rail whose
+  // last tab works and whose third does not is exactly the defect a single
+  // click cannot see.
+  const per_destination = [];
+  buttons().forEach((b) => {
+    b._listeners.click();
+    per_destination.push({ clicked: b.textContent, shown: shown(), active: active() });
+  });
+  const status = els.status.textContent;
   els.forget._listeners.click();
   console.log(JSON.stringify({
-    after_load, status: els.status.textContent, after_forget: visible(),
+    after_load, nav, on_load, per_destination, status,
+    after_forget: visible(), shown_after_forget: shown(),
+    rail_hidden_after_forget: els.rail ? els.rail.hidden : null,
   }));
 }, 50);
 """
@@ -236,6 +267,135 @@ def test_a_RETURNING_tab_resumes_without_signing_in_again(tmp_path: Path) -> Non
     assert out["after_load"] == list(_SECTIONS), (
         "a tab holding a stored session did not resume — the page reached for an "
         f"element the markup does not declare: {out}"
+    )
+
+
+#: Every destination wrapper the MARKUP declares. Derived, like `_SECTIONS`, and
+#: for the same reason: a list written here would be the third copy of an
+#: enumeration this page deleted twice.
+_DEST_WRAPPERS = set(re.findall(r'<div class="dest" id="dest(\w+)" hidden>', INDEX_HTML))
+
+#: The destinations `PANELS` names, lower-cased to match the derived element id.
+#: Read off the SCRIPT, so the two halves of the bijection have separate sources.
+_PANEL_DESTS = {d.lower() for d in re.findall(r'dest:\s*"(\w+)"', INDEX_HTML)}
+
+
+@pytest.mark.tripwire
+def test_the_page_has_exactly_ONE_script_block() -> None:
+    """The extraction above is NON-GREEDY, so a second block would silently hand
+    this whole file a FRAGMENT to execute — every test here would still pass, on
+    a page nobody had run. A05.10's own record named this as an outstanding
+    hazard rather than a defect; it costs one assertion to stop being either.
+    """
+    assert INDEX_HTML.count("<script>") == 1, (
+        f"{INDEX_HTML.count('<script>')} <script> blocks — the non-greedy "
+        "extraction in `_run` would execute only the first, and this file would "
+        "go green having tested a fragment"
+    )
+    assert INDEX_HTML.count("</script>") == 1
+
+
+@pytest.mark.tripwire
+def test_the_destinations_are_a_BIJECTION_with_the_panels() -> None:
+    """The rail is built from `PANELS`; the wrappers it toggles are markup. That
+    is two halves that can drift, so it is pinned exactly like the
+    `<section id=…>` / `PANELS` bijection directly above.
+
+    A wrapper with no panel is a destination that renders an empty screen; a
+    panel whose `dest` has no wrapper is a panel NOBODY CAN EVER SEE — it would
+    render into a container the rail never shows, and `after_load` would still
+    report it visible, because the stub has no parent/child hiding. That second
+    direction is the one no other test in this file can catch.
+    """
+    assert _PANEL_DESTS, "no panel declares a `dest` — the rail has nothing to build"
+    assert _DEST_WRAPPERS == _PANEL_DESTS, (
+        f"markup declares {sorted(_DEST_WRAPPERS)} and PANELS names "
+        f"{sorted(_PANEL_DESTS)} — a panel in no wrapper is unreachable"
+    )
+
+
+@pytest.mark.tripwire
+def test_the_rail_is_not_written_in_the_MARKUP() -> None:
+    """The mount point is empty by construction. A nav authored in HTML is the
+    sixth hand-written enumeration on this page, and the five before it all
+    went stale."""
+    match = re.search(r'<nav id="rail"[^>]*>(.*?)</nav>', INDEX_HTML, re.S)
+    assert match, "the rail mount point is gone — the shell has no navigation"
+    assert not match.group(1).strip(), (
+        f"the rail lists its destinations in markup: {match.group(1)[:200]!r}"
+    )
+
+
+@pytest.mark.tripwire
+def test_ONE_destination_is_shown_at_a_time(tmp_path: Path) -> None:
+    """The difference between an app and a document, stated as a property.
+
+    Eight panels on one scroll is the wireframe the operator rejected. This
+    asserts both halves: the first destination is showing when the data lands,
+    and the rail agrees with the DOM about which one it is.
+    """
+    out = _run(tmp_path, 200)
+
+    assert out["nav"], "the rail built no destinations"
+    assert len(out["on_load"]["shown"]) == 1, (
+        f"after load the page shows {out['on_load']['shown']} destinations at "
+        f"once — that is the stacked document, not an app shell: {out}"
+    )
+    assert out["on_load"]["shown"] == ["dest" + out["nav"][0].lower()], out
+    assert out["on_load"]["active"] == [out["nav"][0]], (
+        f"the rail's marked tab is not the destination on screen: {out}"
+    )
+
+
+@pytest.mark.tripwire
+def test_EVERY_destination_opens_from_its_own_button(tmp_path: Path) -> None:
+    """Driven through every button, because a rail is only as good as its
+    worst tab and one click cannot see the others."""
+    out = _run(tmp_path, 200)
+
+    assert len(out["per_destination"]) == len(out["nav"]), out
+    for step in out["per_destination"]:
+        assert step["shown"] == ["dest" + step["clicked"].lower()], (
+            f"clicking {step['clicked']!r} showed {step['shown']}: {out}"
+        )
+        assert step["active"] == [step["clicked"]], (
+            f"clicking {step['clicked']!r} left the rail marking "
+            f"{step['active']}: {out}"
+        )
+
+
+@pytest.mark.tripwire
+def test_forgetting_the_token_takes_the_SHELL_too(tmp_path: Path) -> None:
+    """Hiding eight panels while leaving five wrappers and a rail on screen
+    answers "forget" with an empty app rather than a signed-out one."""
+    out = _run(tmp_path, 200)
+
+    assert out["shown_after_forget"] == [], (
+        f"these destination wrappers survived 'forget token': "
+        f"{out['shown_after_forget']}"
+    )
+    assert out["rail_hidden_after_forget"] is True, (
+        "the navigation rail is still on screen after the operator signed out"
+    )
+
+
+@pytest.mark.tripwire
+def test_the_status_line_reads_its_counts_BY_ID(tmp_path: Path) -> None:
+    """`results[1]` and `results[2]` were an index into `PANELS`.
+
+    That was correct only while the array stayed in the order it was first
+    written in, and grouping the panels into destinations reordered it. The
+    harness now answers `/schedules` with three and `/config` with two, so a
+    positional read reports the wrong one instead of an identical zero — which
+    is the only reason this can be asserted at all.
+    """
+    out = _run(tmp_path, 200)
+
+    assert "3 schedules" in str(out["status"]), (
+        f"the status line did not read the schedules payload: {out['status']!r}"
+    )
+    assert "2 settings" in str(out["status"]), (
+        f"the status line did not read the config payload: {out['status']!r}"
     )
 
 
