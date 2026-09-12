@@ -15805,6 +15805,28 @@ current:
         print('HOLDS still fails open' if 'if not expected_token:' in s and 'return True' in s.split('if not expected_token:')[1][:40] else 'EXPIRED branch changed')
         "
     ESC_172_does_the_control_plane_bind_where_a_customer_can_reach_it:
+      ANSWERED_2026_09_12_by_Bakir_EVERY_INTERFACE_BY_DEFAULT: >-
+        His words: *"Make it always available in all interfaces by default in platform.
+        So when customer runs it it will work out of box."* So `bind_address` defaults to
+        `0.0.0.0`, the panel's Ease-of-use dissent is the one that shipped, and its
+        argument was the right one: loopback is not fail-closed, it is fail-ABSENT, and
+        `webhook.enabled` has bound a port **873 times and served zero requests** as the
+        measurement of what that costs. `premise_check` reads the live default, so it
+        prints EXPIRED on its own the moment this lands — no edit to the check.
+        **AND FLIPPING THE DEFAULT ALONE WOULD HAVE BROKEN THE DASHBOARD COMPLETELY,
+        which is the finding.** `check_origin` built its expected host from
+        `f"{bind_address}:{port}"`. On loopback that is exactly the string a browser
+        sends, so it was correct and invisible. `0.0.0.0:8787` is a string NO browser
+        ever sends: a person opening `http://192.168.1.50:8787` sends that as their Host,
+        the comparison fails, and EVERY request is refused — while every existing
+        loopback test stays green. A configuration default and a security check were
+        coupled through a literal, and only widening the bind could reveal it. The check
+        now compares the Origin against the REQUEST'S OWN Host, which is what the rule
+        always meant and is bind-independent.
+        THE COMPARISON ALSO BECAME EXACT. It ended `origin.endswith(expected_host)`, so
+        `http://evil-127.0.0.1:8787` satisfied it — hard to exploit, and still a suffix
+        test standing in for an equality test, which is a weaker accident on a LAN
+        address than it was on loopback.
       question: >-
         A05.1's control plane must choose a bind address, and the panel SPLIT on it.
         Loopback (`127.0.0.1`) means the dashboard can only be opened from the machine
@@ -20766,6 +20788,65 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-312
+    title: The dashboard ships reachable — and the brake DEBT-310 named arrives with it
+    raised: 2026-09-12
+    source: >-
+      Operator, directly, answering ESC-172: "Make it always available in all interfaces
+      by default in platform. So when customer runs it it will work out of box."
+    what_shipped: >-
+      `control_plane.bind_address` defaults to `0.0.0.0`. A customer who clones this repo
+      and runs it opens the dashboard from their own browser with no configuration —
+      which is the "fix the PLATFORM, never this setup" rule applied to a default: "set
+      bind_address in your yaml" is a setup answer and was never the fix.
+    the_origin_check_was_COUPLED_to_the_bind_and_would_have_refused_everyone: >-
+      THE HALF WORTH READING. `check_origin` took an `expected_host` built as
+      `f"{bind_address}:{port}"`. On loopback that is exactly what a browser sends, so it
+      was right and nothing could see the coupling. `0.0.0.0:8787` is a string no browser
+      ever sends — a person at `http://192.168.1.50:8787` sends THAT as their Host — so
+      the widened default alone would have 401'd every request while every loopback test
+      stayed green. The rule was always "the Origin the browser reports must match the
+      host it actually connected to", and the REQUEST carries both; the config never
+      needed to be in it. Nothing is lost: a browser cannot be made to send a forged Host
+      to a different server, which is the only thing this check defends against.
+      AND THE COMPARISON IS EXACT NOW, not a suffix: `origin.endswith(expected_host)`
+      admitted `http://evil-127.0.0.1:8787`. Hard to exploit and still the wrong test.
+    the_brake_arrives_WITH_the_widening_because_that_was_the_written_commitment: >-
+      DEBT-310's own record said of the missing login rate limit: *"It becomes real the
+      moment ESC-172 is answered 'widen the bind', and it is named here so that answer
+      carries this with it rather than discovering it afterwards."* It was answered, so
+      `control_plane/login_guard.py` ships in the same change — 10 failures per source
+      per 300s, then 429.
+      **IT IS NOT `providers/rate_limiter.py`, and that is a decision rather than an
+      oversight.** That class is a token bucket whose `acquire()` SLEEPS, to pace calls
+      WE make outbound. Pointing it at inbound requests inverts its purpose and is
+      actively harmful: a sleeping handler holds a worker, so an attacker who can make
+      the server wait has been handed an amplifier instead of a brake. "Find the existing
+      loop and extend it" asks whether the existing thing does this job — this one does
+      the opposite job.
+      **THE COUNTER IS BOUNDED BECAUSE ITS KEY IS ATTACKER-CONTROLLED** (2,048 sources,
+      least-recently-seen evicted): an uncapped map keyed by source address is the denial
+      of service it exists to prevent. The cost is written down rather than discovered —
+      someone with 2,049 addresses can push out their own earlier failures, and someone
+      with 2,049 addresses is not being stopped by an attempt counter anyway.
+      AND WHAT IT IS WORTH IS STATED: against the shipped `admin`/`admin` it is worth
+      NOTHING, because the first guess wins. It protects a password the operator has
+      CHANGED. The default is defended by being announced — WARNING at every boot, and a
+      banner on the page after every sign-in.
+    a_two_copies_of_one_rule_defect_found_in_the_same_path_and_fixed: >-
+      `_warn_if_default_credentials` computed `loopback` as a three-element string
+      compare (`in ("127.0.0.1", "localhost", "::1")`) while `is_loopback()` sat two
+      functions away in the same package. The copy here was the WEAKER one: it misses
+      `127.0.1.1` and the IPv4-mapped `::ffff:127.0.0.1`, both real bind addresses, and
+      would have reported each of them as network-reachable — inverting the very field it
+      feeds. It asks the predicate now.
+    residual_named_rather_than_hidden: >-
+      A fresh install is now reachable on the LAN with `admin`/`admin` until the operator
+      changes it. That is the operator's explicit instruction and it is not re-litigated;
+      it is stated here so the next reader knows it was a decision rather than an
+      accident. The platform announces it at WARNING on every boot and on the page after
+      every sign-in, and the login route now refuses a guesser. Plaintext HTTP over the
+      LAN is unchanged and remains the open half of the panel's original dissent.
   - id: DEBT-311
     title: The example config emitted a credential VALUE, and the guard held by accident
     raised: 2026-09-12
@@ -51354,12 +51435,91 @@ items:
       Delegation, parliament and owl-to-owl messages happen inside mailboxes
       nobody can watch, so multi-agent behaviour can only be reconstructed from
       logs after the fact.
+    gap_was_WRONG_IN_THREE_OF_ITS_FOUR_CLAUSES_2026_09_12: >-
+      Re-derived from the tree and the live database before anything was built, which is
+      the rule seven earlier wrong gaps in this series paid for. The corrected sentence:
+      **the edges ARE durably recorded, in two stores, and no command and no
+      control-plane route has ever read either.**
+      `tasks.parent_task_id` holds **52** edges, newest 2026-09-11 — and NOT ONE of them
+      is cross-owl. Every one is an owl decomposing its OWN work (secretary->secretary
+      x46, sysdesign, headhunter), and all six rows carrying `parent_owl` are
+      self-delegations that FAILED. `side_effect_ledger` with `tool_name='delegate_task'`
+      holds **17** rows whose `result_blob` carries `to_owl` and an outcome — 2 `ok` (to
+      archivist), 6 refused `cycle`, 3 timeouts, the rest without a target.
+      "ONLY FROM LOGS" IS TRUE OF THE RECENT ONES ONLY. The retained logs hold **SEVEN**
+      successful cross-owl delegations (`delegate_task.execute: exit`, `status: ok`),
+      newest **2026-09-11**; the durable ledger holds TWO. The three on 2026-09-11 each
+      logged `delegate_task: non-durable parent — this delegation is PROCESS-LOCAL and
+      will not survive a restart`, which is exactly why they left no row:
+      `_resolve_durable_child_scope` needs a parent task id, an active durable context
+      AND a db pool, and a chat-initiated delegation has no parent TASK.
+      PARLIAMENT IS NOT UNWATCHABLE — IT HAS NEVER RUN. `parliament_sessions` is 0 rows
+      and `[parliament]` appears **0 times across every retained log**, while
+      `ParliamentOrchestrator` is constructed at boot and reachable by command. A panel
+      over it renders empty forever, so it is a COUNT with its nature stated instead.
+      THE CLAUSE THAT HOLDS is the mailbox one, and it is about the message HOP rather
+      than the edge: `A2AQueue` is `dict[str, asyncio.Queue]`, in-memory, and **14 of its
+      25 log calls are DEBUG** against 0 DEBUG records in 677,108.
+    gap_check: >-
+      uv run python -c "import pathlib; s=sorted(str(p) for p in pathlib.Path('src/stackowl').rglob('*.py') if len(p.parts)>2 and p.parts[2] in ('commands','control_plane') and 'parent_task_id' in p.read_text(encoding='utf-8')); print(('REFUTED a surface reads the task parent edge: '+', '.join(s)) if s else 'HOLDS no command and no control-plane route reads tasks.parent_task_id')" 2>/dev/null | tail -1
     evidence: >-
       Operator requirement, 2026-09-11 — "visualization of agents interactions".
       The edges already exist as data: a2a delegation records, parliament
       sessions, and task rows carrying a parent.
     depends_on: ['A05.6']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: partial}
+    implement_2026_09_12: >-
+      `GET /api/v1/interactions` plus an "How the agents interact" panel, over a new
+      reader `pipeline/durable/interactions.py` — the component that owns both tables,
+      because `test_the_server_module_issues_no_sql_of_its_own` refuses SQL in
+      `control_plane/server.py` and A05.5 paid for learning that.
+      TWO KINDS, LABELLED, NEVER SUMMED. `decomposition` is an owl splitting its own work;
+      `delegation` is one owl asking another. 52 of the 52 `tasks` edges are the first
+      kind, so a single "interactions" number would report a busy multi-agent platform
+      that is one owl talking to itself. A test pins that no merged count exists.
+      NO SECOND VOCABULARY: a delegation's outcome is `DelegationStatus`, the nine-term
+      Literal `a2a_delegation.py` already defines.
+    and_THE_INSTRUMENT_LIED_TWICE_BEFORE_IT_WAS_RIGHT: >-
+      FIRST, I read "46 September edges carry no `parent_owl`" as agent labels being LOST,
+      and was one edit from recording it as a defect. `parent_owl` is written only by
+      `delegate_task.py:148`, so NULL is CORRECT for a sub-goal; a LEFT JOIN back to the
+      parent row settled it — secretary->secretary x46, not one cross-owl edge.
+      SECOND, my own parse called three rows "malformed JSON". They are not: `output` is
+      the EMPTY STRING, which is the shape `A2ADelegator.delegate` returns on a TIMEOUT.
+      A data-quality defect was one edit from the record when the platform was recording
+      a timeout correctly.
+      THE SECOND ERROR THEN BECAME A GUARD. The first reader reported `timeout` whenever
+      the record came back empty, which swept an unparseable row into the same bucket —
+      the live data read **4 timeouts / 0 unreadable** and the truth is **3 / 1**. An
+      outcome that cannot tell "the delegation timed out" from "I could not read this row"
+      is unfalsifiable, so `_delegation_record` returns a REASON and
+      `TestATimeoutIsNotTheSameAsAnUnREADABLEROW` pins the split with a CONSTRUCTED
+      population — on live data the two counts move together often enough to look right.
+    the_denominator_is_carried_because_half_of_each_old_edge_is_GONE: >-
+      **14 of the 17 delegation rows have no recoverable caller**, and it is not a join
+      bug: `SELECT COUNT(*) FROM tasks WHERE task_id = s.task_id` returns 0 for every one
+      of them — the ledger outlives the task it describes. Dropping those rows would
+      under-report the edges; drawing an arrow from nowhere would invent one. So they are
+      shown with a missing end and COUNTED in `InteractionGaps`, beside
+      `delegations_without_a_target` (9), `newest_delegation_recorded` (2026-08-24) and
+      `parliament_sessions` (0). The panel prints all of them: an operator reading
+      "2 delegations" alone would conclude the agents barely talk.
+    scoped_OUT_with_its_measurement_rather_than_deferred_silently: >-
+      **The delegation record has a hole this item does not close**: 7 successful
+      cross-owl delegations in the logs against 2 in the ledger, because a delegation
+      whose caller is not itself a durable task writes no row. Closing it means minting a
+      durable identity for a process-local delegation — the idempotency key is derived
+      from the parent task id, which those calls do not have — so it is a change to the
+      delegation WRITE path with its own retention question, not something a read-only
+      view should decide. The numbers are here so the loop that takes it decides with
+      them instead of re-measuring.
+    closing_check: >-
+      [ -f docs/reference-mapping/designs/A05.7.md ]
+      && echo "CLOSEABLE A05.7 has its own design document"
+      || echo "OPEN A05.7 has no document of its own; which store holds which edge lives
+      in the route docstring and in interactions.py"
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A05.8
     title: Skills — install, update, remove from the control plane

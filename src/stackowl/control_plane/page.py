@@ -146,6 +146,15 @@ INDEX_HTML: Final = """<!doctype html>
        ownership is recorded per pair, not per owl.</p>
   </section>
 
+  <section id="interactions" hidden>
+    <h2>How the agents interact</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>When</th><th>Kind</th><th>From</th><th>To</th><th>Outcome</th><th>What</th></tr></thead>
+      <tbody id="edgerows"></tbody>
+    </table></div>
+    <p class="note" id="edgenote"></p>
+  </section>
+
   <section id="memory" hidden>
     <h2>Memory</h2>
     <div class="wrap"><table>
@@ -338,8 +347,50 @@ INDEX_HTML: Final = """<!doctype html>
     { id: "skills",    path: "/api/v1/skills",    render: renderSkills },
     { id: "tasks",     path: "/api/v1/tasks",     render: renderTasks },
     { id: "agents",    path: "/api/v1/agents",    render: renderAgents },
-    { id: "memory",    path: "/api/v1/memory",    render: renderMemory }
+    { id: "memory",    path: "/api/v1/memory",    render: renderMemory },
+    { id: "interactions", path: "/api/v1/interactions", render: renderInteractions }
   ];
+
+  function renderInteractions(payload) {
+    var body = $("edgerows");
+    body.textContent = "";
+    if (!payload.wired) {
+      var r = document.createElement("tr");
+      cell(r, "no db wired", "mut");
+      body.appendChild(r);
+      $("interactions").hidden = false;
+      return;
+    }
+    (payload.edges || []).forEach(function (e) {
+      var row = document.createElement("tr");
+      cell(row, (e.at || "").slice(0, 19), "mut");
+      // The two kinds are LABELLED, never summed. 52 of 52 task edges are an owl
+      // decomposing its own work, and showing that as "interactions" would
+      // report a busy multi-agent platform that is one owl talking to itself.
+      cell(row, e.kind, e.kind === "delegation" ? "" : "mut");
+      cell(row, e.from_owl === null ? "—" : e.from_owl, e.from_owl === null ? "mut" : "");
+      cell(row, e.to_owl === null ? "—" : e.to_owl, e.to_owl === null ? "mut" : "");
+      cell(row, e.outcome, e.outcome === "ok" || e.outcome === "completed" ? "" : "mut");
+      cell(row, e.detail || "");
+      body.appendChild(row);
+    });
+    // THE DENOMINATOR IS THE POINT, again. An operator reading "2 delegations"
+    // would conclude the agents barely talk; the honest line says how many of
+    // the recorded edges are missing an end, and when the newest one was.
+    var g = payload.gaps || {};
+    var d = (payload.edges || []).filter(function (e) { return e.kind === "delegation"; }).length;
+    var parts = [
+      d + " delegation / " + ((payload.edges || []).length - d) + " decomposition edges",
+      "newest delegation recorded: " + (g.newest_delegation_recorded || "none").slice(0, 19),
+      g.delegations_without_a_caller + " with no recoverable caller (the calling task row is gone)",
+      g.delegations_without_a_target + " with no recorded target",
+      "parliament sessions: " + g.parliament_sessions
+    ];
+    if (g.truncated) { parts.push("TRUNCATED — more edges than this page shows"); }
+    if (g.unseen_other_owner) { parts.push(g.unseen_other_owner + " edges belong to another owner"); }
+    $("edgenote").textContent = parts.join(" · ");
+    $("interactions").hidden = false;
+  }
 
   function renderMemory(payload) {
     var cur = $("curatedrows");
