@@ -49,24 +49,6 @@ step "B8/B9 boundaries (no network in embeddings, no blocking I/O in handlers)"
 uv run python scripts/boundaries/b8.py 2>&1 | tail -1 || fail=1
 uv run python scripts/boundaries/b9.py 2>&1 | tail -1 || fail=1
 
-step "progress.yml is parseable and has no duplicate keys"
-uv run python scripts/progress_lint.py 2>&1 | tail -1 || fail=1
-
-# THE FIFTH SURFACE, REPORTED — never a gate, and the distinction is the point.
-# `doc_check` is deliberately not a tripwire because 15 of 33 measurable documents
-# are stale on any given day and a gate that fails every unrelated change gets
-# bypassed rather than satisfied. But the ASYMMETRY that produced this line is
-# real: `tests_touching.py` gets run because skipping it hurts immediately (red
-# tests), while skipping `docs_touching.py` costs nothing until a later loop finds
-# the staleness. MEASURED 2026-09-11: `6d71fdfd` left EIGHT documents stale in one
-# commit, from a corpus that had been at zero that morning — and I had run
-# `docs_touching.py` for a SMALLER change in the same session and skipped it for
-# that one. So the answer is printed where the decision is made. It cannot fail the
-# gate; it can only be read.
-# `git diff --name-only HEAD` covers the index, so this sees STAGED changes.
-step "documents declaring a file you changed (report, never a gate)"
-uv run python scripts/docs_touching.py 2>&1 | tail -3
-
 step "ruff baseline (must not rise above 35)"
 n=$(uv run ruff check src/ --output-format=concise 2>/dev/null | grep -c ':')
 echo "  ruff findings: $n"

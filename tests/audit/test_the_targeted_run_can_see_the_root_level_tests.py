@@ -104,68 +104,6 @@ def test_a_dotted_name_in_a_STRING_is_found_too() -> None:
     )
 
 
-def test_a_changed_SCRIPT_maps_to_the_tests_that_import_it() -> None:
-    """`scripts/` WAS A BLIND SPOT, and the suite has already paid for it.
-
-    Asked about `scripts/doc_check.py` this tool used to answer *"no changed files
-    under src/ — nothing to map"* — a confident, empty answer about a file that
-    `tests/audit` imports fourteen times over. Editing `scripts/doc_check.py`
-    mid-run VOIDED THE 17th FULL SUITE for exactly that reason: the run's
-    fingerprint covers `src/` and `tests/`, so it could not see the edit, and the
-    instrument built so the reader would not have to remember which tests matter
-    could not see it either.
-
-    A tool that answers "nothing" for a whole class of file teaches the reader to
-    stop asking, which is worse than having no tool.
-    """
-    mod = _tool()
-    hits = mod.covering_tests(["scripts/doc_check.py"])
-    covering = hits["scripts/doc_check.py"]
-
-    assert len(covering) >= 10, (
-        f"only {len(covering)} test(s) mapped to scripts/doc_check.py; tests/audit "
-        f"imports it by bare name after a sys.path insert and by file path for "
-        f"`spec_from_file_location`, and both must be found: {covering}"
-    )
-    assert all(t.startswith("tests/") for t in covering)
-
-
-def test_a_script_stem_is_matched_EXACTLY_not_by_substring() -> None:
-    """THE FAILURE MODE OF THE CURE.
-
-    Scripts are matched on their stem, and a loose match would be worse than no
-    match: a stem like `settings` appears in the prose of half this suite, and a
-    tool that returns 400 files has told the reader nothing. `_script_stem` also
-    has to REFUSE what is not a script, or a `src/` path would be mapped twice
-    under two different rules.
-    """
-    mod = _tool()
-    assert mod._script_stem("scripts/doc_check.py") == "doc_check"  # noqa: SLF001
-    assert mod._script_stem("src/stackowl/config/settings.py") is None  # noqa: SLF001
-    assert mod._script_stem("scripts/tripwires.sh") is None  # noqa: SLF001
-    assert mod._script_stem("scripts/boundaries/thing.py") is None  # noqa: SLF001
-
-    # NEGATIVE CONTROLS, and they are the whole test. MEASURED 2026-09-08: seven
-    # test files mention `doc_check` ONLY in prose, so a substring match returns
-    # 19 files where an exact match returns 14. The first draft of this assertion
-    # used a count threshold on `map_check` and SURVIVED MUTATION — substring
-    # matching passed it — because that stem happens not to over-match. A
-    # threshold guesses; naming the files that must NOT appear does not.
-    selected = set(mod.covering_tests(["scripts/doc_check.py"])["scripts/doc_check.py"])
-    for prose_only in (
-        "tests/memory/test_the_bound_cannot_delete_what_recall_can_find.py",
-        "tests/infra/test_a_second_process_follows_the_rotation.py",
-    ):
-        assert prose_only not in selected, (
-            f"{prose_only} names `doc_check` only inside a docstring and was "
-            f"selected anyway — the stem is being matched inside prose, which "
-            f"would hand the reader an unrelated package to run"
-        )
-    assert len(selected) >= 10, (
-        "the negative controls above pass vacuously if nothing is selected at all"
-    )
-
-
 @pytest.mark.tripwire
 def test_the_no_argument_form_sees_a_file_git_does_not_track_yet() -> None:
     """THE BLIND SPOT, and it is the case where deriving matters most.

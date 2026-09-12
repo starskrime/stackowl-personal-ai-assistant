@@ -101,8 +101,7 @@ class TestNewTimeColumnsAreISO:
     def test_the_convention_is_written_where_a_human_reads_it(self) -> None:
         """A rule enforced only by a test is a rule nobody knows about until it fires."""
         process = (
-            Path(__file__).resolve().parents[2]
-            / "docs" / "reference-mapping" / "PROCESS.md"
+            Path(__file__).resolve().parents[2] / "CLAUDE.md"
         ).read_text(encoding="utf-8")
 
         assert "One clock, one format" in process, (

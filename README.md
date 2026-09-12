@@ -98,9 +98,9 @@ uv run stackowl db              # database management
 The full suite is the only thing that detects cross-test pollution, so run it before
 anything structural. It writes a stamped log and states which tree the verdict is about.
 
-`docs/reference-mapping/PROCESS.md` is how work is done here, and
-`docs/reference-mapping/DOC_STANDARD.md` is what every design document must contain.
-`progress.yml` is the state of record.
+`CLAUDE.md` carries the engineering rules this tree has actually paid for — the
+logging contract, the log-reading hazards, and the handful of defect shapes that
+account for nearly every real bug found here.
 
 ## Licence
 

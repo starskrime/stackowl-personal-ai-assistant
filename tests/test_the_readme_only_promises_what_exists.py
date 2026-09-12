@@ -102,9 +102,29 @@ def test_the_python_version_matches_pyproject() -> None:
 def test_the_guard_sees_a_real_population() -> None:
     """VACUITY CONTROL. If the regexes matched nothing, all three assertions
     above would pass over empty sets — which is exactly how a guard becomes
-    decoration."""
+    decoration.
+
+    IT USED TO DEMAND `>= 4` PATHS AND THAT FLOOR FAILED FOR CORRECT WORK. The
+    README named two design documents; the programme that produced them was
+    retired on 2026-09-12 and the count fell to three, so the control went red
+    for a change that removed exactly what it was meant to remove. A floor under
+    a population the work exists to CHANGE fails the day the work succeeds, and
+    lowering it only defers that — 4 becomes 3 becomes 2.
+
+    So the extraction is proven against a string written HERE, where the expected
+    answer is known exactly, and the live README only has to be non-empty.
+    """
+    sample = (
+        "Run `stackowl serve` and `stackowl health`.\n"
+        "See ./start.sh, scripts/tripwires.sh and docs/anything.md.\n"
+    )
+    assert set(re.findall(r"stackowl\s+([a-z][a-z0-9-]+)", sample)) == {"serve", "health"}
+    assert set(_PATH_RE.findall(sample)) == {
+        "./start.sh", "scripts/tripwires.sh", "docs/anything.md",
+    }, "the path extraction no longer finds what it is built to find"
+
     commands = set(re.findall(r"stackowl\s+([a-z][a-z0-9-]+)", _readme()))
     paths = _paths_named()
 
-    assert len(commands) >= 5, f"only found {len(commands)} commands: {commands}"
-    assert len(paths) >= 4, f"only found {len(paths)} paths: {paths}"
+    assert commands, "the README names no commands — the extraction went blind on it"
+    assert paths, "the README names no paths — the extraction went blind on it"

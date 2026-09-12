@@ -126,17 +126,3 @@ class TestASurfaceNeverRunsATurn:
             "channels/slack/slash_bridge.py",
             "channels/telegram/command_buttons.py",
         }, f"the set of channel modules building turn state changed: {channel_state_builders}"
-
-
-class TestTheRuleIsWrittenDownWhereItIsRead:
-    @pytest.mark.tripwire
-    def test_process_md_carries_the_rule(self) -> None:
-        """A rule nobody reads is not adopted. PROCESS.md is what the loop reads when it
-        asks how work is done here; the Ask was specifically to ADOPT it as written."""
-        text = (_ROOT / "docs" / "reference-mapping" / "PROCESS.md").read_text(
-            encoding="utf-8"
-        )
-
-        assert "A surface never owns the conversation" in text, (
-            "the rule is enforced by tests but written nowhere a human would find it"
-        )
