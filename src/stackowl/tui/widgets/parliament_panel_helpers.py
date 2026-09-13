@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from stackowl.db.readonly import connect_read_only
 from stackowl.infra.observability import log
 
 _ROLLCALL_PREFIX = "Parliament:"
@@ -140,10 +141,14 @@ class OnboardingStore:
             extra={"_fields": {"key": key}},
         )
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            # READ-ONLY: asking whether a tip was shown must not create the database.
+            conn = connect_read_only(self._db_path)
+            try:
                 row = conn.execute(
                     "SELECT 1 FROM onboarding WHERE key = ?", (key,)
                 ).fetchone()
+            finally:
+                conn.close()
         except sqlite3.Error as exc:
             log.tui.warning(
                 "[tui] parliament_panel_helpers.OnboardingStore.was_shown: query failed",

@@ -109,7 +109,9 @@ class PluginRegistry:
         try:
             # 2. DECISION
             log.debug("[plugins] registry.list: decision — SELECT enabled plugins")
-            conn = sqlite3.connect(self._db_path)
+            from stackowl.db.readonly import connect_read_only
+
+            conn = connect_read_only(self._db_path)  # a listing must not create the database
             conn.row_factory = sqlite3.Row
             try:
                 # 3. STEP
@@ -161,8 +163,10 @@ class PluginRegistry:
         """
         # 1. ENTRY
         log.debug("[plugins] registry.exists: entry", extra={"_fields": {"name": name}})
+        from stackowl.db.readonly import connect_read_only
+
         try:
-            conn = sqlite3.connect(self._db_path)
+            conn = connect_read_only(self._db_path)  # a lookup must not create the database
             conn.row_factory = sqlite3.Row
             try:
                 row = conn.execute(

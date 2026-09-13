@@ -99,13 +99,20 @@ class TestNewTimeColumnsAreISO:
         )
 
     def test_the_convention_is_written_where_a_human_reads_it(self) -> None:
-        """A rule enforced only by a test is a rule nobody knows about until it fires."""
-        process = (
-            Path(__file__).resolve().parents[2] / "CLAUDE.md"
-        ).read_text(encoding="utf-8")
+        """A rule enforced only by a test is a rule nobody knows about until it fires.
 
-        assert "One clock, one format" in process, (
-            "the timestamp convention is enforced by this test and written nowhere"
+        `AGENTS.md` is the instruction file agents load at the repository root; the
+        root `CLAUDE.md` this used to read was removed on 2026-09-12. The rule must sit
+        OUTSIDE the generated `bmad-project-context` block, because a refresh replaces
+        everything between its markers."""
+        text = (Path(__file__).resolve().parents[2] / "AGENTS.md").read_text(encoding="utf-8")
+        outside = re.sub(
+            r"<!-- bmad:context -->.*?<!-- /bmad:context -->", "", text, flags=re.DOTALL
+        )
+
+        assert "One clock, one format" in outside, (
+            "the timestamp convention is enforced by this test and written nowhere that "
+            "a refresh of the generated block cannot erase"
         )
 
 

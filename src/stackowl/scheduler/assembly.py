@@ -550,6 +550,19 @@ class SchedulerAssembly:
             # contributor went with the adapter in D08.2; a key pointing at nothing
             # would make the sweep look up a resource that cannot be healed.
         }
+        # A DATABASE BESIDE THE LIVE ONE is removed HERE, on the sweep's heal step,
+        # never in its contributor: every `collect()` runs detection, and only the
+        # heal step re-collects afterwards and escalates what is left. Removals go to
+        # audit_log, so a stray that keeps coming back is counted across restarts.
+        from stackowl.audit.logger import AuditLogger as _StrayAuditLogger
+        from stackowl.db.pool import default_db_path as _live_db_path
+        from stackowl.health.contributors import STRAY_DATABASE, StrayDatabaseHealer
+        from stackowl.paths import StackowlHome as _StrayHome
+
+        healers[STRAY_DATABASE] = StrayDatabaseHealer(
+            _StrayHome.home(), _live_db_path(),
+            db=db, audit=_StrayAuditLogger(_live_db_path()),
+        )
         # Task 9 — durable-task liveness watchdog. B4 crash-recovery only reaps
         # orphaned tasks at BOOT; a task whose background drive died mid-execution
         # while the server kept running stayed stuck 'running' until the next
@@ -879,9 +892,12 @@ class SchedulerAssembly:
         )
         # F-87 — health sweep every 5m: collect in-process health, alert on
         # down/degraded. Cheap when everything is healthy (a quiet debug exit).
+        from stackowl.scheduler.handlers.health_sweep import HEALTH_SWEEP_INTERVAL_MINUTES
+
         await _seed_minutes_schedule(
-            db, handler_name="health_sweep", schedule="every 5m",
-            interval_minutes=5,
+            db, handler_name="health_sweep",
+            schedule=f"every {HEALTH_SWEEP_INTERVAL_MINUTES}m",
+            interval_minutes=HEALTH_SWEEP_INTERVAL_MINUTES,
         )
         # ADR-6 Task 6 — incident escalation every 10m (heavier than the sweep: it
         # runs a 3-stage RCA on a NEW incident). Its dedupe ensures a subsystem that
@@ -1122,12 +1138,19 @@ def _build_health_aggregator(
         GraphContributor,
         OwlRatingHealthContributor,
         ProviderContributor,
+        StrayDatabaseContributor,
     )
     from stackowl.infra.clock import WallClock
+    from stackowl.paths import StackowlHome
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
+    # A DATABASE BESIDE THE LIVE ONE. The 0-byte `~/.stackowl/stackowl.db` came back
+    # twice on 2026-09-11 — an ad-hoc connect at the obvious guess, which SQLite turns
+    # into an empty file — and nothing noticed. Detection only: `StrayDatabaseHealer`,
+    # wired into the sweep's healers map, removes an empty one on the heal step.
+    agg.register(StrayDatabaseContributor(StackowlHome.home(), default_db_path(), db=db))
     if db is not None:
         # A STOPPED WRITER IS A SUBSYSTEM BEING DOWN, and until now it had no
         # voice here. Each store declares its expected write cadence

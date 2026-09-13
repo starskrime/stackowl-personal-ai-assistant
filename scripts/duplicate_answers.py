@@ -17,11 +17,11 @@ DATABASE fact — the row is written by the router whether or not anything logge
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import sys
 from collections import defaultdict
 from datetime import datetime
 
+from stackowl.db.readonly import connect_read_only
 from stackowl.paths import StackowlHome
 
 #: Two deliveries of identical text further apart than this are a RECURRENCE, not
@@ -37,11 +37,11 @@ _ANSWER_CATEGORIES = ("turn_answer", "goal_answer")
 
 def duplicates(since: str | None = None) -> list[tuple[str, str, float]]:
     """``[(hash, when, gap_seconds)]`` for answers repeated inside the window."""
-    db = StackowlHome.workspace() / "stackowl.db"
+    db = StackowlHome.db_path()
     if not db.exists() or db.stat().st_size == 0:
         print(f"duplicate_answers: {db} is missing or empty", file=sys.stderr)
         raise SystemExit(2)
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn = connect_read_only(db)
     marks = ",".join("?" for _ in _ANSWER_CATEGORIES)
     sql = (
         "SELECT message_hash, created_at FROM notification_log "  # noqa: S608

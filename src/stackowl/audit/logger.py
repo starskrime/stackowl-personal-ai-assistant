@@ -328,8 +328,10 @@ class AuditLogger:
         """
         # 1. ENTRY
         log.debug("[audit] logger.verify_chain: entry")
+        from stackowl.db.readonly import connect_read_only
+
         try:
-            conn = sqlite3.connect(self._db_path)
+            conn = connect_read_only(self._db_path)  # verifying must not create the database
             conn.row_factory = sqlite3.Row
             try:
                 conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")

@@ -304,13 +304,15 @@ async def test_the_db_contributor_carries_the_advice_out_of_the_except(
     from stackowl.health import contributors
 
     db_path = tmp_path / "stackowl.db"
-    db_path.write_text("")  # exists, so the predictable branch is NOT the one taken
+    # Exists and is not empty, so neither predictable branch is the one taken.
+    db_path.write_bytes(b"not a database")
 
-    def _boom(_p: object) -> object:
+    def _boom(*_args: object, **_kwargs: object) -> object:
         raise sqlite3.OperationalError("disk I/O error")
 
-    # The very module object `contributors` imported — named directly so the patch
-    # is typed, instead of through an attribute the module does not export.
+    # The `sqlite3` module itself — named directly so the patch is typed, instead of
+    # through an attribute `contributors` does not export, and because the ping now
+    # connects through `stackowl.db.readonly`, which reads `sqlite3.connect` from here.
     monkeypatch.setattr(sqlite3, "connect", _boom)
     status: HealthStatus = await contributors.DbContributor(db_path).health_check()
 

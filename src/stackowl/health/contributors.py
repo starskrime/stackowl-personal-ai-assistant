@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
+import os
+import stat
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -15,6 +17,9 @@ from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.startup.browser_probe import REMEDY_BINARY_MISSING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from stackowl.audit.logger import AuditLogger
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.infra.clock import Clock
     from stackowl.memory.kuzu_adapter import KuzuAdapter
@@ -142,8 +147,13 @@ class DbContributor:
         log.debug("[health] db_contributor: entry")
         t0 = time.monotonic()
 
+        from stackowl.db.readonly import connect_read_only
+
         def _ping() -> None:
-            conn = sqlite3.connect(self._db_path)
+            # READ-ONLY, so the ping can never create the file it checks. The
+            # existence test below and this connect are two moments, and a bare
+            # connect between them would leave an empty database at the live path.
+            conn = connect_read_only(self._db_path)
             try:
                 conn.execute("SELECT 1").fetchone()
             finally:
@@ -160,6 +170,26 @@ class DbContributor:
                 ),
                 latency_ms=0.0,
             )
+        # AN EMPTY LIVE DATABASE IS NOT HEALTHY. A 0-byte file answers `SELECT 1`
+        # happily and holds nothing — the state that reads as total data loss, and the
+        # one `stackowl db query` refuses.
+        try:
+            empty = self._db_path.stat().st_size == 0
+        except OSError:
+            empty = False  # vanished since the check above — the ping reports it
+        if empty:
+            log.warning("[health] db_contributor: exit — the live database is empty: %s", self._db_path)
+            return HealthStatus(
+                name="db",
+                status="down",
+                message=f"database is empty (0 bytes): {self._db_path}",
+                remedy=(
+                    "an empty file at the live path holds no data — check STACKOWL_HOME and "
+                    "STACKOWL_DATA_DIR point at the install you mean; a new install gets "
+                    "its schema from `stackowl db migrate`"
+                ),
+                latency_ms=0.0,
+            )
         try:
             await asyncio.to_thread(_ping)
             latency_ms = (time.monotonic() - t0) * 1000
@@ -172,6 +202,347 @@ class DbContributor:
                 name="db", status="down", message=str(exc),
                 remedy=remedy_for(exc), latency_ms=latency_ms,
             )
+
+
+#: The names a SQLite file is created under by convention — what an ad-hoc
+#: `sqlite3.connect("…/stackowl.db")` leaves behind. File-format names, not words.
+_DATABASE_SUFFIXES = frozenset({".db", ".sqlite", ".sqlite3"})
+
+#: Files SQLite keeps beside a database while a connection has it open or a
+#: transaction is unfinished. A 0-byte main file with a WAL beside it can hold every
+#: committed row in the WAL, so it is data, not a decoy.
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+
+#: The health-status name, and the key the sweep finds the healer under.
+STRAY_DATABASE = "stray_database"
+
+#: The audit event a removal writes. Reading it back is what makes a stray that keeps
+#: returning visible, instead of being deleted quietly forever.
+STRAY_DATABASE_REMOVED_EVENT = "health.stray_database_removed"
+
+_STRAY_REMOVALS_SQL = "SELECT COUNT(*) AS n FROM audit_log WHERE event_type = ? AND target = ?"
+
+
+@dataclass(frozen=True)
+class _Stray:
+    path: Path
+    size: int
+    sidecars: tuple[str, ...]
+    age_seconds: float
+    modified: str  # ISO-8601, UTC
+
+    @property
+    def empty(self) -> bool:
+        """0 bytes AND nothing beside it that could be holding its rows."""
+        return self.size == 0 and not self.sidecars
+
+
+def _one_sweep_seconds() -> float:
+    """How young a file must be to be left alone — ASKED of the sweep, not restated.
+
+    A process that has just opened a missing path holds a 0-byte file with no journal
+    yet, which is indistinguishable from a decoy. A file untouched for a whole sweep
+    interval is not being opened right now.
+    """
+    from stackowl.scheduler.handlers.health_sweep import HEALTH_SWEEP_INTERVAL_MINUTES
+
+    return HEALTH_SWEEP_INTERVAL_MINUTES * 60.0
+
+
+def _stray_databases(home: Path, db_path: Path) -> list[_Stray]:
+    """Database-named files beside the config or beside the live database that are not it.
+
+    TWO DIRECTORIES, NEITHER DESCENDED: the home root, where a guess beside the config
+    lands, and the live database's own directory, where a guess beside the database
+    lands. MEASURED on the operator's box 2026-09-12, the home legitimately holds
+    non-empty databases NESTED under it — browser-profile NSS stores (``cert9.db``,
+    ``key4.db``), pre-migration backups under ``workspace/knowledge/backups/``,
+    ``workspace/pre-restore-snapshot/stackowl.db`` — so a recursive walk would report
+    files the platform wrote itself.
+
+    Symlinks are skipped, never followed. The live database is matched as the SAME FILE
+    (``os.path.samefile``), not the same spelling: on a case-insensitive filesystem a
+    differently-cased home makes the live path a different string. A file that
+    disappears mid-scan was removed by someone else and is not reported.
+    """
+    directories: list[Path] = []
+    for directory in (home, db_path.parent):
+        if directory.is_dir() and not any(os.path.samefile(directory, d) for d in directories):
+            directories.append(directory)
+    live_exists = db_path.exists()
+    now = time.time()
+    found: list[_Stray] = []
+    for directory in directories:
+        for entry in sorted(directory.iterdir()):
+            if entry.suffix.lower() not in _DATABASE_SUFFIXES or entry.is_symlink():
+                continue
+            try:
+                info = entry.lstat()
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                if live_exists and os.path.samefile(entry, db_path):
+                    continue
+            except FileNotFoundError:
+                continue
+            sidecars = tuple(
+                entry.name + suffix for suffix in _SQLITE_SIDECARS
+                if (entry.parent / (entry.name + suffix)).exists(follow_symlinks=False)
+            )
+            found.append(_Stray(
+                path=entry, size=info.st_size, sidecars=sidecars,
+                age_seconds=max(0.0, now - info.st_mtime),
+                modified=datetime.fromtimestamp(info.st_mtime, UTC).isoformat(),
+            ))
+    return found
+
+
+async def _prior_removals(db: object | None, path: Path) -> int | None:
+    """How many times ``path`` was already removed as a stray; None when unknowable."""
+    if db is None:
+        return None
+    try:
+        rows = await db.fetch_all(  # type: ignore[attr-defined]
+            _STRAY_REMOVALS_SQL, (STRAY_DATABASE_REMOVED_EVENT, str(path))
+        )
+    except Exception as exc:  # noqa: BLE001 — a missing count must not block the heal
+        log.warning("[health] stray_database: could not count past removals of %s: %s", path, exc)
+        return None
+    return int((rows or [{}])[0].get("n") or 0)
+
+
+class StrayDatabaseContributor:
+    """Health contributor: a database file beside the config or the live one that is not it.
+
+    WHY THIS EXISTS. `~/.stackowl/stackowl.db` was deleted on 2026-09-08 and came back as
+    a 0-byte file twice on 2026-09-11. Ad-hoc diagnosis guesses the database sits beside
+    the config, connects there, and SQLite creates an empty file instead of failing —
+    which then reads as total data loss to the next reader. Nothing noticed.
+
+    DETECTION ONLY. Every ``collect()`` runs this — the five-minute sweep and anything
+    else that reads health — so it removes nothing. Removal belongs to
+    :class:`StrayDatabaseHealer`, which the sweep calls on its heal step and then
+    RE-COLLECTS, so a stray that will not go escalates like any other subsystem.
+
+    DEGRADED, NEVER DOWN: a stray file does not stop the platform serving, and ``down``
+    is what kills a process. An empty stray older than one sweep is reported with the
+    remedy that the heal removes it; one younger than a sweep may be a connection being
+    opened right now and is only noted. A stray holding data is reported with its path
+    and size. One that was removed before and is back says how often — something keeps
+    creating it, and removing it again does not answer why.
+    """
+
+    def __init__(self, home: Path, db_path: Path, *, db: object | None = None) -> None:
+        self._home = home
+        self._db_path = db_path
+        self._db = db
+
+    @property
+    def contributor_name(self) -> str:
+        return STRAY_DATABASE
+
+    async def health_check(self) -> HealthStatus:
+        import asyncio
+
+        # 1. ENTRY
+        log.debug("[health] stray_database: entry — home=%s", self._home)
+        t0 = time.monotonic()
+        try:
+            strays = await asyncio.to_thread(_stray_databases, self._home, self._db_path)
+            removed_before = {s.path: await _prior_removals(self._db, s.path) for s in strays}
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            # "I could not look" is not "there is a stray".
+            log.warning("[health] stray_database: could not scan for strays: %s", exc)
+            return HealthStatus(
+                name=STRAY_DATABASE, status="degraded",
+                message=f"could not scan {self._home} for stray databases: {exc}",
+                remedy=remedy_for(exc), latency_ms=latency_ms,
+            )
+        latency_ms = (time.monotonic() - t0) * 1000
+        one_sweep = _one_sweep_seconds()
+
+        # 2. DECISION
+        young = [s for s in strays if s.empty and s.age_seconds < one_sweep]
+        empty = [s for s in strays if s.empty and s.age_seconds >= one_sweep]
+        holding = [s for s in strays if not s.empty]
+        if not empty and not holding:
+            message = f"no stray database beside the live one ({self._db_path})"
+            if young:
+                message = (
+                    f"{len(young)} empty database file(s) younger than one health sweep, "
+                    f"left for the next: {', '.join(str(s.path) for s in young)}"
+                )
+            log.debug("[health] stray_database: exit — ok (%d young)", len(young))
+            return HealthStatus(
+                name=STRAY_DATABASE, status="ok", message=message, latency_ms=latency_ms
+            )
+
+        # 3. STEP — name each one, and how often it has come back
+        parts: list[str] = []
+        for s in empty:
+            again = removed_before.get(s.path)
+            back = f", removed {again} time(s) before — something keeps creating it" if again else ""
+            parts.append(f"{s.path} (empty, last modified {s.modified}{back})")
+        for s in holding:
+            beside = f", beside {', '.join(s.sidecars)}" if s.sidecars else ""
+            parts.append(f"{s.path} ({s.size} bytes{beside})")
+        remedies: list[str] = []
+        if empty:
+            remedies.append(
+                "an empty stray holds no data: the health sweep removes it on its heal step, "
+                "and if it stays, delete it by hand"
+            )
+        if any(removed_before.get(s.path) for s in empty):
+            remedies.append(
+                "it keeps coming back — find what opens that path; read the live database "
+                "with `stackowl db query`, which resolves it"
+            )
+        if holding:
+            remedies.append(
+                f"inspect {', '.join(str(s.path) for s in holding)}: not the live database "
+                f"({self._db_path}); move it out once you know what wrote it — the platform "
+                "never deletes a file that holds data"
+            )
+        # 4. EXIT — degraded
+        log.warning(
+            "[health] stray_database: exit — degraded, %d empty, %d holding data: %s",
+            len(empty), len(holding), "; ".join(parts),
+        )
+        return HealthStatus(
+            name=STRAY_DATABASE, status="degraded",
+            message=f"database file(s) that are not the live database {self._db_path}: {'; '.join(parts)}",
+            remedy="; ".join(remedies), latency_ms=latency_ms,
+        )
+
+
+class StrayDatabaseHealer:
+    """HealableResource for ``stray_database``: removes EMPTY strays, and only those.
+
+    Registered in the sweep's ``healers`` map under :data:`STRAY_DATABASE`, so removal
+    happens only on the sweep's heal step — which re-collects afterwards and escalates
+    whatever is still there — and never on a plain ``collect()``.
+
+    A file goes only when it is exactly 0 bytes, has no ``-wal``/``-shm``/``-journal``
+    sibling, is not the live database, and has not been modified for a whole sweep
+    interval (a connection opened a moment ago looks exactly like a decoy); its size is
+    re-checked immediately before the unlink. A file already gone is healed, not failed.
+    Each removal is logged with the file's last-modified time and written to
+    ``audit_log``, so a stray that keeps returning is counted across restarts and logged
+    at WARNING when it does.
+    """
+
+    def __init__(
+        self,
+        home: Path,
+        db_path: Path,
+        *,
+        db: object | None = None,
+        audit: AuditLogger | None = None,
+    ) -> None:
+        self._home = home
+        self._db_path = db_path
+        self._db = db
+        self._audit = audit
+        self._on_recycled: list[Callable[[], None]] = []
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return None
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        self._on_recycled.append(cb)
+
+    @staticmethod
+    def _unlink_if_still_empty(path: Path) -> bool:
+        """Remove ``path`` only if it is STILL 0 bytes. Raises FileNotFoundError if gone."""
+        if path.lstat().st_size != 0:
+            return False
+        path.unlink()
+        return True
+
+    def _record(self, stray: _Stray) -> None:
+        if self._audit is None:
+            log.warning(
+                "[health] stray_database_healer: no audit log wired — the removal of %s "
+                "is not counted",
+                stray.path,
+            )
+            return
+        try:
+            self._audit.append(
+                event_type=STRAY_DATABASE_REMOVED_EVENT, actor="health_sweep",
+                target=str(stray.path), details={"last_modified": stray.modified},
+            )
+        except Exception as exc:  # noqa: BLE001 — a missed count must not undo the heal
+            log.warning(
+                "[health] stray_database_healer: could not record the removal of %s",
+                stray.path, exc_info=exc,
+            )
+
+    async def ensure_available(self) -> None:
+        import asyncio
+
+        # 1. ENTRY
+        log.debug("[health] stray_database_healer: entry — home=%s", self._home)
+        one_sweep = _one_sweep_seconds()
+        strays = await asyncio.to_thread(_stray_databases, self._home, self._db_path)
+        failed: list[tuple[Path, OSError]] = []
+        removed = 0
+        for stray in strays:
+            # 2. DECISION — empty, and too old to be a connection opening right now
+            if not stray.empty or stray.age_seconds < one_sweep:
+                continue
+            before = await _prior_removals(self._db, stray.path)
+            # 3. STEP — the heal
+            try:
+                gone = await asyncio.to_thread(self._unlink_if_still_empty, stray.path)
+            except FileNotFoundError:
+                log.info(
+                    "[health] stray_database_healer: %s was already gone — nothing to remove",
+                    stray.path,
+                )
+                continue
+            except OSError as exc:
+                log.warning("[health] stray_database_healer: could not remove %s: %s", stray.path, exc)
+                failed.append((stray.path, exc))
+                continue
+            if not gone:
+                log.info(
+                    "[health] stray_database_healer: %s was written since the scan — left alone",
+                    stray.path,
+                )
+                continue
+            removed += 1
+            self._record(stray)
+            if before:
+                log.warning(
+                    "[health] stray_database_healer: removed an empty stray database %s AGAIN "
+                    "(last modified %s, removed %d time(s) before) — something keeps creating it",
+                    stray.path, stray.modified, before,
+                )
+            else:
+                log.info(
+                    "[health] stray_database_healer: removed an empty stray database %s "
+                    "(last modified %s) — the live one is %s",
+                    stray.path, stray.modified, self._db_path,
+                )
+        if removed:
+            for cb in self._on_recycled:
+                try:
+                    cb()
+                except Exception as exc:  # noqa: BLE001 — a dependent must not undo the heal
+                    log.warning("[health] stray_database_healer: on_recycled callback failed", exc_info=exc)
+        # 4. EXIT
+        log.debug("[health] stray_database_healer: exit — removed=%d failed=%d", removed, len(failed))
+        if failed:
+            raise OSError(
+                f"could not remove {len(failed)} empty stray database file(s): "
+                + "; ".join(f"{path}: {exc}" for path, exc in failed)
+            ) from failed[0][1]
 
 
 # LanceDBHealthContributor stood here, shimming the adapter's HealthReport into
@@ -1187,12 +1558,12 @@ class SchedulerProgressContributor:
         log.debug("[health] scheduler_progress: entry")
         t0 = time.monotonic()
 
+        from stackowl.db.readonly import connect_read_only
+
         def _read() -> tuple[int, str | None]:
-            # `as_uri()` rather than an f-string: a Windows path is `C:\\...` and a
-            # POSIX one may hold a space or a `?`, and both make a hand-built
-            # `file:` URI silently wrong. All-hardware means the supervisor too.
-            uri = f"{Path(self._db_path).resolve().as_uri()}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True)
+            # The one read-only opener — it builds the URI portably and refuses
+            # attachments, which a bare `mode=ro` URI does not.
+            conn = connect_read_only(self._db_path)
             try:
                 row = conn.execute(
                     "SELECT COUNT(*), MAX(last_run_at) FROM jobs WHERE enabled = 1"

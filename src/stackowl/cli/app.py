@@ -305,14 +305,18 @@ def health(
         GraphContributor,
         McpHealthContributor,
         ProviderContributor,
+        StrayDatabaseContributor,
     )
     from stackowl.health.status import HEALTHY_STATES, LIVENESS_FAILING_STATES
     from stackowl.mcp.probe import McpLivenessProbe
+    from stackowl.paths import StackowlHome
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     settings = Settings()
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
+    # Detection only — nothing is removed from here; the serve process's sweep heals.
+    agg.register(StrayDatabaseContributor(StackowlHome.home(), default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
     # DUR-5 / F069 — truthful knowledge-graph health. Probes the kuzu native
     # layer (the ARM-wheel-missing failure mode) without opening the live DB.
@@ -382,6 +386,12 @@ def db() -> None:
     """Database management commands."""
 
 
+from stackowl.cli.db_cli import db_query  # noqa: E402
+
+#: The read-only way to look at the live database — see `db_cli.py`.
+db_app.command("query")(db_query)
+
+
 @db_app.command("migrate")
 def db_migrate() -> None:
     """Apply all pending schema migrations."""
@@ -428,11 +438,24 @@ def db_backup(
         typer.echo(f"✗ {exc}", err=True)
         sys.exit(1)
 
+    from stackowl.db.readonly import read_only_uri
+
     db_path = default_db_path()
     log.debug("[db] db_backup: entry — source=%s output=%s", db_path, output)
+    # A MISSING SOURCE IS AN ERROR, NEVER AN EMPTY BACKUP: a plain connect created the
+    # live database at a mistyped path and then backed up nothing.
+    if not db_path.is_file() or db_path.stat().st_size == 0:
+        log.warning("[db] db_backup: refused — no database at %s", db_path)
+        typer.echo(f"✗ Backup refused: no database at {db_path} (missing or empty)", err=True)
+        typer.echo(
+            "  Check STACKOWL_HOME and STACKOWL_DATA_DIR point at the install you mean.",
+            err=True,
+        )
+        sys.exit(1)
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
-        conn = sqlite3.connect(db_path)
+        # The source opens read-only; VACUUM INTO writes only the output file.
+        conn = sqlite3.connect(read_only_uri(db_path), uri=True)
         conn.execute(f"VACUUM INTO '{output}'")
         conn.close()
     except Exception as exc:
@@ -450,7 +473,6 @@ def db_restore(
     input: Path = typer.Argument(..., help="Path to the backup file to restore from."),
 ) -> None:
     """Restore the database from a backup file (prompts for confirmation)."""
-    import sqlite3
     import sys
 
     from stackowl.config.test_mode import TestModeGuard, TestModeViolation
@@ -463,9 +485,17 @@ def db_restore(
         typer.echo(f"✗ {exc}", err=True)
         sys.exit(1)
 
+    from stackowl.db.readonly import connect_read_only
+
     log.debug("[db] db_restore: entry — input=%s", input)
+    # REFUSED BEFORE ANYTHING OPENS IT: a plain connect created a missing file, and
+    # `integrity_check` then reported that empty database "ok".
+    if not input.is_file() or input.stat().st_size == 0:
+        log.warning("[db] db_restore: refused — %s is missing or empty", input)
+        typer.echo(f"✗ Restore refused: {input} is missing or empty — nothing to restore", err=True)
+        sys.exit(1)
     try:
-        check_conn = sqlite3.connect(input)
+        check_conn = connect_read_only(input)
         result = check_conn.execute("PRAGMA integrity_check").fetchone()
         check_conn.close()
         if result is None or result[0] != "ok":

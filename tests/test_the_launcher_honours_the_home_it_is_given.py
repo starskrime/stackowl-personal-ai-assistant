@@ -1,6 +1,6 @@
 """D18.3 — the sanctioned restart path was instance-hostile, and silently.
 
-`CLAUDE.md` mandates `./start.sh` as THE restart entry point. Measured 2026-09-05,
+`./start.sh` is THE restart entry point. Measured 2026-09-05,
 it was the one place the state-path discipline did not hold:
 
     line 34  runtime_dir="$HOME/.stackowl/runtime"
@@ -15,7 +15,7 @@ stdout log, while every one of the platform's own 25 path accessors correctly
 resolved into the new home. Isolation that is complete in `src/` and absent in the
 launcher is not isolation.
 
-THE SHAPE IS `CLAUDE.md`'s "same rule, one case short". The single-accessor rule is
+THE SHAPE IS "same rule, one case short". The single-accessor rule is
 real and holds across all of `src/`; the launcher is the one caller that reimplemented
 the path by hand, and being a shell script is why nothing caught it — every guard this
 repo owns reads Python.
@@ -36,18 +36,8 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _START = _ROOT / "start.sh"
 
 
-@pytest.mark.tripwire
-def test_no_shell_script_reimplements_the_home() -> None:
-    """The rule reaches every shell file, because the root cause is the LANGUAGE.
-
-    The single-accessor rule holds across all of `src/`; it broke in the two places
-    written in bash, where no guard this repo owns could see it. Measured
-    2026-09-05: `start.sh` (three paths) and `scripts/full_suite.sh:20` (the suite
-    log) were the only two offenders out of 20 shell files. Fixing only the
-    launcher would have left the same defect one file over — which is exactly the
-    shape `CLAUDE.md` calls "fix the architecture, not the example".
-    """
-    root = _ROOT
+def _shell_offenders(root: pathlib.Path) -> tuple[int, dict[str, list[str]]]:
+    """(files scanned, file -> lines re-deriving the home) for every `*.sh` under root."""
     offenders: dict[str, list[str]] = {}
     scanned = 0
     for path in sorted(root.rglob("*.sh")):
@@ -61,8 +51,30 @@ def test_no_shell_script_reimplements_the_home() -> None:
         ]
         if hits:
             offenders[str(path.relative_to(root))] = hits
+    return scanned, offenders
 
-    assert scanned >= 10, f"expected the real shell surface, scanned {scanned}"
+
+@pytest.mark.tripwire
+def test_no_shell_script_reimplements_the_home() -> None:
+    """The rule reaches every shell file, because the root cause is the LANGUAGE.
+
+    The single-accessor rule holds across all of `src/`; it broke in the two places
+    written in bash, where no guard this repo owns could see it. Measured
+    2026-09-05: `start.sh` (three paths) and `scripts/full_suite.sh:20` (the suite
+    log) were the only two offenders out of 20 shell files. Fixing only the
+    launcher would have left the same defect one file over — which is exactly the
+    shape "fix the architecture, not the example" names.
+
+    IT USED TO SAY ``scanned >= 10``, AND THAT FLOOR FAILED ON CORRECT WORK. The shell
+    surface is a population cleanups exist to shrink: 20 files on 2026-09-05, 9 by
+    2026-09-12 (already under the floor), 8 once a shell query helper was replaced by
+    a CLI command. A floor under a shrinking population goes red the day the cleanup
+    succeeds. The walk is proven against a planted tree below instead, and the live
+    tree only has to include the launcher.
+    """
+    scanned, offenders = _shell_offenders(_ROOT)
+
+    assert scanned and _START.exists(), f"expected the real shell surface, scanned {scanned}"
     assert not offenders, (
         f"shell script(s) re-deriving the home: {offenders}\n"
         "D18.3: ask StackowlHome for it — "
@@ -71,6 +83,19 @@ def test_no_shell_script_reimplements_the_home() -> None:
         "hardcodes ~/.stackowl acts on a different instance than the process it "
         "launches, and no Python guard can see it."
     )
+
+
+@pytest.mark.tripwire
+def test_the_shell_scan_can_actually_fail(tmp_path: pathlib.Path) -> None:
+    """VACUITY CONTROL on a population this test BUILDS, never on the live count."""
+    (tmp_path / "bad.sh").write_text('runtime_dir="$HOME/.stackowl/runtime"\n', encoding="utf-8")
+    (tmp_path / "commented.sh").write_text("# see ~/.stackowl/logs\n", encoding="utf-8")
+    (tmp_path / "good.sh").write_text('echo "$STACKOWL_HOME"\n', encoding="utf-8")
+
+    scanned, offenders = _shell_offenders(tmp_path)
+
+    assert scanned == 3
+    assert offenders == {"bad.sh": ['runtime_dir="$HOME/.stackowl/runtime"']}
 
 
 @pytest.mark.tripwire

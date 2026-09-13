@@ -107,6 +107,10 @@ if TYPE_CHECKING:
 # An operator-alert sink: receives an already-composed alert message. Async.
 AlertSink = Callable[[str], Awaitable[None]]
 
+#: How often the sweep runs. ONE number: the scheduler seeds the job from it, and a
+#: contributor that must not act on anything younger than one sweep asks it.
+HEALTH_SWEEP_INTERVAL_MINUTES = 5
+
 
 def _health_loop_enabled() -> bool:
     """ADR-6 flag read — module-level so tests can monkeypatch it. Never raises."""

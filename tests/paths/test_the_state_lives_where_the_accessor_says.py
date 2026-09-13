@@ -43,6 +43,7 @@ accessor is a documentation bug, while a wrong accessor is a data-loss bug.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -114,3 +115,60 @@ def test_an_explicit_data_dir_moves_the_database_and_not_the_graph(
 
     assert StackowlHome.db_path() == data / "stackowl.db"
     assert StackowlHome.kuzu_dir() == root / "kuzu"
+
+
+@pytest.mark.asyncio
+async def test_the_decoy_database_does_not_survive_a_health_sweep(home: Path) -> None:
+    """THE HEAL. Pinning the accessors stops the code from creating the decoy; it
+    does nothing about a process that guesses the path and lets SQLite create it.
+    That happened twice on 2026-09-11, so the platform now removes an EMPTY decoy
+    itself — and the live database beside it must come through untouched."""
+    import os
+    import time
+
+    from stackowl.health.contributors import StrayDatabaseContributor, StrayDatabaseHealer
+    from stackowl.scheduler.handlers.health_sweep import HEALTH_SWEEP_INTERVAL_MINUTES
+
+    StackowlHome.ensure_exists()
+    real = StackowlHome.db_path()
+    conn = sqlite3.connect(real)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t (x INTEGER)")
+        conn.commit()
+    finally:
+        conn.close()
+    before = real.read_bytes()
+    decoy = home / "stackowl.db"
+    decoy.touch()
+    then = time.time() - HEALTH_SWEEP_INTERVAL_MINUTES * 60 - 60
+    os.utime(decoy, (then, then))
+    contributor = StrayDatabaseContributor(StackowlHome.home(), StackowlHome.db_path())
+
+    seen = await contributor.health_check()
+    await StrayDatabaseHealer(StackowlHome.home(), StackowlHome.db_path()).ensure_available()
+    after = await contributor.health_check()
+
+    assert seen.status == "degraded", "the decoy at the home root was not detected"
+    assert not decoy.exists(), "the 0-byte decoy at the home root survived the heal"
+    assert real.read_bytes() == before, "the live database was touched"
+    assert after.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_reading_the_database_never_creates_it(home: Path) -> None:
+    """THE NO-STRAY REGRESSION. The two readers the platform ships — the query command
+    and the health ping — must leave a fresh home exactly as they found it: no file at
+    the live path and none at the guess."""
+    from typer.testing import CliRunner
+
+    from stackowl.cli.app import app
+    from stackowl.health.contributors import DbContributor
+
+    StackowlHome.ensure_exists()
+
+    CliRunner().invoke(app, ["db", "query", "select 1"])
+    await DbContributor(StackowlHome.db_path()).health_check()
+
+    assert not StackowlHome.db_path().exists(), "a reader created the live database"
+    assert not (home / "stackowl.db").exists(), "a reader created the decoy"

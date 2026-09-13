@@ -61,7 +61,7 @@ def _read_lancedb(lancedb_dir: Path) -> list[dict[str, object]]:
 async def main() -> int:
     workspace = StackowlHome.workspace()
     lancedb_dir = workspace / "lancedb"
-    db_path = workspace / "stackowl.db"
+    db_path = StackowlHome.db_path()
     print(f"lancedb : {lancedb_dir}")
     print(f"sqlite  : {db_path}")
 

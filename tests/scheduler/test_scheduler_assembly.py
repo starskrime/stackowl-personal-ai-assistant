@@ -286,6 +286,85 @@ async def test_health_sweep_wires_browser_when_flag_on(tmp_db: DbPool) -> None:
     assert "browser" in names  # live BrowserContributor added for detection
 
 
+async def test_health_sweep_watches_for_a_stray_database(tmp_db: DbPool) -> None:
+    # The 0-byte `~/.stackowl/stackowl.db` came back twice on 2026-09-11 and
+    # nothing noticed. The contributor that heals it must ride the sweep.
+    components = await _build(tmp_db)
+    handler = components.health_sweep_handler
+    names = {c.contributor_name for c in handler._aggregator._contributors}
+    assert "stray_database" in names
+
+
+async def test_health_sweep_removes_an_empty_stray_at_the_home_root(
+    tmp_db: DbPool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # THE REAL WIRING, end to end. A name check ships green with constructor arguments
+    # that point at the wrong home or the wrong live database; this plants the decoy
+    # and runs the sweep's own collect + heal against it.
+    import logging
+    import os
+    import sqlite3
+    import time
+
+    from stackowl.health.status import LIVENESS_FAILING_STATES, WARNING_STATES
+    from stackowl.paths import StackowlHome
+    from stackowl.scheduler.handlers import health_sweep
+    from stackowl.scheduler.job import Job
+
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    monkeypatch.setattr(health_sweep, "_health_loop_enabled", lambda: True)
+    live = StackowlHome.db_path()
+    live.parent.mkdir(parents=True)
+    conn = sqlite3.connect(live)
+    try:
+        conn.execute("CREATE TABLE t (x INTEGER)")
+        conn.execute("INSERT INTO t VALUES (7)")
+        conn.commit()
+    finally:
+        conn.close()
+    stray = StackowlHome.home() / "stackowl.db"
+    stray.touch()
+    then = time.time() - health_sweep.HEALTH_SWEEP_INTERVAL_MINUTES * 60 - 60
+    os.utime(stray, (then, then))
+
+    handler = (await _build(tmp_db)).health_sweep_handler
+    statuses = await handler._aggregator.collect()
+    down = [s for s in statuses if s.status in LIVENESS_FAILING_STATES]
+    degraded = [s for s in statuses if s.status in WARNING_STATES]
+    job = Job(
+        job_id="hs-stray", handler_name="health_sweep", schedule="every 5m",
+        idempotency_key="health_sweep:every-5m", last_run_at=None,
+        next_run_at="2026-09-12T00:00:00+00:00", status="pending",
+    )
+    with caplog.at_level(logging.INFO, logger="stackowl.health"):
+        attempted = await handler._heal_and_verify(job, down, degraded)
+
+    assert "stray_database" in {s.name for s in degraded}, "the sweep did not detect it"
+    assert "stray_database" in attempted, "the sweep found no healer for it"
+    assert not stray.exists(), "the sweep's heal left the decoy"
+    assert any(
+        "removed" in r.getMessage() and str(stray) in r.getMessage() for r in caplog.records
+    ), "the heal was not logged"
+    # The live database gains exactly one thing — the durable removal record the
+    # recurrence count reads — and keeps everything it held.
+    from stackowl.health.contributors import STRAY_DATABASE_REMOVED_EVENT
+
+    check = sqlite3.connect(f"{live.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        assert check.execute("SELECT x FROM t").fetchall() == [(7,)], "the live data changed"
+        recorded = check.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event_type = ? AND target = ?",
+            (STRAY_DATABASE_REMOVED_EVENT, str(stray)),
+        ).fetchone()[0]
+    finally:
+        check.close()
+    assert recorded == 1, "the removal was not recorded, so a recurrence cannot be counted"
+
+
 async def test_build_returns_frozen_components(tmp_db: DbPool) -> None:
     components = await _build(tmp_db)
     assert isinstance(components, SchedulerComponents)

@@ -62,6 +62,8 @@ import pathlib
 import re
 import sys
 
+from stackowl.paths import StackowlHome
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src" / "stackowl"
 
@@ -253,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all-levels", action="store_true",
                         help="include INFO, not just WARNING and above")
-    parser.add_argument("--logs", default=str(pathlib.Path.home() / ".stackowl" / "logs"))
+    parser.add_argument("--logs", default=str(StackowlHome.logs_dir()))
     args = parser.parse_args(argv)
 
     levels = None if args.all_levels else {"WARNING", "ERROR", "CRITICAL"}

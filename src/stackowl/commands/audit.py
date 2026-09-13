@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
+from stackowl.db.readonly import connect_read_only
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -207,7 +208,7 @@ class AuditCommand(SlashCommand):
         assert self._logger is not None  # guarded by caller
         log.gateway.debug("[commands] audit._fetch_all_audit_rows: entry")
         db_path: Path = self._logger.db_path
-        conn = sqlite3.connect(db_path)
+        conn = connect_read_only(db_path)  # an export must not create the database it reads
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
