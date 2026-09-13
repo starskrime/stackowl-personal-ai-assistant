@@ -20,10 +20,10 @@ the bind', and it is named here so that answer carries this with it rather than
 discovering it afterwards."* It was answered, so the limiter is in this change
 and not a later one.
 
-WHAT THIS DOES NOT CLAIM. Against the shipped `admin`/`admin` the limiter is
-worth nothing — the first guess wins. It protects a password the operator has
-CHANGED. The default itself is defended by being announced: at WARNING on every
-boot, and as a banner on the page after every sign-in.
+WHAT THIS DOES NOT CLAIM. A limiter is worth nothing against a published password
+— the first guess wins — which is why, since Q29, none opens this dashboard: the
+owner sets one with a one-time setup code (`test_the_dashboard_has_a_login.py`).
+These tests start from an install whose owner has done that (`conftest.py`).
 """
 
 from __future__ import annotations
@@ -87,10 +87,12 @@ class TestABrowserOnARealAddressIsServed:
     while the handler still passes the wrong arguments."""
 
     @pytest.mark.tripwire
-    async def test_a_browser_on_a_LAN_address_is_not_refused(self) -> None:
+    async def test_a_browser_on_a_LAN_address_is_not_refused(
+        self, dashboard_password: str,
+    ) -> None:
         srv = _server()
         res = await srv._handle_login(  # noqa: SLF001
-            _Req({"username": "admin", "password": "admin"},
+            _Req({"username": "admin", "password": dashboard_password},
                  Origin="http://192.168.1.50:8787", Host="192.168.1.50:8787")
         )
 
@@ -115,8 +117,8 @@ class TestABrowserOnARealAddressIsServed:
 
 class TestGuessingIsRefused:
     @pytest.mark.tripwire
-    async def test_a_source_that_keeps_failing_is_cut_off(self) -> None:
-        srv = _server(username="real", password="secret")  # noqa: S106
+    async def test_a_source_that_keeps_failing_is_cut_off(self, dashboard_password: str) -> None:
+        srv = _server(username="real")
         wrong = {"username": "real", "password": "no"}
 
         for _ in range(MAX_FAILURES):
@@ -128,35 +130,37 @@ class TestGuessingIsRefused:
         # AND THE RIGHT PASSWORD DOES NOT GET THROUGH EITHER, which is the point:
         # a limiter that opens for a correct guess has not limited anything.
         right = await srv._handle_login(  # noqa: SLF001
-            _Req({"username": "real", "password": "secret"})  # noqa: S106
+            _Req({"username": "real", "password": dashboard_password})
         )
         assert right.status == 429
 
     @pytest.mark.tripwire
-    async def test_ANOTHER_source_is_unaffected(self) -> None:
+    async def test_ANOTHER_source_is_unaffected(self, dashboard_password: str) -> None:
         """The control. A counter that locks everyone out when one host guesses
         is a denial of service with extra steps."""
-        srv = _server(username="real", password="secret")  # noqa: S106
+        srv = _server(username="real")
         wrong = {"username": "real", "password": "no"}
 
         for _ in range(MAX_FAILURES + 1):
             await srv._handle_login(_Req(wrong, remote="10.0.0.9"))  # noqa: SLF001
 
         res = await srv._handle_login(  # noqa: SLF001
-            _Req({"username": "real", "password": "secret"}, remote="10.0.0.10")  # noqa: S106
+            _Req({"username": "real", "password": dashboard_password}, remote="10.0.0.10")
         )
         assert res.status == 200
 
     @pytest.mark.tripwire
-    async def test_a_successful_sign_in_forgets_the_failures(self) -> None:
+    async def test_a_successful_sign_in_forgets_the_failures(
+        self, dashboard_password: str,
+    ) -> None:
         """A person who mistypes eight times and then gets it right must not be
         one typo from a lockout an hour later."""
-        srv = _server(username="real", password="secret")  # noqa: S106
+        srv = _server(username="real")
 
         for _ in range(MAX_FAILURES - 1):
             await srv._handle_login(_Req({"username": "real", "password": "no"}))  # noqa: SLF001
         ok = await srv._handle_login(  # noqa: SLF001
-            _Req({"username": "real", "password": "secret"})  # noqa: S106
+            _Req({"username": "real", "password": dashboard_password})
         )
         assert ok.status == 200
 

@@ -33,10 +33,12 @@ class ControlPlaneSettings(BaseModel):
             "it to 127.0.0.1 to make the dashboard reachable only from the "
             "machine it runs on; the platform warns at WARNING when the bind "
             "cannot serve the operator it is configured for. "
-            "THE LOGIN IS WHAT STANDS IN FRONT OF IT: change "
-            "control_plane.username and control_plane.password from their "
-            "admin/admin defaults, which the platform warns about at every boot "
-            "and the dashboard banners after every sign-in."
+            "THE LOGIN IS WHAT STANDS IN FRONT OF IT, AND NO PUBLISHED PASSWORD "
+            "OPENS IT: a fresh install has no password and serves no data until "
+            "the owner sets one with a one-time setup code — sent to the owner's "
+            "Telegram when exactly one owner is configured, shown on the platform's "
+            "terminal when it has one, and always printed by `stackowl control-plane "
+            "reset-password` on the host."
         ),
         json_schema_extra={"hot_reload": False},
     )
@@ -52,33 +54,12 @@ class ControlPlaneSettings(BaseModel):
         min_length=1,
         description=(
             "Username for the dashboard login form. Operator-set; defaults to "
-            "`admin`. The form exchanges these for the bearer token the API "
-            "routes already use — it does not add a second way to authenticate."
+            "`admin`. The form exchanges it and the password for the bearer token "
+            "the API routes already use — it does not add a second way to "
+            "authenticate. THE PASSWORD IS NOT A SETTING: it is set on the "
+            "dashboard with a one-time setup code and kept only as a salted hash "
+            "in the platform's secret store; `stackowl control-plane "
+            "reset-password` on the host clears it."
         ),
         json_schema_extra={"hot_reload": True},
     )
-    password: str = Field(
-        default="admin",
-        min_length=1,
-        description=(
-            "Password for the dashboard login form. Defaults to `admin` by "
-            "operator request. Sensitive: auto-redacted wherever configuration "
-            "is rendered, because `flatten` takes the LEAF key and "
-            "`is_credential_name` flags `password` — verified, not assumed. "
-            "THE PLATFORM WARNS WHILE THIS IS STILL THE DEFAULT: a default "
-            "credential is only as safe as the bind, and `bind_address` is one "
-            "setting away from a network (ESC-172)."
-        ),
-        json_schema_extra={"hot_reload": True, "sensitive": True},
-    )
-
-    @property
-    def credentials_are_default(self) -> bool:
-        """True while BOTH halves are still the shipped defaults.
-
-        A property rather than a check at each call site: the warning is emitted
-        at boot, the login route reports it on success and the page renders a
-        banner, and three copies of `username == "admin" and password == "admin"`
-        is the two-copies-of-one-rule shape this tree keeps paying for.
-        """
-        return self.username == "admin" and self.password == "admin"  # noqa: S105

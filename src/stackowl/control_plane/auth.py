@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from stackowl.config.secret_resolver import SecretResolver
-from stackowl.config.secret_writer import store_secret
+from stackowl.config.secret_writer import delete_secret, store_secret
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
 from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
@@ -149,6 +149,128 @@ def ensure_credential() -> str:
     log.control_plane.info(
         "[control_plane] auth.ensure_credential: exit — minted a new credential",
         extra={"_fields": {"service": SECRET_SERVICE, "stored_in": description}},
+    )
+    return minted
+
+
+def read_credential() -> str | None:
+    """The stored control-plane token, or ``None`` — this NEVER mints.
+
+    The same keyring-then-file order :func:`ensure_credential` uses, for the same
+    reason. It exists because a read-back through `ensure_credential` would MINT a
+    third token whenever the lookup came back empty, which turns "the write did not
+    stick" into "a token nobody holds is now live" (Q29 review, BH4).
+    """
+    # 1. ENTRY
+    log.control_plane.debug(
+        "[control_plane] auth.read_credential: entry",
+        extra={"_fields": {"service": SECRET_SERVICE}},
+    )
+    # 2. DECISION / 3. STEP — first backend that answers with a value wins.
+    for kind, ref in (
+        ("keychain", f"keychain:{SECRET_SERVICE}"),
+        ("file", f"file:{StackowlHome.secrets_dir() / f'{SECRET_SERVICE}.key'}"),
+    ):
+        try:
+            existing = SecretResolver.resolve(ref)
+        except Exception as exc:  # noqa: BLE001 — B5, never silent
+            log.control_plane.debug(
+                "[control_plane] auth.read_credential: nothing readable under this "
+                "backend — trying the next",
+                extra={"_fields": {"ref_kind": kind, "reason": str(exc)[:200]}},
+            )
+            continue
+        if existing and existing.strip():
+            # 4. EXIT
+            log.control_plane.debug(
+                "[control_plane] auth.read_credential: exit — found",
+                extra={"_fields": {"ref_kind": kind}},
+            )
+            return existing.strip()
+    log.control_plane.debug("[control_plane] auth.read_credential: exit — none stored")
+    return None
+
+
+def rotate_credential(*, restore: str | None = None) -> str:
+    """Replace the stored token, so every token issued before this stops opening anything.
+
+    Mints a fresh token — or, with *restore*, puts a previous one back after a
+    change that could not complete — through the same `store_secret` path
+    :func:`ensure_credential` mints through, then READS IT BACK through
+    :func:`read_credential`. The read-back is the point: `store_secret` may land in
+    the keyring or the 0600 file and does not say which, and a write the boot-time
+    lookup does not return is a rotation that silently undoes itself at restart.
+
+    ON A MISMATCH IT REMOVES WHAT IT WROTE — the previous token goes back — so a
+    failed rotation leaves the store as it found it. Raises
+    :class:`CredentialUnavailable`; the caller keeps its old token.
+    """
+    restoring = restore is not None
+    # 1. ENTRY — the token's value is never logged, only its destination.
+    log.control_plane.info(
+        "[control_plane] auth.rotate_credential: entry",
+        extra={"_fields": {"service": SECRET_SERVICE, "restoring": restoring}},
+    )
+
+    # 2. DECISION — mint, unless putting a known previous token back.
+    previous = read_credential()
+    minted = restore if restore is not None else secrets.token_urlsafe(32)
+
+    # 3. STEP — persist, then read back without minting.
+    try:
+        description, _yaml_ref = store_secret(SECRET_SERVICE, minted)
+    except Exception as exc:  # noqa: BLE001 — B5, never silent
+        log.control_plane.error(
+            "[control_plane] auth.rotate_credential: exit — could NOT persist the "
+            "replacement credential; the current one stays in effect",
+            exc_info=exc,
+            extra={"_fields": {"service": SECRET_SERVICE}},
+        )
+        raise CredentialUnavailable(
+            f"could not persist a replacement control-plane credential: {exc}"
+        ) from exc
+
+    read_back = read_credential()
+    if read_back is None or not hmac.compare_digest(
+        read_back.encode("utf-8"), minted.encode("utf-8")
+    ):
+        # REMOVE WHAT WAS WRITTEN — the previous token back, or, when there was
+        # none, nothing at all: a minted token left behind would be a live
+        # credential nobody holds.
+        try:
+            if previous is not None:
+                store_secret(SECRET_SERVICE, previous)
+            else:
+                delete_secret(SECRET_SERVICE)
+            undone = True
+        except Exception as undo_exc:  # noqa: BLE001 — B5, never silent
+            undone = False
+            log.control_plane.error(
+                "[control_plane] auth.rotate_credential: could not put the "
+                "previous credential back",
+                exc_info=undo_exc,
+            )
+        log.control_plane.error(
+            "[control_plane] auth.rotate_credential: exit — stored, but the lookup "
+            "a restart performs returns a different credential",
+            extra={"_fields": {
+                "service": SECRET_SERVICE,
+                "stored_in": description,
+                "previous_put_back": undone,
+                "remedy": "an OS keyring entry and the 0600 file disagree — remove "
+                          "the stale one and restart",
+            }},
+        )
+        raise CredentialUnavailable("the replacement credential did not read back")
+
+    # 4. EXIT
+    log.control_plane.info(
+        "[control_plane] auth.rotate_credential: exit — credential replaced",
+        extra={"_fields": {
+            "service": SECRET_SERVICE,
+            "stored_in": description,
+            "restored": restoring,
+        }},
     )
     return minted
 

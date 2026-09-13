@@ -151,7 +151,9 @@ def test_no_secret_value_reaches_the_artifact() -> None:
     data = yaml.safe_load(text)
 
     found = _credential_keys(data)
-    assert len(found) >= 13, (
+    # 12 since Q29 retired `control_plane.password`: the dashboard password is a
+    # salted hash in the secret store, never a setting.
+    assert len(found) >= 12, (
         f"only {len(found)} credential-shaped keys found in the artifact — this "
         "guard has gone blind, or the walk no longer reaches them"
     )

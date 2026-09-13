@@ -35,10 +35,12 @@ class TestTheOperatorCanReachIt:
     def test_the_command_exists_and_is_named_for_the_thing(self) -> None:
         from stackowl.cli.app import app
 
+        # A GROUP since Q29 (`reset-password`), so the groups are asked as well —
+        # the bare command still prints the address and token.
         names = {
             getattr(c, "name", None) or getattr(c, "callback", None).__name__
             for c in app.registered_commands
-        }
+        } | {g.name for g in app.registered_groups}
         assert "control-plane" in names, (
             f"no `stackowl control-plane` command. Registered: {sorted(n for n in names if n)}"
         )
@@ -111,7 +113,7 @@ class TestSomethingNoticesItGoingDark:
     @pytest.mark.tripwire
     def test_the_name_is_required_and_has_a_probe(self) -> None:
         import stackowl.health.reachability.probes  # noqa: F401 — registers them
-        from stackowl.health.reachability.census import REQUIRED_PROBES, _PROBES
+        from stackowl.health.reachability.census import _PROBES, REQUIRED_PROBES
 
         name = "control_plane.serves_by_default"
         assert name in REQUIRED_PROBES, (
@@ -139,8 +141,8 @@ class TestSomethingNoticesItGoingDark:
         satisfied population pins nothing. `webhook.enabled` defaults False and
         that receiver served zero requests across 873 boots — this is that state,
         built on purpose so the probe is proven to detect it."""
-        from stackowl.config import settings as settings_mod
         import stackowl.health.reachability.probes  # noqa: F401 — registers them
+        from stackowl.config import settings as settings_mod
         from stackowl.health.reachability.census import _PROBES
 
         real = settings_mod.Settings
@@ -163,3 +165,30 @@ class TestSomethingNoticesItGoingDark:
             "webhook receiver serve nobody for 873 boots"
         )
         assert "enabled=False" in got.detail
+
+    @pytest.mark.tripwire
+    def test_the_core_WIRES_the_deliverer_and_the_password_store_health(self) -> None:
+        """Q29. A server built without `deliverer=` issued setup codes that reached
+        nobody — measured live 2026-09-12 — and a password store nobody reports on
+        is "unreadable" to nobody. Both are wiring, so both are asked of the
+        orchestrator's own source."""
+        from stackowl.startup import orchestrator as orch
+
+        tree = ast.parse(inspect.getsource(orch))
+        built = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "ControlPlaneServer"
+        ]
+        assert built, "the orchestrator no longer constructs ControlPlaneServer("
+        assert all("deliverer" in {k.arg for k in call.keywords} for call in built), (
+            "ControlPlaneServer( is built without deliverer= — its setup codes reach nobody"
+        )
+        registered = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "register"
+            and any(isinstance(a, ast.Call) and isinstance(a.func, ast.Name)
+                    and a.func.id == "PasswordStoreHealth" for a in n.args)
+        ]
+        assert registered, "PasswordStoreHealth is never registered with the health aggregator"

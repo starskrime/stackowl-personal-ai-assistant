@@ -1401,8 +1401,15 @@ def restore(
     typer.echo("✓ Restore complete")
 
 
-@app.command(name="control-plane")
+#: A GROUP since Q29, so the host can reset the dashboard password; the bare
+#: command still prints exactly what it printed before.
+control_plane_app = typer.Typer(help="The control plane's address, token and dashboard password.")
+app.add_typer(control_plane_app, name="control-plane")
+
+
+@control_plane_app.callback(invoke_without_command=True)
 def control_plane(
+    ctx: typer.Context,
     as_json: bool = typer.Option(False, "--json", help="Emit as JSON."),
 ) -> None:
     """Print the control plane's address and access token.
@@ -1418,12 +1425,15 @@ def control_plane(
     where the keyring is unusable (this one) it would do that every time it was
     run. If there is no credential yet, that is a real answer and it says so.
     """
+    if ctx.invoked_subcommand is not None:
+        return
     import json
     import sys
 
     from stackowl.config.secret_resolver import SecretResolver
     from stackowl.config.settings import Settings
     from stackowl.control_plane.auth import SECRET_SERVICE
+    from stackowl.control_plane.password import ControlPlanePassword
     from stackowl.paths import StackowlHome
 
     cfg = Settings().control_plane
@@ -1468,3 +1478,83 @@ def control_plane(
     typer.echo(f"  Token ({source}): {token}")
     typer.echo("")
     typer.echo(f'  curl -H "Authorization: Bearer $TOKEN" {url}/api/v1/health')
+    # TWO FACTS THE CURL LINE CANNOT SHOW (Q29): it answers 403 until a dashboard
+    # password is set, and setting or changing that password replaces this token.
+    if ControlPlanePassword().lookup().state == "setup":
+        typer.echo(
+            "  Setup mode: no dashboard password is set, so that curl answers 403 until "
+            "one is — `stackowl control-plane reset-password` prints a setup code."
+        )
+    typer.echo("  Setting or changing the dashboard password rotates this token.")
+
+
+@control_plane_app.command(name="reset-password")
+def control_plane_reset_password() -> None:
+    """Forget the dashboard password and print a fresh one-time setup code.
+
+    THE WAY BACK IN (Q29, L4). The password is a salted hash only, so a forgotten
+    one cannot be recovered — it is cleared. The access token is rotated with it,
+    so a session opened with the old password opens nothing, and a fresh setup
+    code is printed HERE, on the host, which is what proves ownership.
+
+    NO RESTART: the running dashboard reads the store on every request, so its
+    next one is in setup mode — and, when exactly one Telegram owner is
+    configured, that request is also when the running platform sends this code
+    there. Nothing is changed unless all three steps succeed, and when putting
+    things back fails too the command says exactly what changed.
+
+    THE RESET RUNS BEFORE THE CONFIGURATION IS READ. This is the recovery
+    command, and a broken stackowl.yaml must not stand between the operator and
+    it; the port is only for the message, so it is read best-effort afterwards.
+    """
+    import sys
+
+    from stackowl.config.control_plane_settings import ControlPlaneSettings
+    from stackowl.control_plane.password import (
+        ControlPlanePassword,
+        PasswordResetIncomplete,
+        PasswordStoreUnavailable,
+    )
+
+    # 1. ENTRY
+    log.info("[cli] control-plane reset-password: entry")
+
+    # 2. DECISION / 3. STEP — one transaction, owned by the password module.
+    try:
+        issued = ControlPlanePassword().reset()
+    except PasswordResetIncomplete as exc:
+        log.error("[cli] control-plane reset-password: failed, rollback incomplete — %s", exc)
+        typer.echo(f"✗ Could not reset the dashboard password: {exc}", err=True)
+        typer.echo("  Putting things back was INCOMPLETE — these changed:", err=True)
+        for change in exc.changed:
+            typer.echo(f"    - {change}", err=True)
+        typer.echo(f"  Remedy: {exc.remedy}", err=True)
+        sys.exit(1)
+    except PasswordStoreUnavailable as exc:
+        log.warning("[cli] control-plane reset-password: failed — %s", exc)
+        typer.echo(f"✗ Could not reset the dashboard password: {exc}", err=True)
+        typer.echo(f"  Nothing was changed. Remedy: {exc.remedy}", err=True)
+        sys.exit(1)
+
+    # The port is only for the message: read best-effort, AFTER the reset.
+    try:
+        from stackowl.config.settings import Settings
+
+        port = Settings().control_plane.port
+    except Exception as exc:  # noqa: BLE001 — a finished reset is never undone over a message
+        log.warning("[cli] control-plane reset-password: could not read the port — %s", exc)
+        port = ControlPlaneSettings.model_fields["port"].default
+
+    # 4. EXIT — the code goes to the operator's terminal, never to the log.
+    log.info("[cli] control-plane reset-password: exit — password cleared, code issued")
+    typer.echo("✓ Dashboard password cleared and the access token rotated.")
+    typer.echo(f"  Setup code: {issued.display}")
+    typer.echo(f"  Single use, valid until {issued.expires_utc}.")
+    typer.echo(
+        f"  Open the dashboard on port {port}, enter the code and choose a new "
+        "password (at least 12 characters)."
+    )
+    typer.echo(
+        "  If exactly one Telegram owner is configured, the running platform also "
+        "sends it there on the dashboard's next request."
+    )

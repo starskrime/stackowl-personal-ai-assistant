@@ -121,7 +121,19 @@ class _DeletableSender(Protocol):
 #: stream-miss fallback for a reply turn_persist has already recorded.
 #: The ``ephemeral`` flag is checked separately and covers the general case; these
 #: names cover a probe that forgets to set it.
-_UNREMEMBERED_CATEGORIES = frozenset({"canary", "turn_answer"})
+#:
+#: ``control_plane_setup`` is the dashboard's one-time setup code (Q29). It is an
+#: OWNERSHIP PROOF, not something the agent said: remembered, it sits in the
+#: conversation history that is assembled into model prompts, so a still-valid
+#: code would travel to a model provider. MEASURED 2026-09-12: the first live
+#: delivery was found in ``workspace/stackowl.db`` before this was added.
+SETUP_CODE_CATEGORY = "control_plane_setup"
+_UNREMEMBERED_CATEGORIES = frozenset({"canary", "turn_answer", SETUP_CODE_CATEGORY})
+
+#: Categories a failed send is NEVER rerouted for. A setup code rerouted to the
+#: fallback channel would reach whoever reads that channel and be counted as the
+#: owner's Telegram having it (Q29).
+_UNREROUTED_CATEGORIES = frozenset({SETUP_CODE_CATEGORY})
 
 
 # Urgency an agent-originated notification is permitted to request. ``critical``
@@ -487,6 +499,9 @@ class ProactiveDeliverer:
         try:
             if status != "failed":
                 return status
+            # A SECRET GOES WHERE IT WAS ADDRESSED OR NOWHERE (Q29).
+            if notification.category in _UNREROUTED_CATEGORIES:
+                return status
             fallback = self._settings.notifications.fallback_channel
             if not fallback or fallback == failed_channel:
                 return status
@@ -579,6 +594,17 @@ class ProactiveDeliverer:
             log.notifications.error(
                 "[notifications] deliverer._transport: channel unavailable",
                 exc_info=exc,
+                extra={"_fields": {"channel": channel}},
+            )
+            return "failed"
+
+        # A CHANNEL WITH NOTHING ATTACHED CANNOT RECEIVE. The headless "cli"
+        # adapter accepts text and drops it; counting that as delivered reported a
+        # one-time dashboard setup code as seen when nobody could see it (Q29).
+        if getattr(adapter, "surface", None) == "headless":
+            log.notifications.warning(
+                "[notifications] deliverer._transport: undeliverable — the channel "
+                "has no terminal attached",
                 extra={"_fields": {"channel": channel}},
             )
             return "failed"

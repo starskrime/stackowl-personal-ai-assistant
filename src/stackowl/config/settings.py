@@ -17,6 +17,10 @@ from stackowl.channels.slack.settings import SlackSettings
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.channels.whatsapp.settings import WhatsAppSettings
 from stackowl.config.browser import BrowserSettings
+from stackowl.config.control_plane_password_migration import (
+    drop_legacy_control_plane_password,
+    migrate_legacy_control_plane_password,
+)
 from stackowl.config.control_plane_settings import ControlPlaneSettings
 from stackowl.config.notification_settings import (
     NotificationSettings,
@@ -75,6 +79,10 @@ class _YamlSource(PydanticBaseSettingsSource):
         # itself) and never blocks the read below — ProviderConfig's own
         # legacy-tier validator is the boot-safety backstop regardless.
         migrate_legacy_tier_field(self._path)
+        # Q29 — the dashboard password stopped being a setting. Same choke point,
+        # same shape: a custom legacy value is imported once as the hash and the
+        # key is removed in place, so an upgraded install boots on its own file.
+        migrate_legacy_control_plane_password(self._path)
         try:
             raw = yaml.safe_load(self._path.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -83,6 +91,10 @@ class _YamlSource(PydanticBaseSettingsSource):
                 f"config file {self._path} exists but failed to parse: {exc}"
             ) from exc
         data = raw if isinstance(raw, dict) else {}
+        # And when the file could not be rewritten, the key is still IGNORED:
+        # `ControlPlaneSettings` forbids unknown keys, so leaving it would turn a
+        # failed hygiene write into a refused boot.
+        drop_legacy_control_plane_password(data)
         self._warn_unknown_keys(data)
         return data
 
@@ -117,6 +129,34 @@ class _YamlSource(PydanticBaseSettingsSource):
 
     def __call__(self) -> dict[str, Any]:
         return {k: v for k, v in self._data.items() if v is not None}
+
+
+class _WithoutRetiredKeys(PydanticBaseSettingsSource):
+    """A settings source, minus a retired `control_plane.password` (Q29).
+
+    The YAML source drops it after migrating; the ENVIRONMENT has no file to
+    migrate, and `STACKOWL_CONTROL_PLANE__PASSWORD` would hit `extra="forbid"` and
+    refuse the boot. It is ignored here with a WARNING instead.
+    """
+
+    def __init__(
+        self, settings_cls: type[BaseSettings], inner: PydanticBaseSettingsSource
+    ) -> None:
+        super().__init__(settings_cls)
+        self._inner = inner
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return self._inner.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        data = self._inner()
+        drop_legacy_control_plane_password(
+            data,
+            source="environment",
+            remedy="unset STACKOWL_CONTROL_PLANE__PASSWORD — the dashboard password is "
+                   "set on the dashboard with a setup code",
+        )
+        return data
 
 
 class BudgetSettings(BaseModel):
@@ -1115,7 +1155,11 @@ class Settings(BaseSettings):
         # The order is the contract: an explicitly passed value outranks the
         # environment, which outranks the config file. A caller who names a value
         # meant it.
-        return (init_settings, env_settings, _YamlSource(settings_cls, config_path))
+        return (
+            init_settings,
+            _WithoutRetiredKeys(settings_cls, env_settings),
+            _YamlSource(settings_cls, config_path),
+        )
 
     @model_validator(mode="after")
     def _post_init(self) -> Settings:

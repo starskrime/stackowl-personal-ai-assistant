@@ -285,6 +285,7 @@ INDEX_HTML: Final = """<!doctype html>
                  cursor:pointer; font:500 11px/1 var(--mono);
                  letter-spacing:.18em; text-transform:uppercase; }
   #status { margin:12px 0 0; font:400 12px/1.5 var(--sans); color:var(--ink-dim); }
+  #changetoggle { width:100%; margin:9px 0 0; }
   .bad { color:var(--down); }
 
   /* -------------------------------------------------------------- the tiles
@@ -352,10 +353,43 @@ INDEX_HTML: Final = """<!doctype html>
       <button class="go" type="submit">Sign in</button>
       <button class="ghost" type="button" id="forget">Sign out</button>
     </form>
-    <p class="note" id="defaultwarn" hidden></p>
-    <p class="note">Set <b>control_plane.username</b> and <b>control_plane.password</b>
-       in stackowl.yaml. The session is kept for this tab only and never written
-       to a cookie.</p>
+    <!-- EACH FORM SITS IN A DIV THAT CARRIES `hidden`, NEVER A HIDDEN <form>:
+         `form { display:flex }` above outranks the attribute. -->
+    <div id="setup" hidden>
+      <p class="note">This dashboard has no password yet. Enter the one-time
+         <b>setup code</b> and choose a password of at least 12 characters. The
+         platform sends the code to the owner's Telegram when exactly one owner is
+         configured and shows it on its terminal when it has one;
+         <b>stackowl control-plane reset-password</b> on the host always prints a
+         fresh one.</p>
+      <form id="setupform">
+        <input id="setupcode" type="text" placeholder="setup code"
+               autocomplete="one-time-code" autocapitalize="characters" spellcheck="false">
+        <input id="setuppw" type="password" placeholder="new password"
+               autocomplete="new-password" spellcheck="false">
+        <input id="setuppw2" type="password" placeholder="new password again"
+               autocomplete="new-password" spellcheck="false">
+        <button class="go" type="submit">Set password</button>
+      </form>
+    </div>
+    <div id="change" hidden>
+      <form id="changeform">
+        <input id="changeuser" type="text" placeholder="username"
+               autocomplete="username" spellcheck="false">
+        <input id="changecurrent" type="password" placeholder="current password"
+               autocomplete="current-password" spellcheck="false">
+        <input id="changepw" type="password" placeholder="new password"
+               autocomplete="new-password" spellcheck="false">
+        <input id="changepw2" type="password" placeholder="new password again"
+               autocomplete="new-password" spellcheck="false">
+        <button class="go" type="submit">Change password</button>
+      </form>
+    </div>
+    <button class="ghost" type="button" id="changetoggle">Change password</button>
+    <p class="note">The username is <b>control_plane.username</b> in stackowl.yaml.
+       Forgotten the password? Run <b>stackowl control-plane reset-password</b> on
+       the host. The session is kept for this tab only and never written to a
+       cookie.</p>
     <p class="note" id="status"></p>
   </section>
 
@@ -815,10 +849,32 @@ INDEX_HTML: Final = """<!doctype html>
   }
 
   // ------------------------------------------------------------------ fetch
+  function bodyOf(r) { return r.json().catch(function () { return {}; }); }
+
+  // THE REFUSALS THAT MEAN SOMETHING ARE MARKED (Q29), so `load` can act on them
+  // instead of printing a transport status the owner can do nothing with:
+  // `stale` a token that stopped working, `setup` an install with no password
+  // yet, `unavailable` a password store that cannot be read. A 503 renders as a
+  // panel only when it carries a route's designed `wired: false`.
   function get(path, token) {
     return fetch(path, { headers: { "Authorization": "Bearer " + token } })
       .then(function (r) {
-        if (r.status === 503) { return r.json(); }
+        if (r.status === 401) {
+          var stale = new Error("HTTP 401");
+          stale.kind = "stale";
+          throw stale;
+        }
+        if (r.status === 403 || r.status === 503) {
+          return bodyOf(r).then(function (b) {
+            var marked = new Error(b.remedy || b.error || ("HTTP " + r.status));
+            if (b.error === "setup_required") { marked.kind = "setup"; throw marked; }
+            if (b.error === "password_store_unavailable") { marked.kind = "unavailable"; throw marked; }
+            // A 503 IS DATA ONLY WHEN IT SAYS SO. A proxy page or a crash answers
+            // 503 too, and rendering it as an empty panel hides the failure.
+            if (r.status === 503 && b.wired === false) { return b; }
+            throw marked;
+          });
+        }
         if (!r.ok) { throw new Error("HTTP " + r.status); }
         return r.json();
       });
@@ -835,6 +891,21 @@ INDEX_HTML: Final = """<!doctype html>
     say("reading the platform…");
     Promise.allSettled(PANELS.map(function (p) { return get(p.path, token); }))
       .then(function (results) {
+        // A SESSION THAT ENDED ELSEWHERE (Q29). A token rotated by a password
+        // change in another tab, or by a reset on the host, answers 401 — the
+        // page forgets it and shows sign-in rather than dead-ending at
+        // "HTTP 401" with the dead token still kept.
+        var kinds = results.map(function (res) {
+          return res.status === "rejected" && res.reason ? res.reason.kind : null;
+        });
+        if (kinds.indexOf("stale") !== -1) {
+          endSession("your session has ended — the password or the access token "
+            + "changed; sign in again");
+          return;
+        }
+        if (kinds.indexOf("setup") !== -1) { endSession(SETUP_NOTE, "setup"); return; }
+        var unreadable = results.filter(function (res, i) { return kinds[i] === "unavailable"; });
+        if (unreadable.length) { say(String(unreadable[0].reason.message)); return; }
         var failed = [];
         var by = {};
         results.forEach(function (res, i) {
@@ -858,49 +929,28 @@ INDEX_HTML: Final = """<!doctype html>
       });
   }
 
-  // The password NEVER goes to sessionStorage — only the token the server hands
-  // back does. A page that remembered the password would put a reusable
-  // credential where any script on this origin can read it, to save one typing.
-  $("loginform").addEventListener("submit", function (ev) {
-    ev.preventDefault();
-    var u = $("username").value;
-    var p = $("password").value;
-    if (!u || !p) { say("enter a username and password"); return; }
-    say("signing in…");
-    fetch("/api/v1/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: u, password: p })
-    }).then(function (r) {
-      if (r.status === 401) { throw new Error("invalid credentials"); }
-      if (!r.ok) { throw new Error("HTTP " + r.status); }
-      return r.json();
-    }).then(function (body) {
-      $("password").value = "";
-      if (body.default_credentials) {
-        var w = $("defaultwarn");
-        w.textContent = "Signed in with the DEFAULT credentials (admin/admin). "
-          + "Anyone who can reach this address can sign in. Set "
-          + "control_plane.username and control_plane.password.";
-        w.className = "note bad";
-        w.hidden = false;
-      }
-      try { sessionStorage.setItem(KEY, body.token); } catch (e) { /* memory only */ }
-      load(body.token);
-    }).catch(function (e) {
-      say(String(e.message || e));
-    });
-  });
+  // ------------------------------------------------------------ signing in
+  //
+  // SIGN-IN IS ALWAYS THERE (Q29), and at most ONE of the setup and change forms
+  // is open beside it: SETUP when the platform says this dashboard has no
+  // password yet, CHANGE when the owner asks for it.
+  var SETUP_NOTE = "this dashboard has no password yet — enter the setup code and "
+    + "choose a password of at least 12 characters. The code goes to the owner's "
+    + "Telegram when exactly one owner is configured and to the platform's terminal "
+    + "when it has one; stackowl control-plane reset-password on the host prints a "
+    + "fresh one";
 
-  $("forget").addEventListener("click", function () {
-    try { sessionStorage.removeItem(KEY); } catch (e) { /* nothing to clear */ }
-    $("username").value = "";
-    $("password").value = "";
-    $("defaultwarn").hidden = true;
+  function showForm(which) {
+    $("setup").hidden = which !== "setup";
+    $("change").hidden = which !== "change";
+  }
+
+  // THE SIGN-OUT SWEEP, shared by "Sign out" and by a session that ended
+  // somewhere else. FROM `PANELS`, never a list written here — and the shell
+  // around them too. Hiding eight panels while leaving five wrappers and a tab
+  // bar on screen answers "sign out" with an empty app rather than a signed-out one.
+  function hideEverything() {
     $("sheet").hidden = true;
-    // FROM `PANELS`, never a list written here — and the shell around them too.
-    // Hiding eight panels while leaving five wrappers and a tab bar on screen
-    // answers "sign out" with an empty app rather than a signed-out one.
     PANELS.forEach(function (p) { $(p.id).hidden = true; });
     destinations().forEach(function (d) {
       var n = $(destId(d));
@@ -908,12 +958,132 @@ INDEX_HTML: Final = """<!doctype html>
     });
     $("brief").hidden = true;
     $("rail").hidden = true;
-    say("token forgotten");
+  }
+
+  function endSession(note, form) {
+    try { sessionStorage.removeItem(KEY); } catch (e) { /* nothing to clear */ }
+    hideEverything();
+    showForm(form || "signin");
+    say(note);
+  }
+
+  // The password NEVER goes to sessionStorage — only the token the server hands
+  // back does. A page that remembered the password would put a reusable
+  // credential where any script on this origin can read it, to save one typing.
+  function signedIn(token) {
+    try { sessionStorage.setItem(KEY, token); } catch (e) { /* memory only */ }
+    showForm("signin");
+    load(token);
+  }
+
+  // A credential route answers JSON, except the uniform 401, which is plain
+  // text — so the body is read as text and parsed when it can be.
+  function post(path, payload) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (r) {
+      return r.text().then(function (t) {
+        var b = {};
+        try { b = JSON.parse(t) || {}; } catch (e) { b = {}; }
+        return { status: r.status, body: b };
+      });
+    });
+  }
+
+  function explain(res) {
+    var b = res.body || {};
+    return b.reason || b.remedy || b.error || ("HTTP " + res.status);
+  }
+
+  function clearSecrets() {
+    ["password", "setupcode", "setuppw", "setuppw2", "changecurrent", "changepw",
+     "changepw2"].forEach(function (id) { $(id).value = ""; });
+  }
+
+  $("loginform").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var u = $("username").value;
+    var p = $("password").value;
+    if (!u || !p) { say("enter a username and password"); return; }
+    say("signing in…");
+    post("/api/v1/login", { username: u, password: p }).then(function (res) {
+      $("password").value = "";
+      if (res.status === 200 && res.body.token) { signedIn(res.body.token); return; }
+      // NO TOKEN FOR A PUBLISHED PASSWORD (Q29): an install with none yet
+      // answers 409, and the only way forward is the setup code.
+      if (res.status === 409) { showForm("setup"); say(SETUP_NOTE); return; }
+      if (res.status === 401) { say("invalid credentials"); return; }
+      say(explain(res));
+    }).catch(function (e) {
+      say(String(e.message || e));
+    });
+  });
+
+  // SETTING THE FIRST PASSWORD. The setup code is the proof of ownership; the
+  // password is typed twice because a typo nobody can see is a lockout.
+  $("setupform").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var code = $("setupcode").value;
+    var pw = $("setuppw").value;
+    if (!code || !pw) { say("enter the setup code and a new password"); return; }
+    if (pw !== $("setuppw2").value) { say("the two passwords do not match"); return; }
+    say("setting the password…");
+    post("/api/v1/setup", { code: code, new_password: pw }).then(function (res) {
+      if (res.status === 200 && res.body.token) { clearSecrets(); signedIn(res.body.token); return; }
+      if (res.status === 401) {
+        say("that setup code is wrong, expired or already used — run "
+          + "stackowl control-plane reset-password on the host for a fresh one");
+        return;
+      }
+      say(explain(res));
+    }).catch(function (e) {
+      say(String(e.message || e));
+    });
+  });
+
+  // CHANGING IT. The server re-proves the current password rather than trusting
+  // a token, rotates the token and returns the new one — which signs every
+  // other tab out.
+  $("changeform").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var u = $("changeuser").value;
+    var current = $("changecurrent").value;
+    var pw = $("changepw").value;
+    if (!u || !current || !pw) {
+      say("enter the username, the current password and a new one");
+      return;
+    }
+    if (pw !== $("changepw2").value) { say("the two new passwords do not match"); return; }
+    say("changing the password…");
+    post("/api/v1/password", { username: u, current_password: current, new_password: pw })
+      .then(function (res) {
+        if (res.status === 200 && res.body.token) { clearSecrets(); signedIn(res.body.token); return; }
+        if (res.status === 409) { showForm("setup"); say(SETUP_NOTE); return; }
+        if (res.status === 401) { say("the username or current password is wrong"); return; }
+        say(explain(res));
+      }).catch(function (e) {
+        say(String(e.message || e));
+      });
+  });
+
+  $("changetoggle").addEventListener("click", function () {
+    var opening = $("change").hidden;
+    showForm(opening ? "change" : "signin");
+    if (opening) { $("changeuser").value = $("username").value; }
+  });
+
+  $("forget").addEventListener("click", function () {
+    $("username").value = "";
+    clearSecrets();
+    endSession("token forgotten");
   });
 
   // THE RESUME PATH. A tab that already holds a session renders straight away;
   // this was dead for two days once because it reached for an element the
   // markup had stopped declaring, so it is exercised by its own guard now.
+  showForm("signin");
   var stored = null;
   try { stored = sessionStorage.getItem(KEY); } catch (e) { stored = null; }
   if (stored) { load(stored); }

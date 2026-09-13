@@ -177,6 +177,13 @@ _ACCEPTED: dict[str, str] = {
         "retry helper; the caller logs the synthesis outcome",
     "src/stackowl/parliament/round_runner.py::_run_owl":
         "per-owl round step; the round logs its own outcome",
+    # --- control_plane, Q29 (2026-09-12) ---
+    # A READ OF THE SECRET STORE, INVERTED relative to the gate's premise the way
+    # `resolve_source_secret` is: the loud return is the FAILURE (a damaged record,
+    # ERROR) and the quiet ones are "no code" and "valid".
+    "src/stackowl/control_plane/password.py::current_code":
+        "a read, not a decision to act; `ensure_code`, `mark_code_sent` and the setup "
+        "route log what they did with the answer",
 }
 
 

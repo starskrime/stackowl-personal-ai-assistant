@@ -31,6 +31,9 @@ attached, and says so.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+from typing import Any
 
 import pytest
 
@@ -77,6 +80,27 @@ async def test_send_text_does_not_raise_and_records_the_text() -> None:
 
     assert result is None
     assert adapter.dropped == ["morning brief"]
+
+
+async def test_a_dropped_message_is_NEVER_logged(
+    capture_logs: list[dict[str, Any]], caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Q29: the dashboard's one-time setup code is addressed to "cli", and a preview
+    of a dropped message once put a still-valid code into the log. The drop is
+    recorded by its size alone.
+
+    The drop line is INFO, and a test process leaves `stackowl.cli` at the root's
+    WARNING — so the level is raised for this test, or the capture sees nothing
+    and the no-leak assertion below passes over an empty list."""
+    caplog.set_level(logging.DEBUG, logger="stackowl.cli")
+    adapter = HeadlessCliAdapter()
+
+    await adapter.send_text("StackOwl dashboard setup code: ABCD-EFGH-JKMN")
+
+    assert any("dropped a message" in str(r.get("msg")) for r in capture_logs), (
+        "the drop was not recorded at all — this guard has gone blind"
+    )
+    assert "ABCD-EFGH-JKMN" not in json.dumps(capture_logs, default=str)
 
 
 async def test_send_drains_the_stream_rather_than_leaking_it() -> None:

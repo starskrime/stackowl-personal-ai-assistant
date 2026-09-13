@@ -24,10 +24,11 @@ prevent — an attacker rotating source addresses grows it without limit. So the
 map is capped and evicts the least recently seen entry, and the cap is stated
 rather than assumed safe.
 
-WHAT IT IS WORTH, HONESTLY. Against the shipped `admin`/`admin` it is worth
-nothing — the first guess wins, which is why the platform warns about that
-default at boot and the page banners it after every sign-in. It protects a
-password the operator HAS changed, which is the only thing it can protect.
+WHAT IT IS WORTH, HONESTLY. Against a published password it would be worth
+nothing — the first guess wins — which is why, since Q29, no published password
+opens this dashboard at all: the owner sets one with a one-time setup code
+(`password.py`). It brakes guesses at that password and at the setup code, and
+every attempt is counted BEFORE any hash is derived.
 """
 
 from __future__ import annotations

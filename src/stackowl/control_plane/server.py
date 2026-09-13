@@ -30,7 +30,7 @@ import asyncio
 import datetime as _dt
 import hmac as _hmac
 import time as _time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from stackowl.authz.bounds_guard import effective_bounds
 from stackowl.commands.config_helpers import (
@@ -49,6 +49,7 @@ from stackowl.control_plane.auth import (
     check_origin,
     ensure_credential,
     is_loopback,
+    read_credential,
 )
 from stackowl.control_plane.login_guard import (
     MAX_FAILURES,
@@ -56,6 +57,15 @@ from stackowl.control_plane.login_guard import (
     LoginAttempts,
 )
 from stackowl.control_plane.page import ICON_SVG, INDEX_HTML, MANIFEST_JSON
+from stackowl.control_plane.password import (
+    RESET_REMEDY,
+    STORE_REMEDY,
+    ControlPlanePassword,
+    PasswordLookup,
+    PasswordStoreUnavailable,
+    SetupCode,
+    weakness,
+)
 from stackowl.infra.observability import log
 from stackowl.owls.activity import read_owl_activity
 from stackowl.owls.skill_ownership import read_all_skill_ownership
@@ -67,9 +77,19 @@ if TYPE_CHECKING:
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.health.aggregator import HealthAggregator
+    from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.scheduler.scheduler import JobScheduler
 
 from stackowl.supervisor.supervisor import SupervisedTask
+
+#: What a credential proof came to. `refused` is the brake, `wrong` the uniform 401.
+_Proof = Literal["ok", "wrong", "refused"]
+
+#: When a setup code issued at boot could not reach the owner's Telegram, how long
+#: to wait before each further try. The channel adapters start beside this server,
+#: not before it, so the first send can race them; after these the next sign-in
+#: attempt in setup mode tries again.
+_BOOT_DELIVERY_RETRY_S = (15.0, 60.0, 180.0)
 
 #: How many lessons the memory browser shows at once. The corpus is 5,964 rows
 #: and grows on every turn, so the page is a WINDOW onto it — the counts beside
@@ -101,6 +121,7 @@ class ControlPlaneServer(SupervisedTask):
         health: HealthAggregator | None = None,
         scheduler: JobScheduler | None = None,
         db: DbPool | None = None,
+        deliverer: ProactiveDeliverer | None = None,
     ) -> None:
         log.control_plane.info(
             "[control_plane] server.init: entry",
@@ -108,6 +129,7 @@ class ControlPlaneServer(SupervisedTask):
                 "has_health": health is not None,
                 "has_scheduler": scheduler is not None,
                 "has_db": db is not None,
+                "has_deliverer": deliverer is not None,
             }},
         )
         self._settings = settings
@@ -126,6 +148,31 @@ class ControlPlaneServer(SupervisedTask):
         #: exists to prevent. Per-SERVER rather than global: a test builds its
         #: own instance and cannot be poisoned by another test's failures.
         self._login_attempts = LoginAttempts()
+        #: THE ONE-TIME SETUP CODE'S WAY TO THE OWNER (Q29) — the same deliverer
+        #: every proactive send uses, never a second path to Telegram.
+        self._deliverer = deliverer
+        #: THE ONE OWNER OF WHO OWNS THIS DASHBOARD (Q29). Stateless: every call
+        #: reads the store, so a reset from the host CLI lands on the next request.
+        self._password = ControlPlanePassword()
+        #: Setup and password changes run one at a time, so two at once cannot
+        #: interleave token rotation and hash writes (BH1) — exactly one wins.
+        self._credential_lock = asyncio.Lock()
+        #: At most one code issue/delivery at a time.
+        self._code_lock = asyncio.Lock()
+        #: scrypt is 16 MiB per derivation; unbounded parallel sign-ins would starve
+        #: the executor and the memory with it (BH5).
+        self._derivations = asyncio.Semaphore(2)
+        #: Background code deliveries, held so they are not collected mid-flight.
+        self._background: set[asyncio.Task[None]] = set()
+        #: Set SYNCHRONOUSLY when a code task is spawned and cleared when it ends —
+        #: checking the lock instead let a burst each spawn one before the first
+        #: had taken it.
+        self._code_pending = False
+        #: `(issued_at, issuer)` of the code last offered to the terminal, so a boot
+        #: retry does not print it again.
+        self._terminal_offered: tuple[int, str] | None = None
+        #: The gate state last logged loudly — see `_log_gate`.
+        self._gate_state: str | None = None
         self._runner: Any = None
         self._site: Any = None
         self._stop_event: asyncio.Event | None = None
@@ -175,6 +222,8 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/tasks", self._handle_tasks)
         app.router.add_get("/api/v1/agents", self._handle_agents)
         app.router.add_post("/api/v1/login", self._handle_login)
+        app.router.add_post("/api/v1/setup", self._handle_setup)
+        app.router.add_post("/api/v1/password", self._handle_password)
         app.router.add_get("/api/v1/memory", self._handle_memory)
         app.router.add_get("/api/v1/interactions", self._handle_interactions)
 
@@ -198,7 +247,7 @@ class ControlPlaneServer(SupervisedTask):
             extra={"_fields": {"bind": cfg.bind_address, "port": cfg.port}},
         )
         self._warn_if_unreachable()
-        self._warn_if_default_credentials()
+        self._spawn_setup_code("start")
 
         # Block forever. Returning here after a successful bind makes the
         # supervisor treat the bind as "the task finished" and re-invoke run(),
@@ -213,49 +262,231 @@ class ControlPlaneServer(SupervisedTask):
         finally:
             await self.stop()
 
-    def _warn_if_default_credentials(self) -> None:
-        """Say it at boot while the login is still admin/admin.
+    # ------------------------------------------------------- the setup code
 
-        A default credential is only as dangerous as the bind, and the bind is
-        ONE SETTING away from a network — which is exactly what ESC-172 is open
-        about. So the pairing is what gets logged: an operator who widens the
-        bind and greps for this line finds it, and the message names the remedy
-        rather than the problem.
+    def _spawn_setup_code(self, reason: str) -> None:
+        """Make sure an install in setup mode has a setup code on its way to the owner.
 
-        WARNING, not INFO, and the level is the point: production runs at INFO
-        and this deployment has written ZERO debug records in 677,108, so a
-        DEBUG line here would be a warning nobody could ever read. It is also
-        reported to the PAGE on every successful sign-in, because the person who
-        can fix it is the one looking at the dashboard, not the one reading the
-        journal.
+        REPLACES THE BOOT WARNING ABOUT admin/admin (Q29). A warning named a
+        published password; this issues the proof that replaces it. Called at
+        start and whenever a request finds the install in setup mode — so a code
+        that expired, or one the host CLI issued, reaches the owner on the next
+        request without a restart.
+
+        IN THE BACKGROUND, so no request waits on Telegram, and skipped while one
+        is already running: a burst of refusals adds nothing.
         """
-        cfg = self._settings.control_plane
-        if not cfg.credentials_are_default:
+        if self._code_pending:
             return
-        # ASKS THE PREDICATE. This was a three-element string compare while
-        # `is_loopback` sat two functions away in the same package — two copies
-        # of one rule, and the copy here was the weaker one: it misses `127.0.1.1`
-        # and the IPv4-mapped `::ffff:127.0.0.1`, both real bind addresses, and
-        # would have called each of them network-reachable. That inverts the very
-        # field it feeds. Found while answering ESC-172, fixed in the same change.
-        loopback = is_loopback(cfg.bind_address)
+        self._code_pending = True
+        task = asyncio.create_task(self._ensure_setup_code(reason))
+        self._background.add(task)
+        task.add_done_callback(self._code_task_done)
+
+    def _code_task_done(self, task: asyncio.Task[None]) -> None:
+        self._background.discard(task)
+        self._code_pending = False
+
+    async def _settle_background(self) -> None:
+        """Wait for background code work — for a caller that must observe its outcome."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
+
+    async def _ensure_setup_code(self, reason: str) -> None:
+        """Issue (or reuse) the setup code and deliver it once. Never raises."""
+        t0 = _time.monotonic()
+        # 1. ENTRY
+        log.control_plane.info(
+            "[control_plane] server.setup_code: entry",
+            extra={"_fields": {"reason": reason}},
+        )
+        try:
+            async with self._code_lock:
+                # 2. DECISION — only a boot retries: the channels start beside this.
+                delays = (0.0, *_BOOT_DELIVERY_RETRY_S) if reason == "start" else (0.0,)
+                for delay in delays:
+                    if delay:
+                        await asyncio.sleep(delay)
+                    # 3. STEP
+                    if await self._issue_and_deliver(reason):
+                        log.control_plane.info(
+                            "[control_plane] server.setup_code: exit",
+                            extra={"_fields": {
+                                "reason": reason,
+                                "duration_ms": (_time.monotonic() - t0) * 1000,
+                            }},
+                        )
+                        return
+        except Exception as exc:  # noqa: BLE001 — a background task dies silently otherwise
+            log.control_plane.error(
+                "[control_plane] server.setup_code: exit — issuing or delivering the "
+                "setup code failed",
+                exc_info=exc,
+                extra={"_fields": {"reason": reason, "remedy": RESET_REMEDY}},
+            )
+            return
+        # 4. EXIT — nothing reached the owner, loudly.
         log.control_plane.warning(
-            "[control_plane] server.run: the dashboard login is still the "
-            "DEFAULT admin/admin",
+            "[control_plane] server.setup_code: exit — the setup code has not reached "
+            "the owner's Telegram yet; the next sign-in attempt in setup mode tries again",
+            extra={"_fields": {"reason": reason, "remedy": RESET_REMEDY}},
+        )
+
+    async def _issue_and_deliver(self, reason: str) -> bool:
+        """One attempt. True when there is nothing left to do.
+
+        THE STORE IS TOUCHED UNDER THE SAME LOCK AS SETUP, and delivery runs
+        outside it. Marking a code sent reads it and writes it back; a setup
+        that used the code up in between would have the used code written back.
+        Holding the lock across the Telegram send instead would make a slow
+        channel hold up the owner's setup.
+        """
+        try:
+            async with self._credential_lock:
+                state = await asyncio.to_thread(self._password.lookup)
+                if state.state != "setup":
+                    log.control_plane.info(
+                        "[control_plane] server.setup_code: not in setup mode — no code needed",
+                        extra={"_fields": {"reason": reason, "state": state.state}},
+                    )
+                    return True
+                issued = await asyncio.to_thread(self._password.ensure_code)
+        except PasswordStoreUnavailable as exc:
+            log.control_plane.error(
+                "[control_plane] server.setup_code: could not issue a setup code — the "
+                "password store cannot be read",
+                exc_info=exc,
+                extra={"_fields": {"reason": reason, "remedy": exc.remedy}},
+            )
+            return True
+
+        if issued.sent:
+            # AN UNEXPIRED CODE IS NOT SENT AGAIN. A restart must not spam the owner.
+            notice = log.control_plane.warning if reason == "start" else log.control_plane.info
+            notice(
+                "[control_plane] server.setup_code: the dashboard is in setup mode; the "
+                "setup code sent earlier is still valid and is not sent again",
+                extra={"_fields": {"expires": issued.expires_utc, "remedy": RESET_REMEDY}},
+            )
+            return True
+
+        delivered, retry = await self._deliver_setup_code(issued)
+        # MARKED SENT ONLY WHEN IT WAS. Marking a code that reached nobody makes
+        # every later boot say "sent earlier, not sent again" for a day while the
+        # owner has never seen it. MEASURED on the live box 2026-09-12: a core
+        # that started before the orchestrator passed the deliverer logged "no
+        # deliverer is wired", marked its code sent, and the next two boots
+        # declined to send it.
+        if delivered and not retry:
+            try:
+                async with self._credential_lock:
+                    await asyncio.to_thread(self._password.mark_code_sent, issued)
+            except PasswordStoreUnavailable as exc:
+                log.control_plane.warning(
+                    "[control_plane] server.setup_code: delivered, but could not record "
+                    "it — a restart may send the code again",
+                    exc_info=exc,
+                )
+        log.control_plane.warning(
+            "[control_plane] server.setup_code: the dashboard is in setup mode — no "
+            "data is served until the owner sets a password with the setup code",
             extra={"_fields": {
-                "bind": cfg.bind_address,
-                # The pair is what matters, and since 2026-09-12 the default bind
-                # is EVERY INTERFACE — so this is now normally true, and the
-                # remedy below is the one thing standing between a fresh install
-                # and an open dashboard.
-                "reachable_off_this_machine": not loopback,
-                "remedy": "set control_plane.username and "
-                          "control_plane.password in stackowl.yaml",
+                "issuer": issued.issuer,
+                "expires": issued.expires_utc,
+                "delivered": delivered,
+                "retrying": retry,
+                "remedy": "the setup code goes to the owner's Telegram when exactly one "
+                          "owner is configured and to the platform's terminal when it "
+                          "has one; " + RESET_REMEDY,
             }},
         )
+        return not retry
+
+    async def _deliver_setup_code(self, issued: SetupCode) -> tuple[bool, bool]:
+        """Send the code to the owner's Telegram and (platform-issued) the terminal.
+
+        Returns ``(delivered, retry)``: whether ANY channel took it, and whether
+        the owner's Telegram — an address resolves — still has not, so the send is
+        worth trying again. A failure is logged and never blocks setup: the host
+        CLI prints a code of its own.
+        """
+        if self._deliverer is None:
+            log.control_plane.warning(
+                "[control_plane] server.setup_code: no deliverer is wired, so the setup "
+                "code reaches nobody from here",
+                extra={"_fields": {"remedy": RESET_REMEDY}},
+            )
+            return False, False
+
+        from stackowl.notifications.deliverer import SETUP_CODE_CATEGORY
+        from stackowl.notifications.recipient import resolve_owner_addresses
+        from stackowl.notifications.router import Notification
+
+        message_with_code = (
+            f"StackOwl dashboard setup code: {issued.display}\n"
+            f"Single use, valid until {issued.expires_utc}. Open the dashboard on port "
+            f"{self._settings.control_plane.port}, enter the code and choose a password "
+            "of at least 12 characters."
+        )
+        owner = resolve_owner_addresses(self._settings, ["telegram"]).get("telegram")
+        targets: list[tuple[str, str | int | None]] = []
+        if owner is not None:
+            targets.append(("telegram", owner))
+        else:
+            log.control_plane.warning(
+                "[control_plane] server.setup_code: no single owner Telegram address "
+                "resolves, so the setup code is not sent there",
+                extra={"_fields": {
+                    "remedy": "set exactly one telegram_channel.allowed_user_ids, or "
+                              + RESET_REMEDY,
+                }},
+            )
+        # THE TERMINAL gets the code the PLATFORM issued — ONCE per code in this
+        # process, not on every boot retry; one the host CLI issued was already
+        # printed where the operator typed the command.
+        offer = (issued.issued_at, issued.issuer)
+        if issued.issuer == "platform" and self._terminal_offered != offer:
+            self._terminal_offered = offer
+            targets.append(("cli", None))
+
+        delivered = False
+        telegram_reached = owner is None
+        for channel, target in targets:
+            try:
+                status = await self._deliverer.deliver(
+                    Notification(
+                        message=message_with_code,
+                        urgency="critical",
+                        # A category the deliverer never writes into conversation
+                        # history — the code is an ownership proof, not a message.
+                        category=SETUP_CODE_CATEGORY,
+                        channel_name=channel,
+                        target=target,
+                    ),
+                    # A secret has no place in the undelivered-outbox banner.
+                    surface_undelivered=False,
+                )
+            except Exception as exc:  # noqa: BLE001 — B5, never silent; never blocks setup
+                status = "failed"
+                log.control_plane.error(
+                    "[control_plane] server.setup_code: delivery raised",
+                    exc_info=exc,
+                    extra={"_fields": {"channel": channel}},
+                )
+            log.control_plane.info(
+                "[control_plane] server.setup_code: delivery attempted",
+                extra={"_fields": {"channel": channel, "status": status}},
+            )
+            if status == "delivered":
+                delivered = True
+                if channel == "telegram":
+                    telegram_reached = True
+        return delivered, not telegram_reached
 
     async def stop(self) -> None:
         """Release the port. Safe to call when never started."""
+        for task in list(self._background):
+            task.cancel()
         if self._stop_event is not None:
             self._stop_event.set()
         if self._site is not None:
@@ -371,7 +602,7 @@ class ControlPlaneServer(SupervisedTask):
         )
         return self._reject(_web())
 
-    def _guard(self, request: Any, route: str) -> tuple[Any | None, Any | None]:
+    async def _guard(self, request: Any, route: str) -> tuple[Any | None, Any | None]:
         """The auth decision, ONCE. Returns ``(principal, None)`` or ``(None, response)``.
 
         WHY THIS EXISTS AT ALL, AND WHY NOW. Until A05.4 there was one route, so
@@ -398,7 +629,13 @@ class ControlPlaneServer(SupervisedTask):
         if refusal is not None:
             return None, refusal
 
-        principal = authenticate(request.headers.get("Authorization"), self._token)
+        # THE STORED TOKEN, read per request. A `reset-password` on the host rotates
+        # it from another process, and the in-memory copy would keep accepting the
+        # old token and refuse the new one until a restart.
+        stored_token = await asyncio.to_thread(read_credential)
+        principal = authenticate(
+            request.headers.get("Authorization"), stored_token or self._token
+        )
         if principal is None:
             log.control_plane.warning(
                 f"[control_plane] server.{route}: exit — refused, unauthenticated"
@@ -413,7 +650,188 @@ class ControlPlaneServer(SupervisedTask):
             )
             return None, web.Response(status=403, text=UNAUTHORIZED_BODY)
 
+        # THE OWNERSHIP GATE (Q29), AFTER the token on purpose: an unauthenticated
+        # caller keeps the uniform 401. Re-read on every request, never cached, so
+        # a reset from the host CLI takes effect on the next one.
+        state = await asyncio.to_thread(self._password.lookup)
+        if state.state == "unavailable":
+            return None, self._store_unavailable(route, state.remedy)
+        if state.state == "setup":
+            self._spawn_setup_code(route)
+            self._log_gate(
+                "setup",
+                f"[control_plane] server.{route}: exit — refused, the dashboard has no "
+                "password yet (setup mode)",
+                {
+                    "principal_id": principal.principal_id,
+                    "remedy": "set a password on the dashboard with the setup code; "
+                              + RESET_REMEDY,
+                },
+            )
+            return None, web.json_response({"error": "setup_required"}, status=403)
+
+        self._gate_state = "ready"
         return principal, None
+
+    def _log_gate(self, state: str, message: str, details: dict[str, Any]) -> None:
+        """Loud the first time the dashboard is seen in *state*, quiet while it stays.
+
+        Every panel is its own request, so an unreadable store or an install in
+        setup mode wrote a WARNING per panel per page load — eight a refresh,
+        burying the first and only useful one.
+        """
+        first = self._gate_state != state
+        self._gate_state = state
+        (log.control_plane.warning if first else log.control_plane.debug)(
+            message, extra={"_fields": {**details, "repeat": not first}}
+        )
+
+    def _store_unavailable(self, route: str, remedy: str | None) -> Any:
+        """503 with a remedy — an unreadable store is never read as "no password" (L3)."""
+        self._log_gate(
+            "unavailable",
+            f"[control_plane] server.{route}: exit — refused, the password store cannot "
+            "be read",
+            {"remedy": remedy or STORE_REMEDY},
+        )
+        return _web().json_response(
+            {"error": "password_store_unavailable", "remedy": remedy or STORE_REMEDY},
+            status=503,
+        )
+
+    def _too_many(self, route: str, source: str) -> Any:
+        """429 — the brake. Refuses rather than sleeping: a waiting handler holds a worker."""
+        log.control_plane.warning(
+            f"[control_plane] server.{route}: exit — refused, too many failed attempts "
+            "from this source",
+            extra={"_fields": {
+                "source": source,
+                "window_seconds": WINDOW_SECONDS,
+                "max_failures": MAX_FAILURES,
+            }},
+        )
+        return _web().json_response(
+            {"error": "too many failed attempts — wait and try again"}, status=429,
+        )
+
+    async def _credential_fields(
+        self, request: Any, route: str, names: tuple[str, ...],
+    ) -> tuple[dict[str, str] | None, Any | None]:
+        """The body of a credential route: a JSON object whose named fields are strings.
+
+        A direct type check, never `str(...)`: a crafted client sending a number or a
+        list must not have its Python repr stored as a password (EC10), and an array
+        body is a 400, not a 500 (BH7).
+        """
+        web = _web()
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001 — B5, never silent
+            log.control_plane.warning(
+                f"[control_plane] server.{route}: exit — refused, unreadable body",
+                exc_info=exc,
+            )
+            return None, web.json_response({"error": "expected a JSON body"}, status=400)
+        if not isinstance(body, dict):
+            log.control_plane.warning(
+                f"[control_plane] server.{route}: exit — refused, the body is not a JSON "
+                "object",
+                extra={"_fields": {"body_type": type(body).__name__}},
+            )
+            return None, web.json_response({"error": "expected a JSON object"}, status=400)
+        fields: dict[str, str] = {}
+        for name in names:
+            value = body.get(name)
+            if value is None:
+                value = ""
+            if not isinstance(value, str):
+                log.control_plane.warning(
+                    f"[control_plane] server.{route}: exit — refused, a field is not a "
+                    "string",
+                    extra={"_fields": {"field": name}},
+                )
+                return None, web.json_response(
+                    {"error": f"{name} must be a string"}, status=400
+                )
+            fields[name] = value
+        return fields, None
+
+    async def _prove_owner(
+        self, source: str, username: str, password: str, state: PasswordLookup,
+    ) -> _Proof:
+        """THE ONE CREDENTIAL PROOF — login and the password change both ask it (BH7).
+
+        COUNTED BEFORE THE HASH (BH5). The brake check and the count are one
+        synchronous step with no `await` between them, so parallel guesses from one
+        source cannot all pass the brake while scrypt runs; a success clears the
+        count. BOTH HALVES ALWAYS RUN — the username in constant time, then the
+        scrypt match — and are combined afterwards, so the answer never says which
+        was wrong.
+        """
+        if self._login_attempts.is_refused(source):
+            return "refused"
+        self._login_attempts.record_failure(source)
+        # BYTES, not str: `compare_digest` raises TypeError on a non-ASCII str,
+        # which would make an accented username a 500 instead of a refusal.
+        user_ok = _hmac.compare_digest(
+            username.encode("utf-8"),
+            self._settings.control_plane.username.encode("utf-8"),
+        )
+        async with self._derivations:
+            pass_ok = await asyncio.to_thread(state.matches, password)
+        if not (user_ok and pass_ok):
+            return "wrong"
+        self._login_attempts.record_success(source)
+        return "ok"
+
+    async def _prove_setup_code(
+        self, source: str, presented: str, state: PasswordLookup,
+    ) -> _Proof:
+        """Whether *presented* is the current setup code — counted like a sign-in.
+
+        Only an install in SETUP has a code to use. A ready one refuses even a code
+        that is still stored, so a reset racing a password change in another
+        process can never reopen the first-claim race. Raises
+        :class:`PasswordStoreUnavailable`.
+        """
+        if self._login_attempts.is_refused(source):
+            return "refused"
+        if state.state != "setup":
+            self._login_attempts.record_failure(source)
+            return "wrong"
+        # READ FIRST, COUNT AFTER. A store that cannot be read raises here and is
+        # NOT a guess, so it must not brake the owner. The re-check and the count
+        # below are one synchronous step and the compare needs no await, so
+        # parallel guesses still cannot outrun the brake.
+        stored = await asyncio.to_thread(self._password.current_code)
+        if self._login_attempts.is_refused(source):
+            return "refused"
+        self._login_attempts.record_failure(source)
+        if stored is None or not stored.matches(presented):
+            return "wrong"
+        self._login_attempts.record_success(source)
+        return "ok"
+
+    async def _replace_password(self, route: str, new_password: str, *, consume_code: bool) -> Any:
+        """Rotate the token and store the hash as one step; 500 and nothing changed on failure."""
+        web = _web()
+        try:
+            async with self._derivations:
+                minted = await asyncio.to_thread(
+                    self._password.replace_password, new_password, consume_code=consume_code,
+                )
+        except PasswordStoreUnavailable as exc:
+            log.control_plane.error(
+                f"[control_plane] server.{route}: exit — the password could not be "
+                "stored; password, setup code and token are as they were",
+                exc_info=exc,
+                extra={"_fields": {"remedy": exc.remedy}},
+            )
+            return web.json_response(
+                {"error": "password_store_unavailable", "remedy": exc.remedy}, status=500,
+            )
+        self._token = minted
+        return web.json_response({"token": minted})
 
     async def _handle_manifest(self, request: Any) -> Any:
         """`GET /manifest.webmanifest` — what makes this installable.
@@ -488,7 +906,7 @@ class ControlPlaneServer(SupervisedTask):
         # the first narrows the type for everything below, the second leaves an
         # `assert` to do it — and an assert in `src/` is a statement that can be
         # optimised away under -O.
-        principal, refusal = self._guard(request, "schedules")
+        principal, refusal = await self._guard(request, "schedules")
         if principal is None:
             return refusal
 
@@ -622,7 +1040,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.skills: entry")
 
-        principal, refusal = self._guard(request, "skills")
+        principal, refusal = await self._guard(request, "skills")
         if principal is None:
             return refusal
 
@@ -689,7 +1107,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.memory: entry")
 
-        principal, refusal = self._guard(request, "memory")
+        principal, refusal = await self._guard(request, "memory")
         if principal is None:
             return refusal
 
@@ -796,7 +1214,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.interactions: entry")
 
-        principal, refusal = self._guard(request, "interactions")
+        principal, refusal = await self._guard(request, "interactions")
         if principal is None:
             return refusal
 
@@ -871,16 +1289,17 @@ class ControlPlaneServer(SupervisedTask):
         and drops only the bearer check. That asymmetry is the whole security
         argument and is pinned by a test.
 
-        BOTH FIELDS ARE COMPARED IN CONSTANT TIME, AND BOTH ARE ALWAYS COMPARED.
-        Returning early on an unknown username makes the response time a
-        username oracle; `hmac.compare_digest` on each, with the results
-        combined afterwards, keeps a wrong username and a wrong password
-        indistinguishable from outside.
+        BOTH FIELDS ARE COMPARED, AND BOTH ARE ALWAYS COMPARED — in
+        `_prove_owner`, the one proof this route and the password change share.
+
+        NO TOKEN FOR A PUBLISHED CREDENTIAL (Q29, L1). An install with no stored
+        password answers 409 `setup_required` and hands out nothing; the owner
+        proves ownership with the one-time setup code instead. An unreadable store
+        answers 503 with a remedy and is never read as "no password" (L3).
         """
         web = _web()
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.login: entry")
-        cfg = self._settings.control_plane
 
         refusal = self._origin_ok(request, "login")
         if refusal is not None:
@@ -894,73 +1313,228 @@ class ControlPlaneServer(SupervisedTask):
         # an attacker an amplifier instead of a limit.
         source = self._request_source(request)
         if self._login_attempts.is_refused(source):
-            log.control_plane.warning(
-                "[control_plane] server.login: exit — refused, too many failed "
-                "attempts from this source",
-                extra={"_fields": {
-                    "source": source,
-                    "window_seconds": WINDOW_SECONDS,
-                    "max_failures": MAX_FAILURES,
-                }},
-            )
-            return web.json_response(
-                {"error": "too many failed attempts — wait and try again"},
-                status=429,
-            )
+            return self._too_many("login", source)
 
-        try:
-            body = await request.json()
-        except Exception as exc:  # noqa: BLE001 — B5, never silent
-            log.control_plane.warning(
-                "[control_plane] server.login: exit — refused, unreadable body",
-                exc_info=exc,
+        fields, bad_body = await self._credential_fields(
+            request, "login", ("username", "password")
+        )
+        if fields is None:
+            return bad_body
+
+        # 2. DECISION — which of the three states is this install in?
+        state = await asyncio.to_thread(self._password.lookup)
+        if state.state == "unavailable":
+            return self._store_unavailable("login", state.remedy)
+        if state.state == "setup":
+            self._spawn_setup_code("login")
+            log.control_plane.info(
+                "[control_plane] server.login: exit — no token, the dashboard has no "
+                "password yet (setup mode)",
+                extra={"_fields": {"source": source}},
             )
-            return web.json_response({"error": "expected a JSON body"}, status=400)
+            return web.json_response({"error": "setup_required"}, status=409)
 
-        presented_user = str((body or {}).get("username") or "")
-        presented_pass = str((body or {}).get("password") or "")
-
-        user_ok = _hmac.compare_digest(presented_user, cfg.username)
-        pass_ok = _hmac.compare_digest(presented_pass, cfg.password)
-        if not (user_ok and pass_ok):
-            duration_ms = (_time.monotonic() - t0) * 1000
-            failures = self._login_attempts.record_failure(source)
+        # 3. STEP — the one proof.
+        outcome = await self._prove_owner(
+            source, fields["username"], fields["password"], state
+        )
+        if outcome == "refused":
+            return self._too_many("login", source)
+        if outcome == "wrong":
             log.control_plane.warning(
                 "[control_plane] server.login: exit — refused, credentials did "
                 "not match",
                 extra={"_fields": {
                     "source": source,
-                    "failures_in_window": failures,
                     # The USERNAME is not logged. A failed login is often a typo
                     # in the password, and a log line carrying the attempted
                     # username turns the journal into a place credentials leak.
-                    "duration_ms": duration_ms,
-                    "remedy": "set control_plane.username and "
-                              "control_plane.password in stackowl.yaml",
+                    "duration_ms": (_time.monotonic() - t0) * 1000,
+                    "remedy": "the username is control_plane.username in stackowl.yaml; "
+                              "a forgotten password is reset with `stackowl "
+                              "control-plane reset-password` on the host",
                 }},
             )
             return web.json_response({"error": "invalid credentials"}, status=401)
 
-        # A person who gets it right on the ninth attempt must not be one typo
-        # away from a lockout an hour later.
-        self._login_attempts.record_success(source)
-        duration_ms = (_time.monotonic() - t0) * 1000
+        # 4. EXIT
         log.control_plane.info(
             "[control_plane] server.login: exit — granted",
             extra={"_fields": {
-                "username": cfg.username,
-                "default_credentials": cfg.credentials_are_default,
-                "duration_ms": duration_ms,
+                "username": self._settings.control_plane.username,
+                "duration_ms": (_time.monotonic() - t0) * 1000,
             }},
         )
-        return web.json_response({
-            "token": self._token,
-            # THE PAGE IS TOLD, not just the log. A warning only an operator who
-            # greps the journal can see is the DEBUG-evidence failure wearing a
-            # different level — the person who can fix this is the one looking
-            # at the dashboard.
-            "default_credentials": cfg.credentials_are_default,
-        })
+        return web.json_response({"token": self._token})
+
+    async def _handle_setup(self, request: Any) -> Any:
+        """`POST /api/v1/setup` — prove ownership with the setup code; set the first password.
+
+        THE ONLY WAY OUT OF SETUP MODE (Q29). The code is what proves ownership:
+        only someone with the host's terminal or the owner's Telegram holds it,
+        which no published password can say. It keeps the ORIGIN check, counts
+        every attempt toward the same brake as a sign-in, and answers a wrong,
+        expired or used code with the uniform 401.
+
+        A WEAK PASSWORD DOES NOT USE THE CODE UP, so the owner fixes the password
+        and tries again. Success rotates the token and returns the new one — the
+        only token that opens anything afterwards. Serialised with the password
+        change, so two at once cannot both win.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.setup: entry")
+
+        refusal = self._origin_ok(request, "setup")
+        if refusal is not None:
+            return refusal
+        source = self._request_source(request)
+        if self._login_attempts.is_refused(source):
+            return self._too_many("setup", source)
+        fields, bad_body = await self._credential_fields(
+            request, "setup", ("code", "new_password")
+        )
+        if fields is None:
+            return bad_body
+
+        async with self._credential_lock:
+            # 2. DECISION — re-read INSIDE the lock: a setup that just won made
+            # this install ready, and the loser must see that.
+            state = await asyncio.to_thread(self._password.lookup)
+            if state.state == "unavailable":
+                return self._store_unavailable("setup", state.remedy)
+            try:
+                outcome = await self._prove_setup_code(source, fields["code"], state)
+            except PasswordStoreUnavailable as exc:
+                return self._store_unavailable("setup", exc.remedy)
+            if outcome == "refused":
+                return self._too_many("setup", source)
+            if outcome == "wrong":
+                log.control_plane.warning(
+                    "[control_plane] server.setup: exit — refused, the setup code is "
+                    "wrong, expired or already used; nothing was stored",
+                    extra={"_fields": {"source": source, "remedy": RESET_REMEDY}},
+                )
+                return self._reject(web)
+            reason = weakness(fields["new_password"], self._settings.control_plane.username)
+            if reason is not None:
+                log.control_plane.warning(
+                    "[control_plane] server.setup: exit — refused, the new password is "
+                    "not acceptable; the setup code was NOT used",
+                    extra={"_fields": {"source": source, "reason": reason}},
+                )
+                return web.json_response(
+                    {"error": "weak_password", "reason": reason}, status=400
+                )
+            # 3. STEP
+            response = await self._replace_password(
+                "setup", fields["new_password"], consume_code=True
+            )
+
+        # 4. EXIT
+        log.control_plane.info(
+            "[control_plane] server.setup: exit",
+            extra={"_fields": {
+                "source": source,
+                "status": response.status,
+                "duration_ms": (_time.monotonic() - t0) * 1000,
+            }},
+        )
+        return response
+
+    async def _handle_password(self, request: Any) -> Any:
+        """`POST /api/v1/password` — change the dashboard password.
+
+        IT AUTHENTICATES LIKE LOGIN, NOT THROUGH `_guard`: it re-proves the
+        username and CURRENT password through `_prove_owner`, counted toward the
+        same brake, rather than trusting a bearer token a stolen tab could carry.
+        Success rotates the token, so every tab signed in before the change is
+        signed out by it. Serialised with setup, so two changes at once cannot
+        both win and the token and hash always agree.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.password: entry")
+
+        refusal = self._origin_ok(request, "password")
+        if refusal is not None:
+            return refusal
+        source = self._request_source(request)
+        if self._login_attempts.is_refused(source):
+            return self._too_many("password", source)
+        fields, bad_body = await self._credential_fields(
+            request, "password", ("username", "current_password", "new_password")
+        )
+        if fields is None:
+            return bad_body
+
+        # 2. DECISION — PROVE FIRST, OUTSIDE THE LOCK. scrypt takes tens of
+        # milliseconds, and an unauthenticated guess holding the lock would make
+        # the owner's own change wait behind it.
+        state = await asyncio.to_thread(self._password.lookup)
+        if state.state == "unavailable":
+            return self._store_unavailable("password", state.remedy)
+        if state.state == "setup":
+            log.control_plane.info(
+                "[control_plane] server.password: exit — there is no password to "
+                "change yet (setup mode)",
+                extra={"_fields": {"source": source}},
+            )
+            return web.json_response({"error": "setup_required"}, status=409)
+        outcome = await self._prove_owner(
+            source, fields["username"], fields["current_password"], state
+        )
+        if outcome == "refused":
+            return self._too_many("password", source)
+        if outcome == "wrong":
+            log.control_plane.warning(
+                "[control_plane] server.password: exit — refused, the current "
+                "credentials did not match",
+                extra={"_fields": {
+                    "source": source,
+                    "duration_ms": (_time.monotonic() - t0) * 1000,
+                }},
+            )
+            return self._reject(web)
+        reason = weakness(fields["new_password"], self._settings.control_plane.username)
+        if reason is not None:
+            log.control_plane.warning(
+                "[control_plane] server.password: exit — refused, the new password "
+                "is not acceptable; nothing was stored",
+                extra={"_fields": {"source": source, "reason": reason}},
+            )
+            return web.json_response(
+                {"error": "weak_password", "reason": reason}, status=400
+            )
+
+        async with self._credential_lock:
+            # RE-CHECK INSIDE THE LOCK. A change that won while this one was proving
+            # replaced the record the proof was made against, so this proof is stale.
+            fresh = await asyncio.to_thread(self._password.lookup)
+            if fresh.state == "unavailable":
+                return self._store_unavailable("password", fresh.remedy)
+            if fresh.state != "ready" or fresh.record != state.record:
+                log.control_plane.warning(
+                    "[control_plane] server.password: exit — refused, the password "
+                    "changed while this request was being checked",
+                    extra={"_fields": {"source": source}},
+                )
+                return self._reject(web)
+            # 3. STEP
+            response = await self._replace_password(
+                "password", fields["new_password"], consume_code=False
+            )
+
+        # 4. EXIT
+        log.control_plane.info(
+            "[control_plane] server.password: exit",
+            extra={"_fields": {
+                "source": source,
+                "status": response.status,
+                "duration_ms": (_time.monotonic() - t0) * 1000,
+            }},
+        )
+        return response
 
     async def _handle_agents(self, request: Any) -> Any:
         """`GET /api/v1/agents` — every agent's card, its AUTHORITY, and its runtime.
@@ -989,7 +1563,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.agents: entry")
 
-        principal, refusal = self._guard(request, "agents")
+        principal, refusal = await self._guard(request, "agents")
         if principal is None:
             return refusal
 
@@ -1095,7 +1669,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.tasks: entry")
 
-        principal, refusal = self._guard(request, "tasks")
+        principal, refusal = await self._guard(request, "tasks")
         if principal is None:
             return refusal
 
@@ -1180,7 +1754,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.config: entry")
 
-        principal, refusal = self._guard(request, "config")
+        principal, refusal = await self._guard(request, "config")
         if principal is None:
             return refusal
 
@@ -1229,7 +1803,7 @@ class ControlPlaneServer(SupervisedTask):
         t0 = _time.monotonic()
         log.control_plane.info("[control_plane] server.health: entry")
 
-        principal, refusal = self._guard(request, "health")
+        principal, refusal = await self._guard(request, "health")
         if principal is None:
             return refusal
 

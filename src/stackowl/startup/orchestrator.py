@@ -4573,8 +4573,22 @@ class StartupOrchestrator:
                 # The LIVE pool — `read_all_skill_ownership` is owner-scoped and
                 # is the reader A05.8's gap names (A05.8).
                 db=db_pool,
+                # Q29 — the one-time setup code reaches the owner's Telegram and
+                # the terminal through the deliverer every proactive send uses.
+                deliverer=proactive_deliverer,
             )
             scheduler_components.supervisor.register(control_plane)
+            # Q29, L3 — an unreadable password store is never "no password": it
+            # is reported down through the health sweep, which retries every tick
+            # and pages with the remedy.
+            from stackowl.control_plane.password import (
+                ControlPlanePassword,
+                PasswordStoreHealth,
+            )
+
+            scheduler_components.health_aggregator.register(
+                PasswordStoreHealth(ControlPlanePassword())
+            )
             log.info(
                 "[startup] core: control plane registered",
                 extra={"_fields": {

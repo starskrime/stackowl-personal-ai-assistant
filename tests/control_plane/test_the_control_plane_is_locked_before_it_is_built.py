@@ -217,16 +217,22 @@ class TestI2AuthenticationIsNotMiddleware:
             # is a property of the code and not a name on a list: it must check
             # the origin (or any page on the internet could POST from a browser
             # that can reach loopback and read the token out of the reply) and it
-            # must compare a secret in constant time.
+            # must PROVE OWNERSHIP through one of the two shared proofs — the
+            # password (`_prove_owner`) or the one-time setup code
+            # (`_prove_setup_code`).
+            #
+            # NOT "any `compare_digest(`" any more (Q29, BH6). Once the password
+            # became a hash that check was satisfied by the USERNAME compare
+            # alone, which proves nothing. The proofs themselves are pinned below.
             #
             # The invariant this file exists for is unchanged: EVERY registered
             # route either presents a credential or verifies one. What widened is
             # how it may verify, not whether it must.
             body_src = ast.unparse(fn)
-            mints_a_credential = (
-                "self._origin_ok(" in body_src and "compare_digest(" in body_src
+            proves_ownership = "self._origin_ok(" in body_src and (
+                "self._prove_owner(" in body_src or "self._prove_setup_code(" in body_src
             )
-            if mints_a_credential:
+            if proves_ownership:
                 guarded += 1
                 continue
 
@@ -257,6 +263,27 @@ class TestI2AuthenticationIsNotMiddleware:
             "`_guard` no longer calls authenticate() — every route now delegates "
             "its token check to a function that does not make one"
         )
+
+        # AND THE TWO PROOFS ACTUALLY PROVE SOMETHING — the same hop check, for
+        # the exemption. A `_prove_owner` that only compared the username would
+        # satisfy the exemption above while proving nothing.
+        from stackowl.control_plane.password import SetupCode, _StoredHash
+
+        def _attrs(fn_name: str) -> set[str]:
+            # ATTRIBUTES, NOT SUBSTRINGS. The slow checks run off the event loop as
+            # `asyncio.to_thread(state.matches, …)` — a REFERENCE, not a call, so a
+            # `.matches(` substring never appears — and a docstring can say
+            # "matches" without checking anything.
+            return {n.attr for n in ast.walk(defs[fn_name]) if isinstance(n, ast.Attribute)}
+
+        assert {"matches", "compare_digest"} <= _attrs("_prove_owner"), (
+            "`_prove_owner` no longer checks the username and the password hash"
+        )
+        assert {"current_code", "matches"} <= _attrs("_prove_setup_code"), (
+            "`_prove_setup_code` no longer checks the setup code"
+        )
+        assert "compare_digest(" in inspect.getsource(_StoredHash.matches)
+        assert "compare_digest(" in inspect.getsource(SetupCode.matches)
 
 
 class TestI3AnUnknownCredentialIsRefused:
@@ -298,7 +325,19 @@ class TestI3AnUnknownCredentialIsRefused:
 class TestI4TheTokenIsNeverLogged:
     #: Identifiers that hold a credential's plaintext somewhere in these modules.
     _SECRET_NAMES = frozenset({"_token", "minted", "presented", "expected_token",
-                               "existing", "secret"})
+                               "existing", "secret",
+                               # Q29 — the dashboard password, its hash, the setup
+                               # code, and the records that carry them.
+                               "previous", "previous_token", "previous_code",
+                               "read_back", "restore", "raw", "encoded", "record",
+                               "replaced", "candidate", "new_password", "password",
+                               "current", "fields", "code", "display",
+                               "message_with_code", "legacy", "content", "value"})
+
+    #: Attributes that carry a credential's plaintext WHATEVER the object is called
+    #: — `issued.code`, `lookup.record`, `stored.digest` — so the attribute itself is
+    #: flagged inside a log call, not only the variable's name.
+    _SECRET_ATTRS = frozenset({"code", "display", "record", "digest"})
 
     @pytest.mark.tripwire
     def test_no_log_call_in_either_module_passes_the_token(self) -> None:
@@ -312,9 +351,12 @@ class TestI4TheTokenIsNeverLogged:
         how a guard gets deleted rather than satisfied, so it asks the AST for
         names now and string literals cannot reach it.
         """
+        from stackowl.config import control_plane_password_migration as migration_mod
+        from stackowl.config import secret_writer as secret_writer_mod
+        from stackowl.control_plane import password as password_mod
         from stackowl.control_plane import server as server_mod
 
-        for mod in (auth_mod, server_mod):
+        for mod in (auth_mod, server_mod, password_mod, secret_writer_mod, migration_mod):
             tree = ast.parse(inspect.getsource(mod))
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call)
@@ -324,6 +366,12 @@ class TestI4TheTokenIsNeverLogged:
                         and node.func.value.value.id == "log"):
                     continue
                 for sub in ast.walk(node):
+                    if isinstance(sub, ast.Attribute) and sub.attr in self._SECRET_ATTRS:
+                        raise AssertionError(
+                            f"{mod.__name__} reads `.{sub.attr}` inside a log call — "
+                            f"that attribute carries a credential's plaintext. "
+                            f"Offending call: {ast.unparse(node)[:120]}"
+                        )
                     ident = None
                     if isinstance(sub, ast.Name):
                         ident = sub.id
@@ -364,6 +412,25 @@ class TestI4TheTokenIsNeverLogged:
             f"the walk cannot see a planted leak — got {found}. The guard above "
             "would then pass over a real one."
         )
+
+    @pytest.mark.tripwire
+    def test_that_guard_can_see_a_leak_through_an_ATTRIBUTE(self) -> None:
+        """VACUITY CONTROL for the attribute half, on a constructed leak."""
+        leaky = ast.parse(
+            'log.control_plane.info("x", extra={"_fields": {"c": issued.code}})\n'
+        )
+        found = [
+            sub.attr
+            for node in ast.walk(leaky)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Attribute)
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == "log"
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Attribute) and sub.attr in self._SECRET_ATTRS
+        ]
+        assert found == ["code"], f"the walk cannot see an attribute leak — got {found}"
 
     @pytest.mark.tripwire
     def test_a_message_literal_mentioning_a_secret_word_is_NOT_a_leak(self) -> None:

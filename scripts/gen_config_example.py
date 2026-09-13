@@ -170,11 +170,13 @@ def _emit(
         # said "secrets do NOT belong in this file" since D18.2, and nothing
         # enforced it — every default is emitted verbatim, so the rule held only
         # because no credential-named field HAPPENED to have a non-empty default.
-        # MEASURED 2026-09-12: 13 of the 215 emitted fields are credential-named
+        # MEASURED 2026-09-12: 13 of the 215 emitted fields were credential-named
         # and twelve of them defaulted to "" — a guard over a population that was
         # empty by luck. DEBT-310 added `control_plane.password = "admin"` at the
-        # operator's request and the thirteenth broke it, 44 minutes into a full
-        # run, because the check is not a tripwire.
+        # operator's request and that thirteenth field broke it, 44 minutes into a
+        # full run, because the check was not a tripwire. Q29 later retired that
+        # field (the dashboard password is a hash in the secret store, not a
+        # setting), so twelve credential-named fields remain.
         # It also improves the twelve: `bot_token: ""` taught nothing about the
         # reference form, and now each one shows its own.
         if is_credential_name(name):

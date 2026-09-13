@@ -352,8 +352,12 @@ class HeadlessCliAdapter(ChannelAdapter):
 
     async def send_text(self, text: str) -> object | None:
         self.dropped.append(text)
+        # NO PREVIEW OF THE TEXT. A proactive send addressed to "cli" can carry a
+        # secret — the control plane's one-time setup code goes to the terminal
+        # this way (Q29) — and a dropped message is exactly the one whose preview
+        # would be the only copy anybody ever sees. `self.dropped` keeps the text.
         log.cli.info(
             "[cli] headless adapter: dropped a message — no terminal attached",
-            extra={"_fields": {"chars": len(text), "preview": text[:80]}},
+            extra={"_fields": {"chars": len(text)}},
         )
         return None
