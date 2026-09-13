@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -456,7 +457,10 @@ class SessionStore:
                 -- identity must not unlink the lane from its owner, or the next
                 -- rollover summary is filed where recall never looks.
                 identity_key=COALESCE(excluded.identity_key, sessions.identity_key),
-                summary_enqueued_for=excluded.summary_enqueued_for,
+                -- summary_enqueued_for is deliberately NOT updated here. A save
+                -- carries an in-memory entry, and a stale one reset the marker that
+                -- record_summary_enqueued wrote, handing an already-summarised
+                -- boundary back to the backstop. That function is its only writer.
                 -- Same COALESCE rule as chat_id/identity_key: a run that cannot
                 -- state its parent must never orphan the lane.
                 parent_session_key=COALESCE(excluded.parent_session_key,
@@ -593,15 +597,10 @@ class SessionStore:
         leave the lane recoverable, or the retry this backstop exists to provide is
         thrown away on the first hiccup.
         """
-        await self._db.execute(
-            "UPDATE sessions SET summary_enqueued_for = ? WHERE session_key = ?",
-            (conversation_id, session_key),
-        )
+        # Logged ONCE, by the write itself, in this caller's namespace.
+        await record_summary_enqueued(self._db, session_key, conversation_id,
+                                      logger=log.gateway)
         await self._project_mirror()
-        log.gateway.info(
-            "session.mark_summary_enqueued: recorded",
-            extra={"_fields": {"session_key": session_key, "conversation_id": conversation_id}},
-        )
 
     async def record_completed_turn(self, session_key: str) -> None:
         """Count a turn that actually produced a reply.
@@ -783,3 +782,44 @@ class SessionStore:
                 "session.mirror: projection failed — SQLite is unaffected",
                 exc_info=exc, extra={"_fields": {"path": str(self.mirror_path())}},
             )
+
+
+async def record_summary_enqueued(db: DbPool, session_key: str,
+                                  conversation_id: str, *,
+                                  logger: logging.Logger) -> int:
+    """Mark ``conversation_id``'s summary as enqueued on its lane. Returns rows matched.
+
+    THE ONE WRITER OF THIS MARKER — ``SessionStore.save`` deliberately does not touch
+    it. Two callers: ``SessionStore.mark_summary_enqueued`` (the consumer and the
+    backstop, right after they enqueue) and the rollover summary job itself, which
+    writes it BEFORE doing any work. The second exists because a finished one-shot's
+    job row is now deleted, and with it the UNIQUE ``idempotency_key`` that used to
+    absorb the backstop's re-enqueue — see ``RolloverSummaryHandler._record_boundary``.
+
+    SCOPED TO THE INCARNATION (``AND conversation_id = ?``). A lane that has moved on
+    to a newer incarnation cannot be recovered for the old one anyway —
+    ``lanes_awaiting_summary`` compares the marker with the lane's CURRENT
+    conversation — so 0 rows matched is a correct no-op, not a failure. Unscoped, a
+    retried job for an OLD boundary would overwrite a newer boundary's marker and hand
+    that boundary back to the backstop as if it had never been queued.
+
+    Logs once, on ``logger`` — the caller's namespace. Raises on a database error;
+    whether that is fatal is the caller's decision.
+    """
+    fields = {"session_key": session_key, "conversation_id": conversation_id}
+    logger.debug("session.record_summary_enqueued: entry", extra={"_fields": fields})
+    matched = await db.execute_returning_rowcount(
+        "UPDATE sessions SET summary_enqueued_for = ? "
+        "WHERE session_key = ? AND conversation_id = ?",
+        (conversation_id, session_key, conversation_id),
+    )
+    if matched:
+        logger.info("session.record_summary_enqueued: marker written",
+                    extra={"_fields": {**fields, "matched": matched}})
+    else:
+        logger.info(
+            "session.record_summary_enqueued: NO lane is on this incarnation — marker "
+            "not written (the lane moved on, so the backstop cannot recover it anyway)",
+            extra={"_fields": {**fields, "matched": 0}},
+        )
+    return matched

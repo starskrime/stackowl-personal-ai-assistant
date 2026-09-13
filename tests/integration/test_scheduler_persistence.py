@@ -152,9 +152,11 @@ class TestSchedulerPersistence:
         assert rows[0]["status"] == "completed"
         assert rows[0]["result_text"] == "weather summary here"
 
-    async def test_goal_execution_deletes_job_when_run_once(
+    async def test_goal_execution_leaves_run_once_retirement_to_the_scheduler(
         self, migrated_db: DbPool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The scheduler retires a finished run_once row (2026-09-12) — the handler's
+        own delete was a second copy of that rule, so the row survives execute()."""
         _disable_guard(monkeypatch)
         backend = _StubBackend(response_text="one-shot done")
         handler = GoalExecutionHandler(backend=backend, db=migrated_db)  # type: ignore[arg-type]
@@ -167,4 +169,4 @@ class TestSchedulerPersistence:
         remaining = await migrated_db.fetch_all(
             "SELECT job_id FROM jobs WHERE job_id = ?", (job.job_id,)
         )
-        assert remaining == []
+        assert len(remaining) == 1

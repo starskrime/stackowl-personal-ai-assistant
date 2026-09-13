@@ -58,7 +58,7 @@ def parse_in(schedule: str) -> timedelta | None:
     the delay this returns is a ONE-TIME offset from now, not a recurring
     interval: ``compute_next_run`` returns a single ``now + delta`` instant and
     the caller (``cronjob._create``) arms the job with ``run_once=True`` so it
-    fires once and self-deletes (``goal_execution`` already honors that flag).
+    fires once and is then retired by the scheduler, which honors that flag.
     """
     match = _IN_RE.match(schedule.strip())
     if match is None:
@@ -73,7 +73,7 @@ def parse_in(schedule: str) -> timedelta | None:
 # One-shot absolute-local-clock-time schedule DSL token: ``at HH:MM``. Unlike
 # ``daily@HH:MM`` (recurring), this fires ONCE at the next occurrence of that
 # local wall-clock time (today if still ahead, else tomorrow), then the job
-# self-deletes — mirrors ``in <n><unit>`` but for an absolute time instead of
+# is retired — mirrors ``in <n><unit>`` but for an absolute time instead of
 # a relative delay. An LLM asked to schedule "remind me at 5pm today" had no
 # correct token before this and fell back to misusing a recurring 5-field
 # cron (REMINDER-FIX-2: the resulting job never stopped recurring).
@@ -111,8 +111,13 @@ async def write_audit(
     target: str,
     actor: str = "user",
     details: dict[str, Any] | None = None,
-) -> None:
-    """Insert a row into ``audit_log`` for a scheduler lifecycle event."""
+) -> bool:
+    """Insert a row into ``audit_log`` for a scheduler lifecycle event.
+
+    Returns whether the row was written. A caller recording a transition that has
+    already happened may ignore it; a caller about to DELETE the only other record
+    of what happened — a one-shot's terminal failure — must not.
+    """
     log.scheduler.debug(
         "[scheduler] audit.write: entry",
         extra={"_fields": {"event_type": event_type, "target": target}},
@@ -133,11 +138,70 @@ async def write_audit(
             exc_info=exc,
             extra={"_fields": {"event_type": event_type, "target": target}},
         )
-        return
+        return False
+    else:
+        log.scheduler.debug(
+            "[scheduler] audit.write: exit",
+            extra={"_fields": {"event_type": event_type, "target": target}},
+        )
+    return True
+
+
+async def delete_finished_one_shot(
+    db: DbPool, job_id: str, *, handler: str, outcome: str,
+) -> bool:
+    """Retire a FINISHED one-shot by deleting its row. True when the row is gone.
+
+    THE ONE RULE FOR A FINISHED ``run_once`` JOB, in one home. Until 2026-09-12 there
+    were two: ``goal_execution`` deleted its own row, while every other one-shot was
+    parked ``status='completed'`` "to keep its job_runs history" — a reason already
+    stale, because migration 0080 made ``job_runs.job_id`` ``ON DELETE CASCADE``.
+    MEASURED that day on the owner's box: 136 of 169 ``enabled=1`` jobs were parked
+    one-shots, reported as live schedules by every reader. The poller's completion,
+    its terminal failure, its idempotent skip and ``run_now`` all retire a one-shot
+    through here, on the runtime pool, which enforces that cascade.
+
+    True when the row was deleted OR was already gone (removed while it ran, e.g. by
+    ``stop_job``). False — never raised — when the delete FAILED: the caller decides
+    what keeps the row from being run again.
+    """
     log.scheduler.debug(
-        "[scheduler] audit.write: exit",
-        extra={"_fields": {"event_type": event_type, "target": target}},
+        "[scheduler] delete_finished_one_shot: entry",
+        extra={"_fields": {"job_id": job_id, "handler": handler, "outcome": outcome}},
     )
+    try:
+        deleted = await db.execute_returning_rowcount(
+            "DELETE FROM jobs WHERE job_id = ?", (job_id,)
+        )
+    except Exception as exc:  # B5 — logged with a remedy, never raised
+        log.scheduler.error(
+            "[scheduler] delete_finished_one_shot: FAILED — the finished one-shot is "
+            "still in jobs",
+            exc_info=exc,
+            extra={"_fields": {"job_id": job_id, "handler": handler, "outcome": outcome,
+                               "remedy": _delete_remedy(exc)}},
+        )
+        return False
+    log.scheduler.info(
+        "[scheduler] delete_finished_one_shot: exit — %s",
+        "row deleted" if deleted else "row already gone (removed while it ran)",
+        extra={"_fields": {"job_id": job_id, "handler": handler, "outcome": outcome,
+                           "rows_deleted": deleted}},
+    )
+    return True
+
+
+def _delete_remedy(exc: BaseException) -> str:
+    """What an operator does about a finished one-shot whose row would not delete."""
+    from stackowl.health.status import remedy_for  # lazy: only on the failure path
+
+    general = (
+        "nothing is lost and the caller keeps the row from running again (the next "
+        "log line says how); if this repeats, check free disk space and whether "
+        "another process holds a write lock on stackowl.db"
+    )
+    specific = remedy_for(exc)
+    return f"{specific}; {general}" if specific else general
 
 
 def _next_local_hhmm(
@@ -393,8 +457,27 @@ async def reap_stale_running(db: DbPool, *, tz: str = "UTC") -> int:
     of its configured local time. Returns the number of jobs reaped.
     """
     log.scheduler.debug("[scheduler] reap_stale_running: entry")
-    rows = await db.fetch_all("SELECT job_id, schedule FROM jobs WHERE status = 'running'")
+    rows = await db.fetch_all(
+        "SELECT job_id, schedule, params FROM jobs WHERE status = 'running'"
+    )
     for row in rows:
+        params = _decode_json_column(row, "params", {})
+        if isinstance(params, dict) and params.get("run_once"):
+            # A ONE-SHOT KEEPS ITS OWN SLOT, as the docstring above always said and
+            # the code did not: it recomputed every row's cadence, so a "manual"
+            # one-shot came back a day out (compute_next_run's +1d fallback) and an
+            # "in 5m" one was pushed further on every restart. Recomputing also moved
+            # the occurrence key the dispatch dedup reads, so a one-shot that had
+            # finished but whose delete failed would run a SECOND time after a boot.
+            await db.execute(
+                "UPDATE jobs SET status = 'pending' WHERE job_id = ?", (row["job_id"],),
+            )
+            log.scheduler.info(
+                "[scheduler] reap_stale_running: one-shot returned to pending at its "
+                "own slot",
+                extra={"_fields": {"job_id": row["job_id"]}},
+            )
+            continue
         next_run = compute_next_run(str(row["schedule"]), tz=tz)
         await db.execute(
             "UPDATE jobs SET status = 'pending', next_run_at = ? WHERE job_id = ?",

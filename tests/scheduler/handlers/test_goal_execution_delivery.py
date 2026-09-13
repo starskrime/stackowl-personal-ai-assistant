@@ -240,7 +240,7 @@ class TestGoalExecutionDelivery:
         assert _status_of(db) == "undeliverable"
         assert _result_text_of(db) == "the answer"  # answer preserved
 
-    async def test_delivery_before_run_once_delete(
+    async def test_run_once_delivers_and_leaves_retirement_to_the_scheduler(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
@@ -271,8 +271,9 @@ class TestGoalExecutionDelivery:
         await handler.execute(job)
 
         assert "deliver" in order
-        assert "delete" in order
-        assert order.index("deliver") < order.index("delete")
+        # The scheduler retires a run_once row after success (2026-09-12); the
+        # handler no longer deletes it, so delivery can never lose that race.
+        assert "delete" not in order
         # TS10 — a one-shot goal (run_once) is a direct user request: it stays
         # "critical" so it is delivered promptly and never quiet-hours batched.
         assert deliverer.calls[0]["urgency"] == "critical"

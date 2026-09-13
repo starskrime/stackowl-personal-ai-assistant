@@ -221,7 +221,7 @@ async def test_terminal_one_shot_failure_routes_notification(tmp_db: DbPool) -> 
     rows = await tmp_db.fetch_all(
         "SELECT status FROM jobs WHERE job_id = ?", (job.job_id,)
     )
-    assert rows[0]["status"] == "failed"
+    assert rows == [], "a terminal one-shot is deleted once its failure is recorded"
     assert deliverer.calls, "terminal failure must route an operator notification"
     assert deliverer.calls[-1]["job_id"] == job.job_id
     # Task 2 fix: "high" was never a valid Notification.urgency literal

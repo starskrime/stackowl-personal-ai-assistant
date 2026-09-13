@@ -245,7 +245,9 @@ async def test_one_shot_STILL_dies_on_a_failure_that_can_never_succeed(
     rows = await tmp_db.fetch_all(
         "SELECT status FROM jobs WHERE job_id = ?", (job.job_id,)
     )
-    assert rows[0]["status"] == "failed", (
+    # It stops by being DELETED once its failure is recorded (owner decision J1,
+    # 2026-09-12) — a terminal one-shot left in `jobs` counts as a live schedule.
+    assert rows == [], (
         "a job created without the fields its handler requires never succeeded "
-        "ONCE — re-arming it forever is not persistence"
+        "ONCE — re-arming it forever is not persistence, and keeping it is not either"
     )

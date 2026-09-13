@@ -469,8 +469,10 @@ async def test_run_once_is_set_so_the_job_cannot_become_recurring(
 async def test_one_boundary_enqueues_once_even_if_announced_twice(
     tmp_db: DbPool,
 ) -> None:
-    """Idempotency is enforced by the DB (jobs.idempotency_key is UNIQUE), not by
-    hoping the event fires once."""
+    """While the job is queued, idempotency is the DB's (jobs.idempotency_key is
+    UNIQUE), not hope that the event fires once. A finished job's row is deleted;
+    test_a_rollover_summary_is_exactly_once_without_its_job_row covers what guards
+    the boundary after that."""
     from stackowl.memory.rollover_summary_handler import register_rollover_consumer
     from stackowl.sessions.store import SessionStore
 

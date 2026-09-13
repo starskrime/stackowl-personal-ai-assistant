@@ -97,10 +97,12 @@ async def test_verified_none_dispatches_completed(
     job, _handler = await _dispatch_once(
         tmp_db, dict(success=True, verified=None, output="ok", error=None), monkeypatch=monkeypatch
     )
-    rows = await tmp_db.fetch_all(
-        "SELECT status FROM job_runs WHERE job_id = ? AND status = 'completed'", (job.job_id,)
-    )
-    assert len(rows) == 1, "success=True, verified=None must reach _mark_completed"
+    # The job is a one-shot, and since 2026-09-12 _mark_completed RETIRES a finished
+    # one-shot — its row is deleted and its job_runs history cascades with it. So
+    # the success path is observed as the row being gone; the failure path (the
+    # verified=False test below) keeps it 'pending' for a retry.
+    rows = await tmp_db.fetch_all("SELECT status FROM jobs WHERE job_id = ?", (job.job_id,))
+    assert rows == [], "success=True, verified=None must reach _mark_completed"
 
 
 @pytest.mark.asyncio
@@ -110,10 +112,9 @@ async def test_verified_true_dispatches_completed(
     job, _handler = await _dispatch_once(
         tmp_db, dict(success=True, verified=True, output="ok", error=None), monkeypatch=monkeypatch
     )
-    rows = await tmp_db.fetch_all(
-        "SELECT status FROM job_runs WHERE job_id = ? AND status = 'completed'", (job.job_id,)
-    )
-    assert len(rows) == 1, "success=True, verified=True must reach _mark_completed"
+    # Observed as the one-shot being retired — see test_verified_none_dispatches_completed.
+    rows = await tmp_db.fetch_all("SELECT status FROM jobs WHERE job_id = ?", (job.job_id,))
+    assert rows == [], "success=True, verified=True must reach _mark_completed"
 
 
 @pytest.mark.asyncio

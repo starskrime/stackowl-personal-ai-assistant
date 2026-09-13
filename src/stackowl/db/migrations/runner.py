@@ -93,6 +93,16 @@ def semantic_checksum(sql: str) -> str:
     return hashlib.sha256(";".join(meaningful).encode()).hexdigest()
 
 
+_DATA_KEYWORDS = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE"})
+
+
+def _is_data_statement(stmt: str) -> bool:
+    """True when ``stmt`` changes rows (DML) rather than schema — comments ignored."""
+    bare = _split_sql(stmt, keep_comments=False)
+    words = bare[0].split(None, 1) if bare else []
+    return bool(words) and words[0].upper() in _DATA_KEYWORDS
+
+
 def _split_sql(sql: str, *, keep_comments: bool = True) -> list[str]:
     """Split SQL into statements, treating ``CREATE TRIGGER … BEGIN … END`` bodies
     as atomic (so the ``;`` between body statements is not a split point).
@@ -214,6 +224,9 @@ class MigrationResult:
     version: str
     name: str
     action: Literal["applied", "skipped"]
+    #: Rows changed by each DATA statement (INSERT/UPDATE/DELETE/REPLACE), in file
+    #: order. Empty for a migration with none, and for a skipped one.
+    rows_changed: tuple[int, ...] = ()
 
 
 @contextmanager
@@ -596,10 +609,18 @@ class MigrationRunner:
         sql = path.read_text(encoding="utf-8")
         checksum = hashlib.sha256(sql.encode()).hexdigest()
         statements = _split_sql(sql)
+        # ROWS CHANGED, PER DATA STATEMENT. "applied successfully" read the same for a
+        # data migration that deleted 136 rows, one whose predicate matched nothing,
+        # and pure DDL, so a delete migration (0143) could not be checked from the boot
+        # log. Only DML is counted: a DDL statement's change count means nothing.
+        changed: list[int] = []
         try:
             with _exclusive_tx(conn):
                 for stmt in statements:
+                    before = conn.total_changes
                     conn.execute(stmt)
+                    if _is_data_statement(stmt):
+                        changed.append(conn.total_changes - before)
                 conn.execute(
                     "INSERT INTO schema_migrations (version, name, applied_at, checksum) VALUES (?, ?, ?, ?)",
                     (version, name, datetime.now(tz=UTC).isoformat(), checksum),
@@ -613,8 +634,17 @@ class MigrationRunner:
         except Exception as exc:
             log.error("[db] runner: %s failed — rolled back", name, exc_info=exc)
             raise MigrationError(name, str(exc)) from exc
-        log.info("[db] runner: %s applied successfully", name)
-        return MigrationResult(version=version, name=name, action="applied")
+        if changed:
+            log.info(
+                "[db] runner: %s applied successfully — rows changed by its %d data "
+                "statement(s): %s",
+                name, len(changed), changed,
+            )
+        else:
+            log.info("[db] runner: %s applied successfully (no data statements)", name)
+        return MigrationResult(
+            version=version, name=name, action="applied", rows_changed=tuple(changed),
+        )
 
     def _set_schema_version(self, conn: sqlite3.Connection, version: str) -> None:
         now = datetime.now(tz=UTC).isoformat()

@@ -1,9 +1,10 @@
-"""Regression — a run_once handler that self-deletes its job row must not crash
+"""Regression — a job row that disappears while its handler runs must not crash
 ``_mark_completed``'s bookkeeping (QA/Murat finding, live reminder pipeline).
 
-``GoalExecutionHandler.execute`` intentionally ``DELETE``s a ``run_once`` job's
-own ``jobs`` row on successful delivery (fire-and-forget agents delete
-themselves). The scheduler poll loop (``_run_job`` -> ``_mark_completed``) then
+It was found when ``GoalExecutionHandler.execute`` ``DELETE``d a ``run_once`` job's
+own row on delivery — a self-delete retired on 2026-09-12, when the scheduler
+became the one place that retires a finished one-shot. A row can still vanish
+mid-run (``stop_job`` from another surface), and the poll loop then
 unconditionally tries to ``INSERT INTO job_runs (job_id, ...)`` referencing that
 SAME job_id. ``job_runs.job_id`` is a real, enforced ``FOREIGN KEY`` (the
 production pool runs with ``PRAGMA foreign_keys=ON``), so the insert raises
@@ -54,7 +55,7 @@ def _reset_registry() -> object:
 
 
 class _SelfDeletingHandler(JobHandler):
-    """Mirrors ``GoalExecutionHandler``'s run_once self-delete-then-return shape:
+    """A row removed while its handler runs (``stop_job`` from another surface):
     the job's own row is gone from ``jobs`` BEFORE the handler returns success."""
 
     def __init__(self, db: DbPool) -> None:
@@ -104,10 +105,17 @@ async def test_poll_survives_handler_self_delete_before_mark_completed(
     assert run_rows == [], "no job_runs row can reference a job_id that no longer exists"
 
 
-async def test_poll_still_records_job_runs_for_a_surviving_job(
+async def test_poll_retires_a_one_shot_whose_handler_does_not_delete_it(
     migrated_db: DbPool,
 ) -> None:
-    """Contrast case — a normal (non-self-deleting) completion still writes job_runs."""
+    """Contrast case — a one-shot whose handler does NOT delete its own row.
+
+    This used to assert the row survived with a completed job_runs row. Since
+    2026-09-12 the scheduler retires every finished one-shot itself: the row is
+    deleted where its outcome is recorded, and its run history cascades with it
+    (migration 0080), so neither the job nor a dangling job_runs row remains. The
+    recurring contrast — history kept — lives in test_a_one_shot_job_does_not_re_arm.
+    """
 
     class _CountingHandler(JobHandler):
         @property
@@ -122,7 +130,9 @@ async def test_poll_still_records_job_runs_for_a_surviving_job(
 
     await JobScheduler(db=migrated_db)._poll()
 
+    rows = await migrated_db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
+    assert rows == [], "a finished one-shot is retired by the scheduler itself"
     run_rows = await migrated_db.fetch_all(
-        "SELECT * FROM job_runs WHERE job_id = ? AND status = 'completed'", (job_id,)
+        "SELECT * FROM job_runs WHERE job_id = ?", (job_id,)
     )
-    assert len(run_rows) == 1, "a job that still exists at completion keeps its audit row"
+    assert run_rows == [], "no run history may outlive its job"

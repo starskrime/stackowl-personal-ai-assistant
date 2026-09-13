@@ -102,9 +102,11 @@ class TestGoalExecutionHandler:
         assert result.error is not None
         assert backend.calls == []  # never invoked backend
 
-    async def test_execute_deletes_job_when_run_once_true(
+    async def test_execute_leaves_run_once_retirement_to_the_scheduler(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A run_once job is retired by the scheduler once it succeeds (2026-09-12);
+        the handler deleting its own row was a second copy of that rule."""
         disable_guard(monkeypatch)
         backend = StubBackend(response_text="ok")
         db = RecordingDb()
@@ -114,8 +116,7 @@ class TestGoalExecutionHandler:
         await handler.execute(job)
 
         deletes = [e for e in db.executes if "DELETE FROM jobs" in e[0]]
-        assert len(deletes) == 1
-        assert deletes[0][1] == (job.job_id,)
+        assert deletes == []
 
     async def test_execute_does_not_delete_when_run_once_false(
         self, monkeypatch: pytest.MonkeyPatch

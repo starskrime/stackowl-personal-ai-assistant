@@ -167,6 +167,15 @@ class RolloverSummaryHandler(JobHandler):
                 mined=0,
             )
 
+        # THE MARKER BEFORE THE WORK. This is what keeps one boundary to one summary
+        # now that a finished one-shot's row — and the UNIQUE idempotency_key it
+        # carried — is deleted. See _record_boundary for the argument.
+        marker_error = await self._record_boundary(lane, ended, job_id=job.job_id)
+        if marker_error is not None:
+            return self._failed(
+                job, t0, f"could not record the summary marker: {marker_error}", mined=0,
+            )
+
         transcript = await self._read_transcript(ended)
         # 2. DECISION — a lane that said nothing costs nothing.
         if not transcript:
@@ -243,6 +252,50 @@ class RolloverSummaryHandler(JobHandler):
         )
 
     # ------------------------------------------------------------------ steps
+
+    async def _record_boundary(self, lane: str, ended: str, *, job_id: str) -> str | None:
+        """Write this incarnation's ``summary_enqueued_for`` marker BEFORE any work.
+
+        Returns None when the marker is durable, or the reason it is not.
+
+        WHY THE JOB WRITES IT when the consumer and the backstop already do. They
+        write it AFTER enqueuing, and until 2026-09-12 a failure of that write was
+        harmless: the backstop's re-enqueue hit the UNIQUE ``idempotency_key`` of
+        the finished job's row, which was parked for ever. A finished one-shot is now
+        DELETED, so once the job had run nothing stopped the backstop queueing the
+        same boundary again — a second summary of one conversation.
+
+        THE ORDERING IS THE GUARANTEE. The job's row, and the UNIQUE key it carries,
+        disappears only after the job has run past this point; when the marker cannot
+        be written the job FAILS, so the scheduler keeps the row for a retry and the
+        key keeps refusing the backstop. At every moment one of the two guards holds.
+        """
+        from stackowl.sessions.store import record_summary_enqueued
+
+        log.memory.debug(
+            "[memory] rollover_summary._record_boundary: entry",
+            extra={"_fields": {"job_id": job_id, "session_key": lane,
+                               "ended_conversation_id": ended}},
+        )
+        try:
+            # The write logs its own outcome, once, in this namespace — including a
+            # zero match, which is correct when the lane already moved on.
+            await record_summary_enqueued(self._db, lane, ended, logger=log.memory)
+        except Exception as exc:
+            log.memory.error(
+                "[memory] rollover_summary._record_boundary: marker NOT written — "
+                "failing the job so its row, and the UNIQUE key that refuses a second "
+                "enqueue, are kept for a retry",
+                exc_info=exc,
+                extra={"_fields": {
+                    "job_id": job_id, "session_key": lane, "ended_conversation_id": ended,
+                    "remedy": "nothing to do unless it repeats — the scheduler retries "
+                              "the job; if it does, check that stackowl.db is writable "
+                              "(free disk space, no other process holding a write lock)",
+                }},
+            )
+            return f"{type(exc).__name__}: {exc}"
+        return None
 
     async def _read_transcript(self, ended_conversation_id: str) -> list[Message]:
         """The WHOLE ended incarnation, up to a safety ceiling.
@@ -477,10 +530,13 @@ async def enqueue_rollover_summary(
     path: two copies would drift into behaving differently, and this one is the
     step that makes Q15's durability real.
 
-    Idempotency is the DATABASE's. ``jobs.idempotency_key`` is UNIQUE and the key is
-    ``rollover:{lane}:{ended_incarnation}``, so one boundary yields one summary
-    however many times it is announced or recovered. That is what lets the backstop
-    be unconditional instead of clever.
+    Idempotency WHILE QUEUED is the DATABASE's. ``jobs.idempotency_key`` is UNIQUE and
+    the key is ``rollover:{lane}:{ended_incarnation}``, so a boundary announced or
+    recovered again while its job is still queued yields no second job. A finished
+    one-shot's row is DELETED (2026-09-12), and the key goes with it; from then on the
+    lane's ``summary_enqueued_for`` marker — which the job writes before it does any
+    work (``RolloverSummaryHandler._record_boundary``) — is what stops the backstop
+    queueing the boundary again. That is what lets the backstop stay unconditional.
     """
     job = Job(
         job_id=f"{HANDLER_NAME}-{uuid.uuid4().hex[:8]}",
@@ -540,12 +596,13 @@ def register_rollover_consumer(event_bus: object, db: object,
     is watching, so the consumer must ENQUEUE rather than work inline — anything
     done in the handler thread is lost if the process dies mid-summary.
 
-    Idempotency is the DATABASE's job, not the event's. ``jobs.idempotency_key`` is
-    UNIQUE and the key here is ``rollover:{lane}:{ended_incarnation}``, so one
-    boundary produces one summary however many times it is announced. That matters
-    concretely: the sweeper finalises a lane on the clock and the next inbound
-    message resolves it, and a double-announce guard already exists in the store —
-    this is the second belt, enforced by the schema rather than by agreement.
+    Idempotency is not the event's job. The double-announce guard in the store is the
+    first belt; ``jobs.idempotency_key`` (UNIQUE, ``rollover:{lane}:{ended_incarnation}``)
+    is the second while the job is queued; and once the finished job's row is deleted,
+    the lane's ``summary_enqueued_for`` marker — written by the job before it does any
+    work — is what keeps the backstop from queueing the boundary again. That matters
+    concretely: the sweeper finalises a lane on the clock and the next inbound message
+    resolves it.
 
     A consumer that cannot enqueue must never break the boundary. The conversation
     starting is more important than the summary, so every failure here is logged
@@ -583,9 +640,15 @@ def register_rollover_consumer(event_bus: object, db: object,
             try:
                 await store.mark_summary_enqueued(lane, ended)  # type: ignore[attr-defined]
             except Exception as exc:
+                # WHAT ACTUALLY GUARDS IT. This used to say the UNIQUE key absorbs the
+                # backstop's re-enqueue — true only while the job's row existed, and a
+                # finished one-shot's row is now deleted. The guard is the job itself:
+                # it writes this same marker before doing any work, and fails (keeping
+                # its row and that key) when it cannot — see _record_boundary.
                 log.memory.warning(
                     "[memory] rollover_consumer: could not record the enqueue — the "
-                    "backstop may queue it again, which the UNIQUE key absorbs",
+                    "queued job writes the marker itself before it runs, so the "
+                    "backstop cannot summarise this boundary twice",
                     exc_info=exc,
                     extra={"_fields": {"session_key": lane, "ended_conversation_id": ended}},
                 )

@@ -5,10 +5,10 @@ job whose ``params['goal']`` carries a user intent (e.g. "Check the weather
 and summarise") drives the standard 8-step pipeline as if the user had
 typed the goal at the prompt.
 
-The handler also persists a row in ``job_results`` for ``/agents log``,
-and removes the job entirely when ``params['run_once']`` is set — that path
-turns the scheduler into a fire-and-forget background runner for one-shot
-agents.
+The handler also persists a row in ``job_results`` for ``/agents log``. A job
+with ``params['run_once']`` set is a fire-and-forget one-shot agent: the
+scheduler retires its row once it succeeds (``JobScheduler._settle``). The
+handler no longer deletes it itself, so that rule has one home.
 
 Backward compatibility: when constructed without a backend (the Story 7.1
 test surface), execute() degrades to a noop success — the legacy contract
@@ -41,7 +41,6 @@ _INSERT_JOB_RESULT_SQL = (
     "INSERT INTO job_results (job_id, run_at, status, result_text, duration_ms) "
     "VALUES (?, ?, ?, ?, ?)"
 )
-_DELETE_JOB_SQL = "DELETE FROM jobs WHERE job_id = ?"
 
 # A goal's own text can instruct the model to stay silent under some condition
 # (e.g. "only notify if the price moved >2%; otherwise stay silent"). Free-text
@@ -336,8 +335,8 @@ class GoalExecutionHandler(JobHandler):
         # 3. STEP — DELIVER the produced answer back to the chat the goal was
         #    scheduled from, then derive the HONEST status from the ACTUAL
         #    transport outcome. result_text is ALWAYS the produced answer (it is
-        #    never lost from /agents log, even when delivery fails). Runs BEFORE
-        #    the run_once delete so the durable target is never lost.
+        #    never lost from /agents log, even when delivery fails). The scheduler
+        #    retires a run_once row only after this returns success.
         delivery_failed = False
         if parked:
             blocker = "; ".join(final_state.errors) or "durable replay uncertain"
@@ -382,10 +381,9 @@ class GoalExecutionHandler(JobHandler):
         # producing an answer the user never receives while reporting success.
         delivered_success = success and not delivery_failed
 
-        # 3. STEP — fire-and-forget agents delete themselves after a successful run.
-        #    A transient delivery failure keeps the job so the retry can deliver.
-        if delivered_success and bool(job.params.get("run_once")):
-            await self._delete_job(job.job_id)
+        # A fire-and-forget (run_once) agent is retired by the SCHEDULER once this
+        # returns success — the one home of that rule. A transient delivery failure
+        # returns NOT-success, so the job is kept for the retry to deliver.
 
         # 4. EXIT — a parked durable task surfaces a distinct, unambiguous signal
         #    (output says PARKED + the blocker; metadata.parked True) so /agents
@@ -615,26 +613,4 @@ class GoalExecutionHandler(JobHandler):
         log.scheduler.debug(
             "[scheduler] goal_execution._record_result: written",
             extra={"_fields": {"job_id": job_id, "status": status, "run_at": run_at}},
-        )
-
-    async def _delete_job(self, job_id: str) -> None:
-        """Remove a one-shot agent from the ``jobs`` table after a successful run."""
-        if self._db is None:
-            log.scheduler.warning(
-                "[scheduler] goal_execution._delete_job: no db wired — skipping delete",
-                extra={"_fields": {"job_id": job_id}},
-            )
-            return
-        try:
-            await self._db.execute(_DELETE_JOB_SQL, (job_id,))
-        except Exception as exc:  # B5 — never silent
-            log.scheduler.warning(
-                "[scheduler] goal_execution._delete_job: delete failed",
-                exc_info=exc,
-                extra={"_fields": {"job_id": job_id}},
-            )
-            return
-        log.scheduler.info(
-            "[scheduler] goal_execution._delete_job: removed one-shot agent",
-            extra={"_fields": {"job_id": job_id}},
         )

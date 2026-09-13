@@ -230,3 +230,53 @@ async def test_a_sweeper_with_no_enqueue_wired_still_sweeps(
         idempotency_key="k", last_run_at=None, next_run_at="", status="pending",
     ))
     assert result.success is True
+
+
+# --------------------------------------------------- the marker has one writer
+
+
+async def test_a_retried_OLD_boundary_does_not_overwrite_a_newer_marker(
+    store: SessionStore,
+) -> None:
+    """The marker write is scoped to the incarnation. A job for boundary N1 retried
+    after the lane rolled to N2 — and N2 was already queued — must not put the
+    marker back to N1, or N2 returns to the backstop as if it had never been queued."""
+    from stackowl.infra.observability import log
+    from stackowl.sessions.store import record_summary_enqueued
+
+    lane = await _finalise(store)
+    n1 = await store.get(lane)
+    assert n1 is not None
+    await store.resolve_for(src(), at(21, 10))
+    await store.sweep(now=at(22, 9))
+    n2 = await store.get(lane)
+    assert n2 is not None and n2.conversation_id != n1.conversation_id
+    await store.mark_summary_enqueued(lane, n2.conversation_id)
+
+    matched = await record_summary_enqueued(
+        store._db, lane, n1.conversation_id, logger=log.gateway,  # noqa: SLF001
+    )
+
+    assert matched == 0
+    assert await store.lanes_awaiting_summary() == []
+    reloaded = await store.get(lane)
+    assert reloaded is not None
+    assert reloaded.summary_enqueued_for == n2.conversation_id
+
+
+async def test_a_STALE_save_does_not_reset_the_marker(store: SessionStore) -> None:
+    """save() upserts from an in-memory entry. An entry read before the marker was
+    written and saved after it used to put the marker back to what it read — and
+    once the finished job's row is gone, the backstop re-queued an already-summarised
+    boundary. The marker has one writer now."""
+    lane = await _finalise(store)
+    stale = await store.get(lane)
+    assert stale is not None and stale.summary_enqueued_for is None
+    await store.mark_summary_enqueued(lane, stale.conversation_id)
+
+    await store.save(stale)
+
+    reloaded = await store.get(lane)
+    assert reloaded is not None
+    assert reloaded.summary_enqueued_for == stale.conversation_id
+    assert await store.lanes_awaiting_summary() == []

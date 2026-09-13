@@ -124,10 +124,13 @@ async def test_idempotent_skip_advances_recurring_job(migrated_db: DbPool) -> No
 
 
 async def test_idempotent_skip_does_not_rearm_one_shot(migrated_db: DbPool) -> None:
-    """A completed one-shot is done — an idempotent skip must NOT re-arm it."""
+    """A one-shot whose occurrence is already recorded completed has FINISHED. An
+    idempotent skip must not re-arm it, and (2026-09-12) retires the row the way every
+    finished one-shot is retired — the path that heals a completion whose delete
+    failed: the recorded run stops a second dispatch, and this deletes the row."""
     handler = _CountingHandler()
     HandlerRegistry.instance().register(handler)
-    job_id, past, _ = await _seed_due_job(migrated_db, run_once=True)
+    job_id, _past, _ = await _seed_due_job(migrated_db, run_once=True)
 
     await JobScheduler(db=migrated_db)._poll()
 
@@ -135,7 +138,7 @@ async def test_idempotent_skip_does_not_rearm_one_shot(migrated_db: DbPool) -> N
     rows = await migrated_db.fetch_all(
         "SELECT next_run_at FROM jobs WHERE job_id = ?", (job_id,)
     )
-    assert rows[0]["next_run_at"] == past, "one-shot must NOT be re-armed to a new slot"
+    assert rows == [], "a serviced one-shot must be retired, never re-armed to a new slot"
 
 
 async def test_idempotent_skip_no_extra_job_run_row(migrated_db: DbPool) -> None:

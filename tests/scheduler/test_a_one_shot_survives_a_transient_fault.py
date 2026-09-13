@@ -242,10 +242,12 @@ async def test_a_PERMANENT_failure_still_terminates(tmp_db: DbPool) -> None:
 
     await _drive_to_exhaustion(tmp_db, sched, job.job_id)
 
-    row = (await tmp_db.fetch_all(
+    rows = await tmp_db.fetch_all(
         "SELECT status FROM jobs WHERE job_id = ?", (job.job_id,)
-    ))[0]
-    assert row["status"] == "failed", (
+    )
+    # Terminates by DELETION once the failure is recorded (owner decision J1,
+    # 2026-09-12), never by re-arming.
+    assert rows == [], (
         "re-arming a job that can never succeed is not persistence, it is the "
         "no-decay failure mode with better manners"
     )

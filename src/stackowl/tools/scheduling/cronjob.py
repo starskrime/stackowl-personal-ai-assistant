@@ -411,7 +411,7 @@ class CronjobTool(Tool):
         # REMINDER-FIX / REMINDER-FIX-2 — a one-shot 'in <n><unit>' OR 'at
         # HH:MM' schedule arms the existing goal_execution run_once path: fire
         # exactly once, deliver via the same proactive seam as any other cron
-        # goal, then self-delete. Reuses the engine's own primitive; no new
+        # goal, then the scheduler retires the row. Reuses the engine's own primitive; no new
         # tool/handler.
         one_shot = parse_in(schedule) is not None or parse_at(schedule) is not None
         job = await scheduler.create_job(

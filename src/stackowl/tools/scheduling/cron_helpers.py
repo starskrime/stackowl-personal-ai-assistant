@@ -40,7 +40,7 @@ def render_recurrence(schedule: str) -> str:
     delay = parse_in(text)
     if delay is not None:
         # HONESTY (REMINDER-FIX) — a one-shot must never be echoed as "forever";
-        # it fires once and the job self-deletes (goal_execution run_once).
+        # it fires once and the scheduler retires the job (run_once).
         return f"once, in ~{_format_delay(delay)}"
 
     at_hhmm = parse_at(text)

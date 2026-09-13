@@ -24,6 +24,7 @@ from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler_helpers import (
     _STALE_RUNNING_AFTER_SEC,
     compute_next_run,
+    delete_finished_one_shot,
     insert_job,
     reap_stale_running,
     reap_timed_out_running,
@@ -54,12 +55,6 @@ _MAX_DEFER_SEC = 900.0
 # bounding the worst case. A timeout routes into the SAME retry/re-arm path an
 # ordinary handler exception already takes — recurring jobs self-heal (F-60),
 # one-shots retry up to _MAX_RETRIES.
-#: Where a ONE-SHOT job goes when it succeeds. Already in the ``jobs`` CHECK
-#: constraint ('pending','running','completed','failed') and, until 2026-08-31,
-#: written by nothing — the live table held 126 pending, 1 failed and 0 completed
-#: while a method named ``_mark_completed`` re-armed every one-shot to 'pending'.
-ONE_SHOT_TERMINAL_STATUS = "completed"
-
 _HANDLER_TIMEOUT_SEC = 1200.0
 
 
@@ -312,6 +307,9 @@ class JobScheduler(SupervisedTask):
             # freed row is eligible in the SAME cycle. Isolated inside the same
             # try: a reap failure must never cost the poll.
             await reap_timed_out_running(self._db)
+            # The self-heal for a one-shot left terminal 'failed' because its audit
+            # write or its delete failed — see _retire_recorded_terminal_one_shots.
+            await self._retire_recorded_terminal_one_shots()
             await self._poll()
         except Exception as exc:
             log.heartbeat.error(
@@ -572,6 +570,22 @@ class JobScheduler(SupervisedTask):
             TraceContext.reset(trace_token)
 
         duration_ms = (time.monotonic() - t0) * 1000
+        await self._settle(job, result, duration_ms)
+
+    async def _settle(self, job: Job, result: JobResult, duration_ms: float) -> None:
+        """What a finished RUN means for its job — ONE disposition for every dispatcher.
+
+        The poller calls it after every run, and ``run_now`` calls it for a one-shot.
+        Before that, a one-shot ``run_now`` could not finish went back to 'pending'
+        at its past slot with no retry state: the poller re-ran it at once and the
+        retry ladder never advanced.
+        """
+        log.heartbeat.debug(
+            "[scheduler] %s: settle — entry",
+            job.job_id,
+            extra={"_fields": {"job_id": job.job_id, "success": result.success,
+                               "verified": result.verified}},
+        )
         # PB6a — a job that self-reports success=True but was checked and found
         # verified=False (claimed-but-not-observed) is never a trustworthy win;
         # route it through the same retry/terminal-fail path as an ordinary
@@ -634,13 +648,30 @@ class JobScheduler(SupervisedTask):
         for that occurrence would be re-selected and re-skipped on every poll,
         never advancing. Only acts when the job is RECURRING and its
         ``next_run_at`` is at/behind now (an unparseable value is treated as stuck
-        and repaired); a healthy FUTURE slot is left untouched, and a ONE-SHOT is
-        never re-armed (a completed one-shot must not fire again). Writes no
-        ``job_runs`` row — it only moves the slot, reusing the same
+        and repaired); a healthy FUTURE slot is left untouched, reusing the same
         ``compute_next_run`` the normal completion path uses.
+
+        A ONE-SHOT is never re-armed. Its occurrence is recorded completed, so it
+        has FINISHED, and it is RETIRED — its row deleted, its history with it. That
+        is also the path that heals a completion whose delete failed. Neither
+        branch writes a ``job_runs`` row.
         """
         if not self._is_recurring(job):
-            return  # one-shot: completed and done — never re-arm to fire again
+            # A one-shot whose occurrence is recorded completed has FINISHED, so it is
+            # retired like every finished one-shot — never re-armed to fire again.
+            # This is also how a completion whose delete failed heals itself: the
+            # recorded run stopped a second dispatch, and this poll deletes the row.
+            deleted = await delete_finished_one_shot(
+                self._db, job.job_id, handler=job.handler_name,
+                outcome="completed (occurrence already recorded)",
+            )
+            log.heartbeat.info(
+                "[scheduler] %s: idempotent-skip — finished one-shot %s",
+                job.job_id,
+                "retired" if deleted else "NOT retired (see the delete failure above)",
+                extra={"_fields": {"job_id": job.job_id, "deleted": deleted}},
+            )
+            return
         try:
             due = datetime.fromisoformat(job.next_run_at)
             stuck = due <= datetime.now(UTC)
@@ -682,34 +713,37 @@ class JobScheduler(SupervisedTask):
         #
         # NOT the schedule string: "manual" is not a cadence, so tightening
         # compute_next_run would only change WHICH wrong cadence a one-shot gets.
-        one_shot = not self._is_recurring(job)
-        next_run = job.next_run_at if one_shot else compute_next_run(
-            job.schedule, tz=self._tz,
-        )
-        # 'completed' is in the jobs CHECK constraint and was written by NOTHING —
-        # 126 pending, 1 failed, 0 completed. Terminal, not deleted: `job_runs.job_id`
-        # is a real FK and the run history is the record of what the platform did, so
-        # the row stays inspectable while dropping out of the claim query, which
-        # selects `status='pending' AND enabled=1`.
-        status = ONE_SHOT_TERMINAL_STATUS if one_shot else "pending"
+        #
+        # AND NOT PARKED. The 2026-08-31 fix wrote the row back 'completed' "to keep
+        # its job_runs history", a reason already stale: migration 0080 made
+        # `job_runs.job_id` ON DELETE CASCADE, and goal_execution one-shots already
+        # deleted themselves. MEASURED 2026-09-12: 136 of 169 enabled jobs were those
+        # parked rows, reported as live schedules by every reader. A finished one-shot
+        # is DELETED, here, where its outcome is recorded.
+        if not self._is_recurring(job):
+            await self._retire_completed_one_shot(job, duration_ms, now_iso, run_id)
+            return
+        next_run = compute_next_run(job.schedule, tz=self._tz)
+        status = "pending"
         # STEER-5/F113 — on success, recompute the canonical cadence AND clear the
         # transient retry state (retry_count=0, retry_at=NULL) so a previously
         # flaky job returns to a clean steady state on its real schedule. Also reset
         # failure_count: it counts CONSECUTIVE failed runs — one success starts a
         # fresh streak (surfaced via the F-61 per-re-arm alert, no breaker anymore).
         #
-        # ROOT-CAUSE FIX (QA/Murat, live reminder crash) — a run_once handler
-        # (goal_execution) self-deletes its OWN jobs row on success BEFORE
-        # returning here. ``rowcount`` from THIS update tells us, for free,
-        # whether that row still exists: 0 rows means the handler already
-        # removed it. job_runs.job_id is a real FK to jobs (foreign_keys=ON in
+        # ROOT-CAUSE FIX (QA/Murat, live reminder crash) — a row can be gone by the
+        # time its run returns: removed mid-run by stop_job or an owl reconcile.
+        # (First seen with goal_execution's run_once self-delete, since retired —
+        # a one-shot is retired by _retire_completed_one_shot and never reaches this
+        # UPDATE.) ``rowcount`` from THIS update tells us, for free, whether the
+        # row still exists. job_runs.job_id is a real FK to jobs (foreign_keys=ON in
         # production) — inserting a job_runs row for a job_id that no longer
         # exists raises sqlite3.IntegrityError, uncaught, which used to burn one
         # of the supervisor's 5 consecutive-failure lives PER successful
         # reminder and could park the entire scheduler (every recurring job
         # too) permanently failed. job_runs is a dedup/history table only
         # (migration 0040: "no other table references it") and a deleted
-        # one-shot can never be re-polled, so skipping its row here loses
+        # job can never be re-polled, so skipping its row here loses
         # nothing.
         rows_affected = await self._db.execute_returning_rowcount(
             # `last_error` is cleared with the rest of the failure record. It is
@@ -729,8 +763,8 @@ class JobScheduler(SupervisedTask):
         )
         if rows_affected == 0:
             log.heartbeat.info(
-                "[scheduler] %s: exit — completed (job self-deleted by handler, "
-                "job_runs insert skipped)",
+                "[scheduler] %s: exit — completed (row removed while its handler "
+                "ran, job_runs insert skipped)",
                 job.job_id,
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
@@ -744,10 +778,141 @@ class JobScheduler(SupervisedTask):
             job.job_id,
             extra={"_fields": {
                 "job_id": job.job_id, "duration_ms": duration_ms,
-                "next_run": None if one_shot else next_run,
-                "one_shot": one_shot,
+                "next_run": next_run,
             }},
         )
+
+    async def _retire_completed_one_shot(
+        self, job: Job, duration_ms: float, now_iso: str, run_id: str,
+    ) -> None:
+        """Delete a one-shot that succeeded — and if the delete fails, keep it from running twice.
+
+        The delete runs on the runtime pool, which enforces the ``job_runs`` cascade,
+        so no run history outlives its job.
+
+        A FAILED DELETE leaves the row 'running'. A reaper will return it to
+        'pending', and with no record of this run the next poll would dispatch it
+        again. So the run is written to ``job_runs`` as completed for THIS
+        occurrence — the exact key ``_run_job``'s dedup reads — and the next poll
+        that reaches the row takes the idempotent skip, which retires it
+        (``_advance_past_serviced_occurrence``). The platform heals its own failed
+        delete; the reapers and ``recover()`` keep a one-shot's slot, so the key
+        survives a boot.
+        """
+        log.heartbeat.debug(
+            "[scheduler] %s: _retire_completed_one_shot — entry",
+            job.job_id,
+            extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
+        )
+        if await delete_finished_one_shot(
+            self._db, job.job_id, handler=job.handler_name, outcome="completed",
+        ):
+            log.heartbeat.info(
+                "[scheduler] %s: exit — completed, one-shot retired",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms,
+                                   "one_shot": True}},
+            )
+            return
+        # DECISION — the delete failed, so the run is recorded for this occurrence
+        # instead: it is the dedup a reaped row meets on its next dispatch.
+        log.heartbeat.warning(
+            "[scheduler] %s: one-shot delete failed — recording its run so it cannot "
+            "dispatch again",
+            job.job_id,
+            extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name,
+                               "occurrence_key": self._occurrence_key(job)}},
+        )
+        try:
+            await self._db.execute(
+                "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (run_id, job.job_id, self._occurrence_key(job), "completed", duration_ms, now_iso),
+            )
+        except Exception as exc:  # B5 — the last guard failed too; say what that costs
+            log.heartbeat.error(
+                "[scheduler] %s: exit — completed, but the one-shot row could not be "
+                "deleted NOR its run recorded; it MAY run again once a reaper frees it",
+                job.job_id,
+                exc_info=exc,
+                extra={"_fields": {
+                    "job_id": job.job_id, "handler": job.handler_name,
+                    "remedy": "check free disk space and whether another process holds "
+                              "a write lock on stackowl.db — while the database stays "
+                              "unwritable, a second run of this one-shot is the cost",
+                }},
+            )
+            return
+        log.heartbeat.warning(
+            "[scheduler] %s: exit — completed, one-shot row NOT deleted; its run is "
+            "recorded, so it will not dispatch again, and the next poll that reaches "
+            "it retires the row",
+            job.job_id,
+            extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name,
+                               "duration_ms": duration_ms}},
+        )
+
+    async def _retire_recorded_terminal_one_shots(self) -> int:
+        """Retire one-shots left terminal 'failed' — the scheduler's self-heal.
+
+        ``_mark_failed`` deletes a permanently failed one-shot only once its audit row
+        exists, and keeps the row as the record when the audit write or the delete
+        fails. Migration 0143 runs once, so without this nothing would retry and the
+        row would count as a live schedule for good. Every poll cycle: a row whose
+        failure is already recorded is deleted; a row whose failure is not is
+        recorded first, from its own ``last_error``, then deleted. A PAUSED one-shot
+        (``pause()`` writes 'failed' with ``enabled=0``) is the user's decision and
+        never matches. Never raises — a heal must not cost the poll.
+        """
+        log.heartbeat.debug("[scheduler] _retire_recorded_terminal_one_shots: entry")
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT j.job_id, j.handler_name, j.last_error, EXISTS ("
+                "  SELECT 1 FROM audit_log a WHERE a.event_type = 'job_failed_terminal' "
+                "  AND a.target = j.job_id) AS recorded "
+                "FROM jobs j WHERE j.status = 'failed' AND j.enabled = 1 "
+                "AND (CASE WHEN json_valid(j.params) "
+                "     THEN json_extract(j.params, '$.run_once') END) = 1"
+            )
+        except Exception as exc:  # B5 — a heal that cannot look must say so
+            log.heartbeat.error(
+                "[scheduler] _retire_recorded_terminal_one_shots: could not look for "
+                "terminal one-shots — retried next cycle",
+                exc_info=exc,
+                extra={"_fields": {"remedy": "check that stackowl.db is readable; "
+                                             "nothing is lost while this retries"}},
+            )
+            return 0
+        retired = 0
+        for row in rows:
+            job_id = str(row["job_id"])
+            handler = str(row["handler_name"])
+            if not row["recorded"]:
+                # DECISION — the failure was never recorded. Record it now, from the
+                # row itself, before the row that carries it goes.
+                recorded = await write_audit(
+                    self._db, "job_failed_terminal", job_id, actor="scheduler",
+                    details={"handler": handler, "last_error": row["last_error"],
+                             "recorded_late": True},
+                )
+                if not recorded:
+                    log.heartbeat.warning(
+                        "[scheduler] %s: terminal one-shot still cannot be recorded — "
+                        "row kept, retried next cycle",
+                        job_id,
+                        extra={"_fields": {"job_id": job_id, "handler": handler}},
+                    )
+                    continue
+            if await delete_finished_one_shot(
+                self._db, job_id, handler=handler, outcome="failed (heal sweep)",
+            ):
+                retired += 1
+        if rows:
+            log.heartbeat.info(
+                "[scheduler] _retire_recorded_terminal_one_shots: exit",
+                extra={"_fields": {"found": len(rows), "retired": retired}},
+            )
+        return retired
 
     @staticmethod
     def _is_recurring(job: Job) -> bool:
@@ -755,13 +920,13 @@ class JobScheduler(SupervisedTask):
 
         F-60: a RECURRING job (morning_brief, check_in, every-N sweeps, daily@,
         cron) must NEVER go terminal ``failed`` after a burst of transient
-        failures — its next occurrence has to fire. A ONE-SHOT job (``run_once``,
-        which deletes its own row on success and would otherwise linger as a dead
-        ``failed`` row) stays terminal.
+        failures — its next occurrence has to fire. A ONE-SHOT job (``run_once``)
+        has no next occurrence: when it finishes — succeeded, or failed with its
+        retries exhausted — its row is deleted (``delete_finished_one_shot``).
 
         Detection reuses the SAME explicit marker the rest of the scheduler keys
-        on for the run-once/recurring fork (``goal_execution._delete_job``,
-        ``scheduler_mutations._restore_after_run``): ``params['run_once']``. This
+        on for the run-once/recurring fork (``scheduler_mutations.run_now``,
+        ``scheduler_helpers.reap_stale_running``): ``params['run_once']``. This
         is schedule-DSL-agnostic — any seeded standing job (none of which set
         ``run_once``) is recurring, which is exactly the set that must self-heal.
         """
@@ -869,25 +1034,74 @@ class JobScheduler(SupervisedTask):
             if not is_permanent(failure_class):
                 await self._rearm_one_shot(job, last_error, failure_class)
                 return
-            await self._db.execute(
-                "UPDATE jobs SET status = 'failed', last_error = ? WHERE job_id = ?",
-                (last_error, job.job_id),
-            )
-            log.heartbeat.error(
-                "[scheduler] %s: one-shot marked permanently failed — %s",
-                job.job_id,
-                failure_class,
-                extra={"_fields": {"job_id": job.job_id, "retries": job.retry_count + 1,
-                                   "failure_class": failure_class}},
-            )
-            await write_audit(
+            # RECORD, THEN DELETE (owner decision J1, 2026-09-12). A failed one-shot is
+            # deleted too, because a terminal row left in `jobs` is counted as a live
+            # schedule by every reader. The audit row is the record of the failure,
+            # and the job row is deleted only once that record exists.
+            recorded = await write_audit(
                 self._db,
                 "job_failed_terminal",
                 job.job_id,
                 actor="scheduler",
-                details={"handler": job.handler_name, "last_error": last_error},
+                details={"handler": job.handler_name, "last_error": last_error,
+                         "failure_class": failure_class},
             )
+            deleted = recorded and await delete_finished_one_shot(
+                self._db, job.job_id, handler=job.handler_name, outcome="failed",
+            )
+            if not deleted:
+                # THE ROW IS THE RECORD when the audit write or the delete failed. It is
+                # written BEFORE the alert: a row still 'running' after an alert is
+                # reaped, runs again and alerts again. Terminal 'failed' is outside the
+                # claim query, and the poll cycle's heal sweep retires the row once the
+                # database lets it (_retire_recorded_terminal_one_shots).
+                try:
+                    await self._db.execute(
+                        "UPDATE jobs SET status = 'failed', last_error = ? WHERE job_id = ?",
+                        (last_error, job.job_id),
+                    )
+                except Exception as exc:  # B5 — say what the lost write costs
+                    log.heartbeat.error(
+                        "[scheduler] %s: one-shot permanently failed and could not be "
+                        "marked 'failed' either — it stays 'running' until a reaper "
+                        "frees it, and may run and alert again",
+                        job.job_id,
+                        exc_info=exc,
+                        extra={"_fields": {
+                            "job_id": job.job_id, "failure_class": failure_class,
+                            "audit_recorded": recorded,
+                            "remedy": "check that stackowl.db is writable (free disk "
+                                      "space, no other process holding a write lock); "
+                                      "a repeat run fails the same way and is recorded",
+                        }},
+                    )
             await self._notify_failure(job, last_error, terminal=True)
+            if deleted:
+                log.heartbeat.error(
+                    "[scheduler] %s: one-shot permanently failed — %s; recorded in the "
+                    "audit log and deleted",
+                    job.job_id,
+                    failure_class,
+                    extra={"_fields": {"job_id": job.job_id, "retries": job.retry_count + 1,
+                                       "failure_class": failure_class}},
+                )
+                return
+            log.heartbeat.error(
+                "[scheduler] %s: one-shot permanently failed — %s; KEPT as status "
+                "'failed' because its %s",
+                job.job_id,
+                failure_class,
+                "row would not delete" if recorded
+                else "failure could not be recorded in the audit log",
+                extra={"_fields": {
+                    "job_id": job.job_id, "retries": job.retry_count + 1,
+                    "failure_class": failure_class, "audit_recorded": recorded,
+                    "remedy": "nothing is lost — the row carries last_error, and the poll "
+                              "cycle retires it on its own once stackowl.db is writable; "
+                              "if it stays, check free disk space and whether another "
+                              "process holds a write lock",
+                }},
+            )
             return
 
         # No consecutive-failure circuit breaker (owner decision 2026-07-22) — a
@@ -1115,11 +1329,17 @@ class JobScheduler(SupervisedTask):
     async def resume(self, job_id: str) -> None:
         """Resume a job — clears failure_count/last_error and recomputes next_run_at."""
         log.scheduler.debug("[scheduler] resume: entry", extra={"_fields": {"job_id": job_id}})
-        rows = await self._db.fetch_all("SELECT schedule FROM jobs WHERE job_id = ?", (job_id,))
+        rows = await self._db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
         if not rows:
             log.scheduler.warning("[scheduler] resume: job not found", extra={"_fields": {"job_id": job_id}})
             return
-        next_run = compute_next_run(rows[0]["schedule"], tz=self._tz)
+        job = row_to_job(rows[0])
+        # A ONE-SHOT KEEPS ITS OWN SLOT — "manual" has no next occurrence to compute,
+        # and compute_next_run's +1 day would move the key the dispatch dedup reads.
+        next_run = (
+            compute_next_run(job.schedule, tz=self._tz) if self._is_recurring(job)
+            else job.next_run_at
+        )
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', enabled = 1, failure_count = 0, "
             "last_error = NULL, circuit_broken_at = NULL, next_run_at = ? WHERE job_id = ?",
@@ -1239,11 +1459,18 @@ class JobScheduler(SupervisedTask):
                 await self._run_job(job)
                 replayed += 1
             else:
-                next_run = compute_next_run(job.schedule, tz=self._tz)
-                await self._db.execute(
-                    "UPDATE jobs SET next_run_at = ? WHERE job_id = ?",
-                    (next_run, job.job_id),
-                )
+                # A ONE-SHOT KEEPS ITS OWN SLOT. compute_next_run answers "manual" with
+                # +1 day, which moved the occurrence key the dispatch dedup reads, so a
+                # one-shot that had finished but whose delete failed ran again. Left
+                # due, the poller dispatches it — or retires it, if its run is recorded.
+                if self._is_recurring(job):
+                    next_run = compute_next_run(job.schedule, tz=self._tz)
+                    await self._db.execute(
+                        "UPDATE jobs SET next_run_at = ? WHERE job_id = ?",
+                        (next_run, job.job_id),
+                    )
+                else:
+                    next_run = job.next_run_at
                 # THE DROP WAS SILENT, and that is half the defect. MEASURED over
                 # 749 `recover: exit` records: 1,553 overdue occurrences seen, 10
                 # replayed, and the other 1,543 advanced with NO log line at all,
@@ -1257,8 +1484,9 @@ class JobScheduler(SupervisedTask):
                 overdue_s = (now - missed_at).total_seconds()
                 emit = log.scheduler.warning if should_replay else log.scheduler.info
                 emit(
-                    "[scheduler] recover: missed occurrence dropped — advanced to "
-                    "the next slot",
+                    "[scheduler] recover: missed occurrence %s",
+                    "dropped — advanced to the next slot" if self._is_recurring(job)
+                    else "not replayed — one-shot left at its own slot for the poller",
                     extra={"_fields": {
                         "job_id": job.job_id,
                         "handler": job.handler_name,
@@ -1346,5 +1574,8 @@ class JobScheduler(SupervisedTask):
         )
 
     async def run_now(self, job_id: str) -> JobResult | None:
-        """Run one job out of band — thin delegate; mirrors the poller's CAS (B2)."""
-        return await run_now(self._db, self._clock, self._registry, job_id, tz=self._tz)
+        """Run one job out of band — thin delegate; mirrors the poller's CAS (B2) and
+        settles a one-shot through the poller's own disposition (``_settle``)."""
+        return await run_now(
+            self._db, self._clock, self._registry, job_id, tz=self._tz, settle=self._settle,
+        )
