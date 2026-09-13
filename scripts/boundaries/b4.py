@@ -75,9 +75,13 @@ def _posix_path_literals(tree: ast.AST) -> list[tuple[int, str]]:
     }
     out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if "/tmp" in node.value and node.value not in docstrings:
-                out.append((node.lineno, node.value))
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "/tmp" in node.value
+            and node.value not in docstrings
+        ):
+            out.append((node.lineno, node.value))
     return out
 
 
@@ -100,11 +104,12 @@ def _guarded_signal_lines(tree: ast.AST) -> set[int]:
                 for inner in ast.walk(node):
                     if hasattr(inner, "lineno"):
                         safe.add(inner.lineno)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if "posix" in node.name.lower() or "unix" in node.name.lower():
-                for inner in ast.walk(node):
-                    if hasattr(inner, "lineno"):
-                        safe.add(inner.lineno)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+            "posix" in node.name.lower() or "unix" in node.name.lower()
+        ):
+            for inner in ast.walk(node):
+                if hasattr(inner, "lineno"):
+                    safe.add(inner.lineno)
     return safe
 
 

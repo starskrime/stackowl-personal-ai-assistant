@@ -48,10 +48,10 @@ class UIStateCoordinator:
 
     def __init__(
         self,
-        app: "App[object]",
+        app: App[object],
         event_bus: EventBus,
         *,
-        ui_settings: "UISettings | None" = None,
+        ui_settings: UISettings | None = None,
     ) -> None:
         log.tui.debug(
             "[tui] coordinator.__init__: entry",
@@ -80,7 +80,7 @@ class UIStateCoordinator:
             extra={"_fields": {"tier": tier.value}},
         )
 
-    def _init_reduced_motion(self, ui_settings: "UISettings | None") -> None:
+    def _init_reduced_motion(self, ui_settings: UISettings | None) -> None:
         """Resolve reduced-motion preference from settings + env override."""
         log.tui.debug(
             "[tui] coordinator._init_reduced_motion: entry",

@@ -17,11 +17,13 @@ from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.startup.browser_probe import REMEDY_BINARY_MISSING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from stackowl.audit.logger import AuditLogger
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.infra.clock import Clock
+    from stackowl.mcp.allowlist import McpServerConfig
+    from stackowl.mcp.probe import McpLivenessProbe
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.outcome_store import TaskOutcomeStore
     from stackowl.owls.registry import OwlRegistry
@@ -1235,8 +1237,8 @@ class McpHealthContributor:
 
     def __init__(
         self,
-        probe: object,  # McpLivenessProbe — TYPE_CHECKING import to avoid circular dep
-        configs: list[object],  # list[McpServerConfig]
+        probe: McpLivenessProbe,
+        configs: Sequence[McpServerConfig],
     ) -> None:
         self._probe = probe
         self._configs = configs
@@ -1261,7 +1263,7 @@ class McpHealthContributor:
             )
 
         # Probe all servers in parallel.
-        results: dict[str, bool] = await self._probe.probe_all(self._configs)  # type: ignore[attr-defined]
+        results: dict[str, bool] = await self._probe.probe_all(self._configs)
 
         # Aggregate results: down if any server is dead, degraded if all alive but we saw failures, ok otherwise.
         down_servers = [name for name, is_alive in results.items() if not is_alive]

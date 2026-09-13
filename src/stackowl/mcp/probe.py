@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import httpx
@@ -22,7 +23,7 @@ class McpLivenessProbe:
     — it always returns bool.
     """
 
-    async def probe_all(self, configs: list[McpServerConfig]) -> dict[str, bool]:
+    async def probe_all(self, configs: Sequence[McpServerConfig]) -> dict[str, bool]:
         """Probe each server in parallel; return {name: is_alive}."""
         log.debug(
             "mcp.probe.probe_all: entry",
