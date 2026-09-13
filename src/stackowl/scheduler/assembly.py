@@ -40,6 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.health.contributors import GraphContributor
     from stackowl.infra.resilience import HealableResource
+    from stackowl.mcp.client import McpClient
     from stackowl.memory.assembly import MemoryComponents
     from stackowl.memory.outcome_store import TaskOutcomeStore
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
@@ -171,7 +172,7 @@ class SchedulerAssembly:
         delegation_governor: ConcurrencyGovernor | None = None,
         turn_registry: object | None = None,
         browser_runtime: HealableResource | None = None,
-        mcp_client: object | None = None,  # McpClient — TYPE_CHECKING import would be circular
+        mcp_client: McpClient | None = None,
         # Task 4 — threaded into SkillSynthesizerHandler so its gated skill-authoring
         # writes have a real ConsequentialActionGate to consult instead of always
         # failing closed on a None gate. None here reproduces that fail-closed default.
@@ -617,7 +618,7 @@ class SchedulerAssembly:
                         probe=mcp_probe,
                         configs=mcp_configs,
                     )
-                    healers[mcp_health.contributor_name] = mcp_client  # type: ignore[index]
+                    healers[mcp_health.contributor_name] = mcp_client
                     health_aggregator.register(mcp_health)
                     log.scheduler.debug(
                         "[scheduler] assembly: mcp healer wired",

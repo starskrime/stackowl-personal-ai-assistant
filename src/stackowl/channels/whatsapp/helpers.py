@@ -63,10 +63,7 @@ def is_authorized(jid: str, allowed: frozenset[str]) -> bool:
         return False
 
     phone_digits = normalize_phone(m.group(1))
-    for allowed_number in allowed:
-        if normalize_phone(allowed_number) == phone_digits:
-            return True
-    return False
+    return any(normalize_phone(allowed_number) == phone_digits for allowed_number in allowed)
 
 
 class WhatsAppMarkdownFormatter:

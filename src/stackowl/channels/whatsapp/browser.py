@@ -133,7 +133,8 @@ class WhatsAppBrowserDriver:
         )
         if qr_visible:
             log.whatsapp.warning(
-                "[whatsapp] browser_driver.start: QR code scan required — open WhatsApp Web in your phone and scan the QR code displayed in the browser window"
+                "[whatsapp] browser_driver.start: QR code scan required — open WhatsApp Web "
+                "in your phone and scan the QR code displayed in the browser window"
             )
             # Wait for the user to scan the QR — poll until conversation panel appears.
             await self._page.wait_for_selector(

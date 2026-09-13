@@ -100,12 +100,9 @@ class QuietHoursChecker:
             extra={"_fields": {"hour": hour, "start": start, "end": end}},
         )
 
-        if start <= end:
-            # Simple same-day window: quiet if start <= hour < end
-            quiet = start <= hour < end
-        else:
-            # Midnight-spanning window: quiet if hour >= start OR hour < end
-            quiet = hour >= start or hour < end
+        # Same-day window (start <= end): quiet if start <= hour < end.
+        # Midnight-spanning window (start > end): quiet if hour >= start OR hour < end.
+        quiet = (start <= hour < end) if start <= end else (hour >= start or hour < end)
 
         log.telegram.debug(
             "[telegram] quiet_hours.is_quiet_now: exit",
