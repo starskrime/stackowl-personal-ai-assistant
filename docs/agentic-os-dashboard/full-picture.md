@@ -1,6 +1,6 @@
 # The StackOwl Bridge: the full picture
 
-**For** Boss. **Approved** by Boss on 2026-09-12. **Date** 2026-09-12. **Status:** approved decision document; nothing is built. Product decisions come from Q1–Q52 and L1–L4 (§12). Anything else is marked *proposal*, *finding* or *open question*.
+**For** Boss. **Approved** by Boss on 2026-09-12. **Date** 2026-09-12. **Amended** by Boss's decisions from the architecture run on 2026-09-13 (A1–A6, §12). **Status:** approved decision document; nothing is built. Product decisions come from Q1–Q52, L1–L4 and A1–A6 (§12). Anything else is marked *proposal*, *finding* or *open question*.
 
 **Sources:** [01] `docs/research/agentic-os-dashboard/01-agentic-os-and-jarvis-interface.md`, [02] `…/02-platform-surface-inventory.md`, [03] `…/03-voice-conversation-spike.md`. Counts from [02] are a live snapshot of this box on 2026-09-12.
 
@@ -10,13 +10,13 @@
 
 *One illustrative day; owls, messages and numbers are sample content.*
 
-**07:40, phone.** A notification: "Owl: a job needs you." He taps it and the phone opens straight on that item. Behind it sits the compact viewscreen, dark and quiet, with the Needs-you strip on top and Comms one swipe away. The owl mark breathes slowly, in step with the platform's real heartbeat; ordinary activity moves in cream light only. The strip holds two items, the only things on screen in the accent colour. The brighter one is the item he opened: a job that failed five times in a row, which Owl could not heal, so Owl paused it; undo is on its card. The other is an approval.
+**07:40, phone.** A notification: "Owl: a job needs you." He is at home, so tapping it opens the phone straight on that item in the Bridge (A5, architecture run, 2026-09-13). Behind it sits the compact viewscreen, dark and quiet, with the Needs-you strip on top and Comms one swipe away. The owl mark breathes slowly, in step with the platform's real heartbeat; ordinary activity moves in cream light only. The strip holds two items, the only things on screen in the accent colour. The brighter one is the item he opened: a job that failed five times in a row, which Owl could not heal, so Owl paused it; undo is on its card. The other is an approval.
 
 The briefing is already on screen. His first tap starts Owl speaking it, about twenty seconds, because the phone will not play audio before a tap [03 §5.3]: *"Since 23:10: forty-one scheduled runs, six failures. The backup failed once and I healed it. One job failed five times and I could not heal it, so I paused it. The research owl finished your report. One approval is waiting."* As each item is named, it lights on the viewscreen. The healed backup never entered the strip; it lives in its record.
 
 The research owl wants to post the report to a Slack channel. He holds the talk button: "Who will see it?" Owl answers. "Post it." The owl asked, so his spoken yes counts only after read-back; a posted message cannot be taken back, and he never set Owl up to post on its own, so Owl reads back exactly what will happen (channel, text, attachment) and a confirm button appears. He taps it; the approval leaves the strip. The paused job stays, still bright, until he deals with it.
 
-He pockets the phone. Mobile browsers cut the mic when a page is backgrounded [03 §5.3], so the mic indicator goes dark and the session shows as paused; reopening the page will take one tap, which also starts the spoken briefing. On the train he types a follow-up in Telegram: same conversation, same mind.
+He pockets the phone. Mobile browsers cut the mic when a page is backgrounded [03 §5.3], so the mic indicator goes dark and the session shows as paused; reopening the page at home will take one tap, which also starts the spoken briefing. On the train, away from home, the Bridge is out of reach by design and Telegram is his surface (A1, architecture run, 2026-09-13), so he types a follow-up there: same conversation, same mind.
 
 **21:00, desktop.** The full bridge: Viewscreen in the centre, six stations around it, the Needs-you strip on top. The ship is calm. Two owls show small real motion in cream light, one mid-task, one on a scheduled run; the paused job is still the only thing in the accent colour. A short pulse crosses from Comms to an owl; he clicks it and a card shows the cause: a Slack message routed to that owl at 20:58.
 
@@ -33,10 +33,10 @@ Before closing he opens the flight recorder in Archives and replays last night a
 1. **Truthful motion.** Every mover is caused by a real event and opens that event when tapped. Idle breathing follows the server heartbeat, never the browser's render loop; a stale stream visibly stops breathing and shows the age of the last event. Sampling is declared. Decoration is allowed only where it cannot be read as data (the "placebo HUD" warning, [01 §3.3, §4.3]).
 2. **Dark-cockpit attention.** Healthy is calm, and normal activity moves in cream light only. The accent colour appears only when something needs the owner, and is never diluted: a failure Owl could not heal becomes a Needs-you item at higher intensity, while a failure Owl healed shows only in its record (Q34). Strong motion and the Needs-you alert, the only sound designed to grab attention and the sound twin of the accent colour, belong to what needs the owner; severity sets intensity, not activity volume [01 §3.4]. Ambient cues are very soft texture for ordinary events and must never compete with that alert (Q51). This principle governs attention; the acknowledgement sound (Q39) answers something the owner just did, so it is feedback and belongs to neither class.
 3. **No back door.** Every web action passes the same consent, authority and audit as any other surface.
-4. **One mind, many surfaces.** One conversation, memory and task loop everywhere. Web actions become tasks in the existing loop, never a second engine [02 hard fact 14].
+4. **One mind, many surfaces.** One conversation, memory and task loop everywhere. Web actions become tasks in the existing loop, never a second engine [02 hard fact 14]. The Bridge is reachable only on the home network, where it is the full-control surface; away from home Telegram is the conversation surface, notifications arrive through Telegram and Web Push (whose tap shows the cached, metadata-only summary, A5), and there is no Bridge control (A1, A5, architecture run, 2026-09-13).
 5. **Text never lives only in the canvas.** Every drawn entity has a DOM/ARIA twin that is also the keyboard path; moving content has a visible pause control (WCAG 2.2.2) [01 §6.5].
-6. **Permissive licences only:** MIT, Apache, BSD; CC-BY for weights. The default install contains nothing else. NVIDIA-licensed models are never bundled; on NVIDIA hardware the owner may choose to download one after its licence is shown (Q44).
-7. **Self-hosted.** No feature requires a third-party service; browser cloud speech APIs are excluded [03 §5.4]. There are two named exceptions. The first is the free-domain fallback (Q42, Q46): public DNS and a public certificate service are basic internet infrastructure, used only if StackOwl's own certificate authority proves unworkable on stock iPhones (spike B1). The second is Web Push for the installed Bridge app (architecture decision, 2026-09-12): browsers relay push only through their vendor's push service, with the payload end-to-end encrypted; the owner's existing Telegram channel carries every needs-you alert as well, so no alert depends on the relay alone. Every front-end asset is vendored and served by the platform; nothing loads from a CDN or third-party host (Q43).
+6. **Permissive licences only:** MIT, Apache, BSD; CC-BY for weights; SIL OFL for fonts (A6, architecture run, 2026-09-13). The default install contains nothing else. NVIDIA-licensed models are never bundled; on NVIDIA hardware the owner may choose to download one after its licence is shown (Q44).
+7. **Self-hosted.** No feature requires a third-party service; browser cloud speech APIs are excluded [03 §5.4]. There is one named exception: Web Push for the installed Bridge app (architecture decision, 2026-09-12): browsers relay push only through their vendor's push service, with the payload end-to-end encrypted; the owner's existing Telegram channel carries every needs-you alert as well, so no alert depends on the relay alone. Both stay; away from home, tapping a Web Push notification shows only a cached, metadata-only summary with "open at home" and a link to continue in Telegram (A5, architecture run, 2026-09-13). The free-domain fallback, with its public DNS and public certificate service, is removed and is no longer an exception; the Bridge uses a private per-install certificate authority, and no relay carries the Bridge itself (A1, A2, architecture run, 2026-09-13). Every front-end asset is vendored and served by the platform; nothing loads from a CDN or third-party host (Q43).
 8. **Runs on any hardware.** Probe, pick the best tier, state its cost honestly. Fix the platform for a fresh clone, not for this box.
 9. **Retired means deleted.** `control_plane` is deleted in the change that ships the bridge, not before; until then it stays, with the Q29 login fix (Q45).
 
@@ -44,7 +44,7 @@ Before closing he opens the flight recorder in Archives and replays last night a
 
 ## 3. The bridge
 
-**Postures.** Desktop shows the full bridge. The phone opens on the compact viewscreen plus the Needs-you strip, with Comms one swipe away; opening from a notification goes straight to that item (Q8, Q38).
+**Postures.** Desktop shows the full bridge. The phone opens on the compact viewscreen plus the Needs-you strip, with Comms one swipe away; opening from a notification at home goes straight to that item (Q8, Q38); away from home it shows a cached summary instead (§3.3; A5, architecture run, 2026-09-13).
 
 ### 3.1 The Viewscreen
 
@@ -67,7 +67,7 @@ The live ship: the crew and what each owl is doing, missions in flight, schedule
 
 ### 3.3 The Needs-you strip
 
-One priority-sorted queue on every screen, signalled by the Needs-you alert (Q51) and mirrored as a phone notification. It holds pending consent prompts, clarifying questions (`clarify_ask`), incidents needing a decision, failures Owl could not heal, irreversible actions the owner did not set up beforehand (Q36), new-device approvals (Q41) and budget alerts (`budget_80pct_alert` is already evented), as notify / question / review items [01 §2.1–2.2]. Approvals are mirrored to Telegram, except new-device approvals, which appear only on already signed-in dashboard devices (Q48). A failure Owl could not heal sits at higher intensity; a failure Owl healed never enters the strip and shows only in its record (Q34). *Findings:* pending prompts live in core memory with no web prompter [02 §4.3]; Web Push needs HTTPS and, on iOS, a home-screen install [01 §6.3].
+One priority-sorted queue on every screen, signalled by the Needs-you alert (Q51) and mirrored as a phone notification. Telegram and Web Push both carry it (A5, architecture run, 2026-09-13). At home, tapping a Web Push notification opens the item in the Bridge; away from home, it shows a cached, metadata-only summary of the item from the Bridge's service worker, with "open at home" and a link to continue in Telegram. It holds pending consent prompts, clarifying questions (`clarify_ask`), incidents needing a decision, failures Owl could not heal, irreversible actions the owner did not set up beforehand (Q36), new-device approvals (Q41) and budget alerts (`budget_80pct_alert` is already evented), as notify / question / review items [01 §2.1–2.2]. Approvals are mirrored to Telegram, except new-device approvals, which appear only on already signed-in dashboard devices (Q48). A failure Owl could not heal sits at higher intensity; a failure Owl healed never enters the strip and shows only in its record (Q34). *Findings:* pending prompts live in core memory with no web prompter [02 §4.3]; Web Push needs HTTPS and, on iOS, a home-screen install [01 §6.3].
 
 ### 3.4 The flight recorder
 
@@ -94,7 +94,7 @@ Replays the bridge from recorded events at any speed. *Finding:* there is no eve
 
 **Long tasks.** Every tier gives a non-spoken acknowledgement within ~300 ms, measured from the moment end of turn is detected, not from the last spoken syllable: the owl mark switches to "thinking" and the soft acknowledgement sound plays. The spoken "on it" follows as fast as the hardware allows, under a second on GPU and Mac (Q39). After that Owl speaks only at meaningful milestones. Speaking over Owl pauses its speech, never the task by itself; Owl's understanding decides whether the words stop or steer the task or correct the transcript (Q40), and so whether the paused speech is dropped or resumed (Q47, Q50). *Findings:* progress chunks carry only step name, index and total, too little for a meaningful milestone [02 §5.2]; the `stop` and `steer` frames exist but are never sent [02 §4.2].
 
-**Orders, approvals and irreversible actions.** Voice can request anything (Q16). The owner's own spoken order for a reversible action runs at once, with undo and no read-back (Q35). When Owl or a crew member asks the owner for something, Owl reads back exactly what will happen before a spoken "yes" counts (Q36). An irreversible action needs that read-back plus an on-screen tap (Q16). Q49 sets this split. Owl acts irreversibly on its own only where the owner set it up beforehand (§4). *Finding:* the platform has no "irreversible" class, only always-ask consent categories and a `destructive` flag on command actions [02 §4.1, §4.3]. If a transcript was misheard and the order already ran, the owner's correction makes Owl undo that action automatically, show the undo on its card, and then carry out what the owner actually said (Q52).
+**Orders, approvals and irreversible actions.** Voice can request anything (Q16). The owner's own spoken order for a reversible action runs at once, with undo and no read-back (Q35). When Owl or a crew member asks the owner for something, Owl reads back exactly what will happen before a spoken "yes" counts (Q36). An irreversible action needs that read-back plus an on-screen tap (Q16), and the tap is cryptographically signed by the signed-in device (A3, architecture run, 2026-09-13). Q49 sets this split. Owl acts irreversibly on its own only where the owner set it up beforehand (§4). *Finding:* the platform has no "irreversible" class, only always-ask consent categories and a `destructive` flag on command actions [02 §4.1, §4.3]. If a transcript was misheard and the order already ran, the owner's correction makes Owl undo that action automatically, show the undo on its card, and then carry out what the owner actually said (Q52).
 
 **Proactive speech.** Only about things that would notify the owner anyway, only while the dashboard is open, always mutable. The opening briefing is not proactive speech (Q37).
 
@@ -132,9 +132,13 @@ Nemotron streaming STT (NVIDIA licence) is never bundled; on NVIDIA hardware the
 
 ## 7. Access and security
 
-**Reachability.** Self-hosted and reachable from anywhere through a built-in WireGuard-based private network with guided setup. Automatic HTTPS on the home network makes the page a secure context, which unlocks microphone, passkeys, service worker, push and PWA install [02 §8]. The certificate comes first from StackOwl's own certificate authority, installed on the phone with guided steps; if spike B1 proves that unworkable on stock iPhones, the fallback is a guided free-domain setup (Q42). Router changes and third-party tunnels are never required; an own domain is optional unless that fallback applies. The fallback's public DNS and public certificate service are the one named exception to principle 7 (Q46).
+**Reachability** (A1, architecture run, 2026-09-13; supersedes Q9 and Q26). Self-hosted and reachable only on the home network, over IPv4. There is no built-in WireGuard, no remote access from anywhere and no relay; away from home the owner uses Telegram. Router changes and third-party tunnels are never required. HTTPS on the home network makes the page a secure context, which unlocks microphone, passkeys, service worker, push and PWA install [02 §8].
+
+**Certificates and name** (A2, architecture run, 2026-09-13; supersedes Q42's order and Q46). Each install has its own private certificate authority, and the Bridge uses a local host name announced on the home network. The CA key is used once, at setup, to sign the Bridge's server certificate, and is then destroyed. Renewal means a new CA and a guided re-trust on each device, where the owner compares the CA fingerprint shown on the host. WebTransport uses short-lived certificates identified by fingerprint. There is no public free-domain fallback and no domain is needed, so Web Push is the only named exception to principle 7. Spike B1 tests this on stock devices; if it fails, the owner will decide what to do then.
 
 **Sign-in.** Passkeys plus a one-time recovery code. At setup the platform shows a one-time setup code in its terminal and sends it to the owner's existing Telegram; entering it registers the first passkey. "The owner's Telegram" means the single allowed Telegram user. *Finding:* today that is `telegram_channel.allowed_user_ids` holding exactly one id, resolved by `resolve_owner_addresses` (`notifications/recipient.py:28-64`). With none or several ids, codes are shown only on the terminal/CLI; the bridge's owner record (§8 item 7) formalises this later. A new device is approved only from an already signed-in dashboard device, as a Needs-you item, or with the recovery code; never from Telegram, even though other approvals are mirrored there (Q41, Q48). The setup code is the same ownership proof the current dashboard gains in L1, so the bridge reuses that mechanism rather than inventing a second one.
+
+**Device-bound sessions** (A4, architecture run, 2026-09-13). Each signed-in device gets a session token bound to a non-extractable key created in its browser, so a copied token is useless on any other device. A strict content-security policy applies, tokens have a lifetime cap, and token reuse is detected. The on-screen tap that confirms an irreversible action is cryptographically signed by the signed-in device (A3, architecture run, 2026-09-13).
 
 *Finding:* today one shared admin/admin login on `0.0.0.0` over plain HTTP makes every caller the default principal with every severity; no users, password hashing or session store exist [02 §1.4, §6]. The Q29 fix (L1–L4, §12, in progress separately) changes the login itself: no `admin/admin` and no token for a publicly known password; ownership proven by the setup code plus a new password; the password removed from `stackowl.yaml` and stored once as a salted hash (a custom YAML password is imported once on upgrade); an unreadable store refuses sign-in with a remedy and is reported to self-healing as an incident; and `stackowl control-plane reset-password` on the host issues a fresh setup code without a restart. It does not add HTTPS, per-user principals or severity checks; those stay bridge prerequisites (§8 items 2, 5, 7).
 
@@ -145,7 +149,7 @@ Nemotron streaming STT (NVIDIA licence) is never bundled; on NVIDIA hardware the
 4. Consent and authority apply exactly as on Telegram, through a real `web` prompter.
 5. The audit log records the web principal as actor.
 
-The test-pinned invariants carry over [02 hard fact 8]: fail closed without a credential, origin before token, per-handler auth (middleware skips WebSocket upgrades), uniform 401, no token in logs, no third-party hosts. The pinned "no framework, no CDN, no build step" is replaced by Q43: a build step and libraries are allowed, every asset is vendored and served by the platform, and a fresh clone gets pre-built assets without needing Node. An offloaded speech machine sits inside the private network and authenticates (*proposal*).
+The test-pinned invariants carry over [02 hard fact 8]: fail closed without a credential, origin before token, per-handler auth (middleware skips WebSocket upgrades), uniform 401, no token in logs, no third-party hosts. The pinned "no framework, no CDN, no build step" is replaced by Q43: a build step and libraries are allowed, every asset is vendored and served by the platform, and a fresh clone gets pre-built assets without needing Node. An offloaded speech machine sits on the home network (A1, architecture run, 2026-09-13) and authenticates (*proposal*).
 
 ---
 
@@ -157,7 +161,7 @@ Capabilities, not code. **★ = a platform fix worth making even without the bri
 2. **★ An authorised control path.** `CommandRegistry.dispatch` checks nothing, and the 33 live commands include `/bye`, `/config` and `/provider`. Needed: per-command severity, task-enqueued mutations, web actor in audit [02 §4.1, gaps 7–8].
 3. **★ Consent that never auto-grants an unknown channel.** Channels without a registered prompter route to `AutonomousPrompter`, which grants ordinary consequential actions (`tools/consent.py:664-685`); core registers prompters for five names only, so `web` would be auto-granted [02 §4.3].
 4. **★ The consent address survives IPC.** `ConsentRequestFrame` has no `reply_target`; in split mode the gateway rebuilds requests without an address and guesses from the session key [02 §4.3].
-5. **★ HTTPS and private remote access.** Plain HTTP sends password and token in clear text and blocks mic, push and install [02 §8]; the L1–L4 login fix does not change that. Certificates from StackOwl's own authority, with the guided free-domain fallback (Q42), the one named exception to principle 7 (Q46).
+5. **★ Home HTTPS.** Plain HTTP sends password and token in clear text and blocks mic, push and install [02 §8]; the L1–L4 login fix does not change that. HTTPS on the home network only, over IPv4, with no remote access (A1, architecture run, 2026-09-13): a private per-install certificate authority whose key signs the server certificate once at setup and is then destroyed, a local host name announced on the home network, guided re-trust with a CA fingerprint check on renewal, and short-lived WebTransport certificates identified by fingerprint; no free-domain fallback (A2, architecture run, 2026-09-13).
 6. **★ A web server that survives core restarts.** The dashboard runs in core and dies on every `os.execv`; the gateway↔core socket takes one peer, so a new query path means a new frame or socket [02 hard facts 2–3].
 7. **★ Owner identity.** A real owner record that formalises today's single-allowed-Telegram-user rule (§7), the setup-code ownership proof shared with L1, passkeys, new-device approval from a signed-in dashboard device or the recovery code only (Q48), sessions with expiry and revocation, and web sessions mapped to the owner's principal and identity alias, so the web is the same person as the Telegram owner [02 §6].
 8. **A core query path** for in-memory state: active grants, live health, breakers, context windows, worker occupancy [02 gap 10].
@@ -180,11 +184,11 @@ S1–S9 run on a GPU Linux box, an M-series Mac, a CPU-only laptop and a separat
 | **S4** TTS first audio + owner's blind ranking | ≤ 250 ms GPU / 600 ms Mac / 1 s CPU; a permissive engine in his top two | Neither met | Default voice set (Q30) |
 | **S5** Barge-in and echo on iPhone, Android, laptop; WebRTC vs WebSocket | Speech pauses ≤ 300 ms (≥ 90%); after a backchannel or noise it resumes where it left off; ≤ 1 false barge-in / 10 min | More, or paused speech lost after a backchannel | Transport; hands-free viability; Q47 |
 | **S6** End of turn on 50 hesitant utterances | Cut-offs ≤ 5%; detection delay ≤ 400 ms (the S1 acknowledgement clock starts after it) | Cut-offs > 10% | Turn detection |
-| **S7** Installed PWA: permissions, lock, app switch, headset | 10 min, no re-prompt; announced pause/resume; after backgrounding, ambient cues fall silent and hands-free shows as paused; one tap resumes it and starts the briefing | Re-prompt each session | Phone comms posture; Q37, Q51 |
+| **S7** Installed PWA: permissions, lock, app switch, headset | 10 min, no re-prompt; announced pause/resume; after backgrounding, ambient cues fall silent and hands-free shows as paused; one tap resumes it and starts the briefing; with the phone off the home network, tapping a Web Push notification shows the cached, metadata-only summary with "open at home" and the Telegram link, with no error page and no item content cached (A5, architecture run, 2026-09-13) | Re-prompt each session | Phone comms posture; Q37, Q51, A5 |
 | **S8** Probe four hosts, then force-degrade | Right tier; honest fallback to push-to-talk | Wrong tier or silent failure | Q27 ladder |
 | **S9** Speak over Owl during speech, generation and a running tool, with stop, steer, new-question, transcript-correction, backchannel and noise utterances | Speech pauses at once; Owl's understanding tells them apart with no word list; stop, steer, a new question and a transcript correction drop the paused speech, and after a correction Owl answers the corrected sentence fresh; a backchannel or noise resumes it where it left off; no orphan audio or duplicate task | Any misrouting, wrong drop or resume, an answer continued to misheard words, or divergence | Q24, Q40, Q47, Q50 semantics |
-| **B1** Fresh clone, no domain, stock iPhone and Android: private network, StackOwl certificate-authority install, setup code (to the single allowed Telegram user; terminal only with none or several), open app, passkey, a second device approved from the first, mic, PWA install, push | Works at home and remotely with guided steps only; Telegram offers no device approval | The guided certificate install is unworkable on a stock iPhone (triggers the Q42 free-domain fallback), or a router change or third-party tunnel is needed | Q9, Q17, Q26, Q41, Q42, Q46, Q48 |
-| **B2** Real event rates including a burst, streamed to a phone on mobile data with backgrounding | Staleness shown within heartbeat timeout; resume replays the gap without loss or duplicates; bounded memory on the Jetson | Silent gaps, or breathing continues after the stream dies | SSE vs WebSocket; retention |
+| **B1** (re-scoped: A1, A2, architecture run, 2026-09-13) Fresh clone, no domain, home network over IPv4, stock iPhone, Android and desktop Chrome: trust in the private per-install certificate authority with guided steps and a CA fingerprint check, the local host name, setup code (to the single allowed Telegram user; terminal only with none or several), open app, passkey on the local name, a second device approved from the first, WebTransport with a short-lived certificate identified by fingerprint, mic, PWA install, push | Works on all three with guided steps only; Telegram offers no device approval | Private-CA trust, a passkey on the local name or a WebTransport certificate fingerprint is unworkable on any of the three, or a router change is needed; the owner then decides what to do (A2) | Q17, Q41, Q48, A1, A2 |
+| **B2** (re-scoped: A1, A2, architecture run, 2026-09-13) Real event rates including a burst, streamed to a phone on home Wi-Fi with backgrounding and app switches; WebTransport interoperability (the aioquic server against Safari 26.4 and Chrome); the automatic SSE fallback with resume from the journal cursor | Staleness shown within heartbeat timeout; WebTransport connects from Safari 26.4 and Chrome; when WebTransport is unavailable the stream falls back to SSE automatically; resume from the cursor replays the gap without loss or duplicates on either transport; bounded memory on the Jetson | Silent gaps, breathing continues after the stream dies, WebTransport fails without an automatic SSE fallback, or resume loses or duplicates events | Heartbeat interval; resume and replay details; retention |
 | **B3** WebGPU and WebGL Viewscreen, 30 min of recorded events, mid-range Android and older iPhone | Holds its frame budget without throttling; drain within a budget set beforehand; low-power mode triggers | Throttles or over budget | Tier thresholds (Q22) |
 | **B4** Map every event type to one visual; replay a real recorded day | Every mover traces to a record; quiet or failing reads as such; idle vs event motion told apart at a glance | A mover without a referent, or false activity | Viewscreen visual grammar |
 
@@ -198,25 +202,24 @@ The optional wake-word and full-duplex spikes (S10, S11) are dropped by Q7 and Q
 
 **Form:** a clickable prototype driven by a recorded sample of real events from this box, plus scripted realistic events where no source exists yet. Voice uses pre-rendered clips from a bundled permissive voice. Every screen carries a visible "MOCKUP: sample data" label.
 
-**Won't prove:** latency, battery or thermals (S1, B3); that the event stream exists (B2); consent and authority safety (§8); speech accuracy (S3); that Owl's understanding routes interruptions, including corrections, and drops or resumes its speech correctly (S9); HTTPS and remote access (B1). It is thrown away, not shipped.
+**Won't prove:** latency, battery or thermals (S1, B3); that the event stream exists (B2); consent and authority safety (§8); speech accuracy (S3); that Owl's understanding routes interruptions, including corrections, and drops or resumes its speech correctly (S9); home HTTPS, certificates and passkeys on the local name (B1; A1, A2, architecture run, 2026-09-13). It is thrown away, not shipped.
 
 ---
 
 ## 11. Open engineering questions
 
 1. **Pre-built assets** (Q43): how a fresh clone receives built front-end assets without Node, and what proves they match their source.
-2. **Event transport:** SSE over HTTP/2 plus POST, WebSocket, or WebTransport; heartbeat, resume cursor, gap replay [01 §6.6].
+2. **Event transport:** the transport is decided: WebTransport with an automatic SSE fallback over fetch streaming, both resuming from the journal cursor (A1, A2, architecture run, 2026-09-13). Still open: heartbeat interval tuning, and resume and gap-replay details [01 §6.6].
 3. **Where the web server lives:** durable gateway vs state-holding core ([02 gap 13] says placement needs a vote).
 4. **Event schema:** types, ids, sampling, retention, relation to `audit_log` and jsonl.
 5. **Core query path:** new IPC frame or separate socket.
-6. **Certificates** (Q42): the lifecycle of StackOwl's own certificate authority (issuance, rotation, revocation, trust per device) for a LAN or WireGuard address; B1 decides whether the free-domain fallback is needed.
-7. **WireGuard behind carrier-grade NAT** without router changes; whether WebRTC needs STUN/TURN inside the tunnel.
-8. **Voice process** as a channel adapter in the one loop; authenticating an offloaded speech machine.
-9. **Ignoring Owl's own voice and sounds,** so its speech does not pause itself (Q40 removes keyword detection; Q47 resumes speech only after a backchannel or noise; Q50 drops it after a correction).
-10. **Silent mode and alerts:** whether a page can detect silent mode, which both Q51 sound classes and the Q39 acknowledgement sound depend on (Q37 settles the gesture rule for the briefing); whether a phone notification can carry the Needs-you alert.
-11. **Mirrored approvals:** first-answer-wins between Telegram buttons and the strip; new-device approvals are never mirrored (Q48).
-12. **Voice assignment** when owls outnumber bundled voices.
-13. **Guard tests:** which of the 13 test-pinned invariants move over and which are deleted with the old app [02 §1.7]; "no framework, no CDN, no build step" is replaced by Q43.
+6. **Certificates** (A2, architecture run, 2026-09-13): lifetimes of the server certificate and the short-lived WebTransport certificates, removing a device's trust in a replaced CA, and announcing the local host name on the home network; the one-time CA key, renewal by re-trust and the absence of any free-domain fallback are decided.
+7. **Voice process** as a channel adapter in the one loop; authenticating an offloaded speech machine.
+8. **Ignoring Owl's own voice and sounds,** so its speech does not pause itself (Q40 removes keyword detection; Q47 resumes speech only after a backchannel or noise; Q50 drops it after a correction).
+9. **Silent mode and alerts:** whether a page can detect silent mode, which both Q51 sound classes and the Q39 acknowledgement sound depend on (Q37 settles the gesture rule for the briefing); whether a phone notification can carry the Needs-you alert.
+10. **Mirrored approvals:** first-answer-wins between Telegram buttons and the strip; new-device approvals are never mirrored (Q48).
+11. **Voice assignment** when owls outnumber bundled voices.
+12. **Guard tests:** which of the 13 test-pinned invariants move over and which are deleted with the old app [02 §1.7]; "no framework, no CDN, no build step" is replaced by Q43.
 
 ---
 
@@ -227,20 +230,20 @@ The optional wake-word and full-duplex spikes (S10, S11) are dropped by Q7 and Q
 | Q1 | Metaphor | Ship bridge: owner captain, owls crew, platform ship |
 | Q2 | JARVIS essence | Talks and anticipates, acts correctly, aware of everything |
 | Q3 | Users | One owner per install; teams later |
-| Q4 | Surfaces | One mind, many surfaces; bridge alone has full control |
+| Q4 | Surfaces | One mind, many surfaces; bridge alone has full control; amended 2026-09-13 (A1): the Bridge is the full-control surface at home, away from home Telegram is the conversation surface, notifications arrive through Telegram and Web Push (tap shows the cached, metadata-only summary: A5), with no Bridge control |
 | Q5 | Control | Watch, steer, configure, internals; existing consent; no back door |
 | Q6 | Motion | Truthful only; tap shows cause; heartbeat-driven breathing |
 | Q7 | Voice start | Push-to-talk + hands-free; no wake word; limited, mutable proactive speech |
 | Q8 | Postures | Phone = comms, desktop = full bridge (phone opening: Q38) |
-| Q9 | Reach | From anywhere, self-hosted (one named exception: Q46) |
+| Q9 | Reach | From anywhere, self-hosted (one named exception: Q46); superseded 2026-09-13: home network only (A1) |
 | Q10 | Host | Secretary is the ship's voice; owls speak when addressed |
 | Q11 | Anticipation | Acts within authority, shows it, offers undo; asks otherwise (irreversible: Q36) |
 | Q12 | Opening | Live viewscreen + short briefing; conversation one tap or word away (word: hands-free only, Q37) |
 | Q13 | Identity | Logo-derived; cream light for normal activity; one accent only for needs-you (amended by Q34) |
 | Q14 | Sound | Subtle, on, volume, respects silent mode; two classes (Q51): ambient cues that duck under Owl's voice, and the Needs-you alert |
 | Q15 | Replay | Flight recorder from real events |
-| Q16 | Voice authority | Request anything; irreversible needs read-back + tap (orders vs requests: Q49) |
-| Q17 | Sign-in | Passkeys + one-time recovery code |
+| Q16 | Voice authority | Request anything; irreversible needs read-back + tap (orders vs requests: Q49; re-confirmed 2026-09-13, tap signed by the signed-in device: A3) |
+| Q17 | Sign-in | Passkeys + one-time recovery code (device-bound sessions: A4) |
 | Q18 | Host name | "Owl", renamable |
 | Q19 | Liveness | Quiet but alive; dark cockpit |
 | Q20 | Layout | Viewscreen + six stations + Needs-you strip |
@@ -248,8 +251,8 @@ The optional wake-word and full-duplex spikes (S10, S11) are dropped by Q7 and Q
 | Q22 | Rendering | WebGPU/WebGL Viewscreen only; automatic low-power 2D |
 | Q23 | Presence | Owl mark alive through light and motion |
 | Q24 | Long tasks | Ack < 1 s, milestones; interrupt pauses speech; "stop" stops task (refined by Q39, Q40, Q47, Q50) |
-| Q25 | Licences | Permissive only; replace Piper; NVIDIA optional extra (refined by Q44) |
-| Q26 | Access | Built-in WireGuard + automatic home HTTPS; others optional |
+| Q25 | Licences | Permissive only; replace Piper; NVIDIA optional extra (refined by Q44; fonts under SIL OFL: A6) |
+| Q26 | Access | Built-in WireGuard + automatic home HTTPS; others optional; superseded 2026-09-13: home network only (A1) |
 | Q27 | Hardware | Probe; push-to-talk everywhere; honest hands-free; offloadable |
 | Q28 | Voice stack | Pipecat if spikes pass; cascade; no speech-to-speech |
 | Q29 | Current login | Close the admin/admin exposure now (separate fix; the approach was replaced by L1–L4: setup code, no default password) |
@@ -261,15 +264,15 @@ The optional wake-word and full-duplex spikes (S10, S11) are dropped by Q7 and Q
 | Q35 | Misheard voice | Transcripts keep auto-sending; the owner's own voice order triggers at most a reversible action, at once, with undo, no read-back (Q49); irreversible needs read-back + tap |
 | Q36 | Irreversible autonomy | Only when the owner explicitly set it up beforehand, each run a tappable record; otherwise Needs-you; a spoken yes to an Owl or crew request counts only after read-back (Q49) |
 | Q37 | "One word away" | Hands-free only; briefing on screen first, spoken after first tap or at once if hands-free is on; not proactive speech; a backgrounded phone pauses hands-free, and the one tap on reopening also starts the briefing |
-| Q38 | Phone opening | Compact viewscreen + Needs-you strip, Comms one swipe away; a notification opens its item |
+| Q38 | Phone opening | Compact viewscreen + Needs-you strip, Comms one swipe away; a notification opens its item; amended 2026-09-13 (A5): at home only; away from home a cached, metadata-only summary with "open at home" and a Telegram link |
 | Q39 | Slow hardware | Non-spoken ack within ~300 ms of detected end of turn on every tier (thinking mark + soft sound, which is feedback, in neither Q51 sound class); spoken "on it" as fast as possible, < 1 s on GPU/Mac |
 | Q40 | Stop / steer / correct | No keyword matching; speaking pauses Owl; Owl's normal understanding decides (paused speech: Q47, Q50) |
 | Q41 | First passkey, new devices | Setup code in terminal + owner's Telegram (the single allowed Telegram user; terminal only if none or several) registers the first passkey; new device approved from a signed-in dashboard device (Needs-you) or with the recovery code (never Telegram: Q48) |
-| Q42 | HTTPS fallback | Guided install of StackOwl's own certificate authority first; guided free domain if B1 fails on stock iPhones; never a required third-party tunnel; the fallback is principle 7's one named exception (Q46) |
+| Q42 | HTTPS fallback | Guided install of StackOwl's own certificate authority first; guided free domain if B1 fails on stock iPhones; never a required third-party tunnel; the fallback is principle 7's one named exception (Q46); superseded 2026-09-13 (A2): private per-install certificate authority with a local host name, no free-domain fallback; if B1 fails, the owner decides then |
 | Q43 | Front-end tooling | Build step and libraries allowed; every asset vendored and platform-served; fresh clone gets pre-built assets, no Node |
 | Q44 | NVIDIA-licensed models | Never bundled; permissive-only default install; owner may download on NVIDIA hardware, licence shown first |
 | Q45 | Current dashboard | Deleted in the change that ships the bridge, not before; keeps the Q29 login fix until then |
-| Q46 | Fallback domain vs self-hosted | No feature requires a third-party service; the Q42 free-domain fallback (public DNS + public certificate service, only if B1 fails on stock iPhones) is the one named exception |
+| Q46 | Fallback domain vs self-hosted | No feature requires a third-party service; the Q42 free-domain fallback (public DNS + public certificate service, only if B1 fails on stock iPhones) is the one named exception; superseded 2026-09-13 (A2): the free-domain fallback is removed, Web Push is principle 7's only named exception |
 | Q47 | Owl's speech when the owner talks | Pauses at once; a steer, stop, new question or transcript correction drops it (correction: Q50); a backchannel or noise resumes it where it left off |
 | Q48 | New-device approval | Only from an already signed-in dashboard device or with the recovery code; never from Telegram, though other approvals are mirrored there |
 | Q49 | Voice orders vs voice approvals | Owner's own order for a reversible action runs at once, with undo, no read-back; a request from Owl or crew needs read-back before a spoken yes counts; irreversible needs read-back + tap |
@@ -282,3 +285,11 @@ The optional wake-word and full-duplex spikes (S10, S11) are dropped by Q7 and Q
 - **L2:** the password is removed from `stackowl.yaml`, set only on the dashboard and stored once as a salted hash. An existing custom YAML password is imported once on upgrade.
 - **L3:** an unreadable password store is never treated as "no password". The lookup is retried on each sign-in, sign-in is refused with a remedy, and the failure is reported to self-healing as an incident. A damaged record returns the install to setup-code mode.
 - **L4:** `stackowl control-plane reset-password` on the host clears the password and issues a fresh setup code, without a restart.
+
+**Architecture-run decisions (2026-09-13)** (approved by Boss during the architecture run of 2026-09-12/13):
+- **A1 Home network only:** the Bridge is reachable only on the home network, over IPv4; no built-in WireGuard, no remote access, no relay; away from home the owner uses Telegram (supersedes Q9, Q26).
+- **A2 Certificates and name:** private per-install certificate authority and a local host name announced on the home network; the CA key signs the server certificate once at setup, then is destroyed; renewal = new CA + guided re-trust per device, comparing the CA fingerprint shown on the host; WebTransport uses short-lived certificates identified by fingerprint; no free-domain fallback, so Web Push is principle 7's only named exception; if B1 fails, the owner decides then (supersedes Q42's order, Q46).
+- **A3 Confirmations:** unchanged from Q16 and re-confirmed: read-back plus an on-screen tap, the tap cryptographically signed by the signed-in device.
+- **A4 Device-bound sessions:** each signed-in device's token is bound to a non-extractable key created in its browser, so a copied token is useless elsewhere; strict content-security policy, token lifetime cap, reuse detection.
+- **A5 Notifications away from home:** Telegram and Web Push both stay; tapping a Web Push notification at home opens the item in the Bridge; away from home it shows a cached, metadata-only summary from the Bridge's service worker, with "open at home" and a link to continue in Telegram; Web Push remains principle 7's one named exception (amends Q38).
+- **A6 Font licence:** SIL Open Font License allowed for fonts, alongside MIT, Apache, BSD and CC-BY for weights (amends principle 6, Q25).
