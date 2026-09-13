@@ -230,6 +230,8 @@ class _Stray:
     sidecars: tuple[str, ...]
     age_seconds: float
     modified: str  # ISO-8601, UTC
+    #: Directly at the home root (beside the config), where no writer puts a database.
+    at_home_root: bool
 
     @property
     def empty(self) -> bool:
@@ -264,6 +266,24 @@ def _stray_databases(home: Path, db_path: Path) -> list[_Stray]:
     (``os.path.samefile``), not the same spelling: on a case-insensitive filesystem a
     differently-cased home makes the live path a different string. A file that
     disappears mid-scan was removed by someone else and is not reported.
+
+    WHO WRITES A DATABASE HOLDING DATA, and why only the home root reports one. Found by
+    grepping ``src/`` on 2026-09-12 for every backup and snapshot path:
+
+      * the migration runner's verified backup —
+        ``knowledge_dir()/backups/pre-migration-<ts>/stackowl.db``;
+      * ``stackowl backup`` (``BackupManager``) by default —
+        ``knowledge_dir()/backups/backup-<ts>/stackowl.db``;
+      * the restore's rollback snapshot — ``workspace()/pre-restore-snapshot/stackowl.db``;
+      * ``stackowl db backup <output>`` — wherever the operator points it, beside the
+        live database included.
+
+    No platform writer leaves a flat database file at the home root. Beside the live
+    database, an operator's backup is normal: the live box carries
+    ``workspace/stackowl-backup-pre-negative-purge-20260625.db`` (14,942,208 bytes), a
+    hand-made backup no code names, and reporting it paged on every sweep. So a
+    data-holding file there is not a stray; only an EMPTY one is (``at_home_root`` False),
+    and the heal removes it.
     """
     directories: list[Path] = []
     for directory in (home, db_path.parent):
@@ -273,6 +293,7 @@ def _stray_databases(home: Path, db_path: Path) -> list[_Stray]:
     now = time.time()
     found: list[_Stray] = []
     for directory in directories:
+        at_home_root = home.is_dir() and os.path.samefile(directory, home)
         for entry in sorted(directory.iterdir()):
             if entry.suffix.lower() not in _DATABASE_SUFFIXES or entry.is_symlink():
                 continue
@@ -292,6 +313,7 @@ def _stray_databases(home: Path, db_path: Path) -> list[_Stray]:
                 path=entry, size=info.st_size, sidecars=sidecars,
                 age_seconds=max(0.0, now - info.st_mtime),
                 modified=datetime.fromtimestamp(info.st_mtime, UTC).isoformat(),
+                at_home_root=at_home_root,
             ))
     return found
 
@@ -327,8 +349,9 @@ class StrayDatabaseContributor:
     is what kills a process. An empty stray older than one sweep is reported with the
     remedy that the heal removes it; one younger than a sweep may be a connection being
     opened right now and is only noted. A stray holding data is reported with its path
-    and size. One that was removed before and is back says how often — something keeps
-    creating it, and removing it again does not answer why.
+    and size ONLY at the home root — beside the live database it is an operator's backup
+    (see :func:`_stray_databases`). One that was removed before and is back says how
+    often — something keeps creating it, and removing it again does not answer why.
     """
 
     def __init__(self, home: Path, db_path: Path, *, db: object | None = None) -> None:
@@ -364,7 +387,8 @@ class StrayDatabaseContributor:
         # 2. DECISION
         young = [s for s in strays if s.empty and s.age_seconds < one_sweep]
         empty = [s for s in strays if s.empty and s.age_seconds >= one_sweep]
-        holding = [s for s in strays if not s.empty]
+        # Data beside the live database is an operator's backup, never a stray.
+        holding = [s for s in strays if not s.empty and s.at_home_root]
         if not empty and not holding:
             message = f"no stray database beside the live one ({self._db_path})"
             if young:

@@ -173,6 +173,30 @@ class TestCollectingDetectsAndRemovesNothing:
         assert status.status == "degraded"
         assert str(stray) in (status.message or "")
 
+    async def test_backups_beside_the_live_database_are_not_strays_but_data_at_the_root_is(
+        self, home: Path, live: Path
+    ) -> None:
+        """MEASURED after the 2026-09-12 restart: the live box carries
+        `workspace/stackowl-backup-pre-negative-purge-20260625.db` (14,942,208 bytes), and
+        reporting it paged on every sweep. Data beside the live database is an operator's
+        backup; data at the home root, where no writer puts a database, is a stray."""
+        backups = [
+            _aged(_live_db(live.parent / "stackowl-backup-pre-negative-purge-20260625.db")),
+            _aged(_live_db(live.parent / "pre-migration-20260913T011735091589.db")),
+        ]
+        before = [b.read_bytes() for b in backups]
+
+        clean = await StrayDatabaseContributor(home, live).health_check()
+        await StrayDatabaseHealer(home, live).ensure_available()
+        other = _aged(_live_db(home / "other.db"))
+        with_root_stray = await StrayDatabaseContributor(home, live).health_check()
+
+        assert clean.status == "ok", clean.message
+        assert [b.read_bytes() for b in backups] == before, "a backup was touched"
+        assert with_root_stray.status == "degraded"
+        assert str(other) in (with_root_stray.message or "")
+        assert not any(str(b) in (with_root_stray.message or "") for b in backups)
+
     async def test_a_stray_that_came_back_names_its_recurrence(
         self, home: Path, live: Path
     ) -> None:
