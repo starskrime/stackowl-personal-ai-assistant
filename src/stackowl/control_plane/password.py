@@ -54,7 +54,7 @@ from stackowl.control_plane.auth import (
     read_credential,
     rotate_credential,
 )
-from stackowl.health.status import HealthStatus
+from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.infra.observability import log
 
 #: Where the password hash lives. Deliberately NOT `stackowl-control-plane-password`,
@@ -735,7 +735,7 @@ class PasswordStoreHealth:
             except PasswordStoreUnavailable as exc:
                 return HealthStatus(
                     name=self.contributor_name, status="down", message=str(exc),
-                    latency_ms=latency_ms, remedy=exc.remedy,
+                    latency_ms=latency_ms, remedy=remedy_for(exc),
                 )
             if current is not None and not current.sent:
                 return HealthStatus(

@@ -26,6 +26,12 @@ environmental rather than a Settings field:
                         comment states the fallback's weakness honestly.
     UNWIRED             HEADLESS_OAUTH, in the vendor integration D16.4 measured
                         as in-tree but never registered.
+    RETIRED             not a setting at all: recognised only so it can be
+                        IGNORED with a WARNING, never honoured. The Settings field
+                        it reached is deleted, and an operator who set it on an
+                        earlier release must still boot. CONTROL_PLANE__PASSWORD
+                        (Q29) — the dashboard password is a hash set with a
+                        setup code, never configuration.
 
 STACKOWL SOLVES THE SECRETS HALF DIFFERENTLY, AND BETTER. There is no `.env`.
 `config/secret_resolver.py` resolves `keychain:<service>`, `file:<path>` or a
@@ -80,11 +86,16 @@ _JUSTIFIED: dict[str, str] = {
     "STACKOWL_FINGERPRINT_SECRET": "deployment-secret",
     # unwired — the in-tree vendor integration nothing registers (D16.4)
     "STACKOWL_HEADLESS_OAUTH": "unwired",
+    # retired — recognised only to be ignored with a WARNING, never honoured (Q29).
+    # `config/settings.py` strips it because the field it reached is deleted and a
+    # refused boot is the wrong answer to a stale shell profile. Delete this line
+    # with that recognition; the stale check below insists.
+    "STACKOWL_CONTROL_PLANE__PASSWORD": "retired",
 }
 
 _VALID_REASONS = {
     "bootstrap", "host-specific", "terminal-convention",
-    "logging-bootstrap", "deployment-secret", "unwired",
+    "logging-bootstrap", "deployment-secret", "unwired", "retired",
 }
 
 
@@ -120,7 +131,9 @@ def test_every_env_var_is_classified() -> None:
 @pytest.mark.tripwire
 def test_no_reason_is_invented() -> None:
     """The taxonomy is closed. 'behavioural' is deliberately NOT a valid reason:
-    a behavioural setting has a home, and it is not the environment."""
+    a behavioural setting has a home, and it is not the environment. 'retired' is
+    no loophole for one: a retired name configures nothing — it is read only to be
+    refused — and it leaves this list the day that recognition is deleted."""
     bad = {k: v for k, v in _JUSTIFIED.items() if v not in _VALID_REASONS}
     assert not bad, f"unknown justification(s): {bad}"
 

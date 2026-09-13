@@ -167,7 +167,8 @@ def remedy_for(exc: BaseException) -> str | None:
     remedy that is always populated is a field readers learn to skim, and inventing
     advice is worse than silence — is enforced HERE rather than by ten authors'
     restraint. Nothing is returned unless the exception itself carries the evidence:
-    an errno, or one of SQLite's fixed operational phrases.
+    a remedy its raiser wrote on it, an errno, or one of SQLite's fixed operational
+    phrases.
 
     WHAT THIS DOES NOT DO, stated so it is not read as a contradiction. D14.4
     records that ``prefix_growth``, ``unattributed_spend`` and ``store_cadence``
@@ -178,6 +179,15 @@ def remedy_for(exc: BaseException) -> str | None:
     is not it has regressed") and which then received the same empty remedy. One
     contributor, two kinds of failure, one policy. This addresses only the second.
     """
+    # A REMEDY THE RAISER WROTE is the strongest evidence there is: the raising site
+    # is the one place that had this failure IN HAND when the advice was written —
+    # exactly what an `except` branch never has. Passing it on HERE, rather than each
+    # branch reading `exc.remedy` itself, is what keeps every arrived failure asking
+    # one place (the password store's health branch read around it, Q29). A missing,
+    # empty or non-string attribute is no evidence, and stays silent.
+    carried = getattr(exc, "remedy", None)
+    if isinstance(carried, str) and carried.strip():
+        return carried
     # THE LOUDEST CASE IN THE WHOLE CORPUS, and it needed no new vocabulary — the
     # exception already carried the answer. MEASURED 2026-09-10: of 959 unhealthy
     # subsystem reports, 421 are `provider:NeraAiRaw`, and every probe failure behind

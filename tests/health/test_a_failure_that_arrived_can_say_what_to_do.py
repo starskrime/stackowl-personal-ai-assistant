@@ -108,6 +108,23 @@ def test_silence_is_still_the_answer_when_nothing_is_known(exc: BaseException) -
 
 
 @pytest.mark.tripwire
+def test_a_remedy_the_raiser_wrote_is_passed_on_not_read_around() -> None:
+    """The raising site is the one place that had the failure in hand, so a remedy
+    written there is evidence — and passing it on HERE is what lets the branch that
+    catches it ask `remedy_for` instead of reading `exc.remedy` around it (Q29: the
+    password store's health branch did exactly that). The control: an attribute
+    that says nothing is no evidence, and stays silent."""
+    from stackowl.control_plane.password import STORE_REMEDY, PasswordStoreUnavailable
+
+    assert remedy_for(PasswordStoreUnavailable("keyring locked")) == STORE_REMEDY
+
+    class _SaysNothing(RuntimeError):
+        remedy = "   "
+
+    assert remedy_for(_SaysNothing("x")) is None
+
+
+@pytest.mark.tripwire
 def test_the_loudest_alarm_in_the_corpus_now_says_it_is_self_recovering() -> None:
     """MEASURED 2026-09-10: of 959 unhealthy subsystem reports, **421** are
     `provider:NeraAiRaw`, and every probe failure behind them raises
@@ -292,7 +309,9 @@ async def test_the_db_contributor_carries_the_advice_out_of_the_except(
     def _boom(_p: object) -> object:
         raise sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(contributors.sqlite3, "connect", _boom)
+    # The very module object `contributors` imported — named directly so the patch
+    # is typed, instead of through an attribute the module does not export.
+    monkeypatch.setattr(sqlite3, "connect", _boom)
     status: HealthStatus = await contributors.DbContributor(db_path).health_check()
 
     assert status.status == "down"
