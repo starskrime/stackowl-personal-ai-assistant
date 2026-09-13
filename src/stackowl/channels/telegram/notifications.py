@@ -76,6 +76,26 @@ class TelegramNotificationDispatcher:
             },
         )
 
+    @staticmethod
+    def _log_malformed(payload: NotificationPayload, key: str, value: object) -> None:
+        """Log a content value whose shape does not match its event_type contract.
+
+        ``NotificationPayload.content`` is ``dict[str, object]`` because its keys
+        vary by event_type, so each branch narrows at read time. A value of the
+        wrong shape is reported here and the notification is not sent — never
+        coerced into a garbled message (``list("ab")`` would split a string).
+        """
+        log.telegram.warning(
+            "[telegram] dispatcher.dispatch: decision malformed content — skip send",
+            extra={
+                "_fields": {
+                    "event_type": payload.event_type,
+                    "key": key,
+                    "actual_type": type(value).__name__,
+                }
+            },
+        )
+
     async def dispatch(self, payload: NotificationPayload) -> None:
         """Route a notification payload to the Telegram adapter.
 
@@ -120,8 +140,16 @@ class TelegramNotificationDispatcher:
             elif payload.event_type == "parliament_synthesis":
                 formatter_parl: TelegramParliamentFormatter = self._formatters["parliament"]
                 synthesis = str(payload.content.get("synthesis", ""))
-                owl_names = list(payload.content.get("owl_names", []))  # type: ignore[arg-type]
-                round_count = int(payload.content.get("round_count", 0))
+                raw_owl_names = payload.content.get("owl_names", [])
+                raw_round_count = payload.content.get("round_count", 0)
+                if not isinstance(raw_owl_names, list | tuple):
+                    self._log_malformed(payload, "owl_names", raw_owl_names)
+                    return
+                if not isinstance(raw_round_count, int | float | str):
+                    self._log_malformed(payload, "round_count", raw_round_count)
+                    return
+                owl_names = [str(name) for name in raw_owl_names]
+                round_count = int(raw_round_count)
                 formatted = formatter_parl.format_synthesis(synthesis, owl_names, round_count)
 
             elif payload.event_type == "evolution":
@@ -138,7 +166,10 @@ class TelegramNotificationDispatcher:
                 formatter_evo: TelegramEvolutionFormatter = self._formatters["evolution"]
                 owl_name = str(payload.content.get("owl_name", ""))
                 raw_deltas = payload.content.get("trait_deltas", {})
-                trait_deltas = {str(k): float(v) for k, v in raw_deltas.items()}  # type: ignore[union-attr]
+                if not isinstance(raw_deltas, dict):
+                    self._log_malformed(payload, "trait_deltas", raw_deltas)
+                    return
+                trait_deltas = {str(k): float(v) for k, v in raw_deltas.items()}
                 formatted = formatter_evo.format_evolution_event(owl_name, trait_deltas)
 
             elif payload.event_type == "memory_nudge":

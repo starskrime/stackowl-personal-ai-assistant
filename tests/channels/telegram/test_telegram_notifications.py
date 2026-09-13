@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from stackowl.channels.telegram.formatter import (
     TelegramBriefFormatter,
@@ -16,11 +16,9 @@ from stackowl.channels.telegram.formatter import (
 from stackowl.channels.telegram.notifications import (
     NotificationPayload,
     TelegramNotificationDispatcher,
-    _content_hash,
 )
-from stackowl.channels.telegram.quiet_hours import QuietHoursChecker, TelegramQuietHoursConfig
+from stackowl.channels.telegram.quiet_hours import QuietHoursChecker
 from stackowl.channels.telegram.settings import TelegramSettings
-
 
 # ---------------------------------------------------------------------------
 # Helpers / factories
@@ -166,6 +164,38 @@ async def test_dispatch_evolution_not_suppressed_by_default() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 4b. malformed content shapes are logged and not sent (no garbled message)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "content", "bad_key"),
+    [
+        ("parliament_synthesis", {"synthesis": "s", "owl_names": "Merlin"}, "owl_names"),
+        ("parliament_synthesis", {"synthesis": "s", "round_count": [3]}, "round_count"),
+        ("evolution", {"owl_name": "Archimedes", "trait_deltas": [0.05]}, "trait_deltas"),
+    ],
+)
+async def test_dispatch_malformed_content_logs_and_skips_send(
+    event_type: str, content: dict, bad_key: str
+) -> None:
+    adapter = _make_adapter()
+    dispatcher = _make_dispatcher(adapter=adapter)
+    payload = NotificationPayload.model_validate({"event_type": event_type, "content": content})
+
+    with patch("stackowl.channels.telegram.notifications.log") as mock_log:
+        await dispatcher.dispatch(payload)
+
+    adapter.send_markdown.assert_not_called()
+    adapter.send_text.assert_not_called()
+    warning_fields = [
+        c.kwargs["extra"]["_fields"] for c in mock_log.telegram.warning.call_args_list
+    ]
+    assert any(f["key"] == bad_key for f in warning_fields)
+
+
+# ---------------------------------------------------------------------------
 # 5. dispatch suppresses evolution when suppress_evolution_events=True
 # ---------------------------------------------------------------------------
 
@@ -244,10 +274,6 @@ async def test_dispatch_logs_content_hash_not_raw_content() -> None:
         urgency="normal",
     )
 
-    log_calls: list[dict] = []
-
-    original_debug = dispatcher._adapter.send_text.__class__  # unused; capture via log mock
-
     with patch("stackowl.channels.telegram.notifications.log") as mock_log:
         mock_log.telegram = MagicMock()
         mock_log.telegram.debug = MagicMock()
@@ -289,7 +315,7 @@ def test_notification_payload_is_frozen() -> None:
         content={"text": "hi"},
         urgency="normal",
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         payload.urgency = "critical"  # type: ignore[misc]
 
 
