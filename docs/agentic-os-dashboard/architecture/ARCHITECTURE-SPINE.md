@@ -86,8 +86,8 @@ flowchart LR
 - **Binds:** every Bridge, voice, Telegram, TUI and slash-command action; every mutating LLM tool (`tools/scheduling/cronjob.py`, `tools/meta/owl_build.py` and the like); `commands/`; `pipeline/durable`; §8 item 2.
 - **Prevents:** a back door; a second engine; a tool or slash command calling a mutator beside the command path; severity, consent or undo differing by surface; mutators instantiated in the gateway; a Bridge button waiting on the loop tick.
 - **Rule:**
-  - Each state-changing action has exactly one `CommandSpec` in `commands/`: type, typed payload, severity (READ, WRITE, CONSEQUENTIAL from `authz/`), reversibility and undo type (AD-26).
-  - The Bridge API, voice, the slash parser and LLM tools all call the one typed submit entry in `commands/`. No surface and no tool calls a subsystem mutator directly: `cronjob.py`, `owl_build.py` and every other mutating tool migrate to submitting commands. A tripwire fails any call to a declared mutator from outside the COMMAND handler registry.
+  - Each state-changing action has exactly one `CommandSpec` in `commands/spec/`: type, typed payload, severity (READ, WRITE, CONSEQUENTIAL from `authz/`), reversibility and undo type (AD-26).
+  - The Bridge API, voice, the slash parser and LLM tools all call the one typed submit entry in `commands/spec/`. No surface and no tool calls a subsystem mutator directly: `cronjob.py`, `owl_build.py` and every other mutating tool migrate to submitting commands. A tripwire fails any call to a declared mutator from outside the COMMAND handler registry.
   - The submit entry needs only the spec table and the task store, so it runs in either process without subsystem services. It validates the payload, sets the requester kind from authenticated ingress provenance (never from the payload), and enqueues a COMMAND task carrying its `command_id` idempotency key and nonce. Gateway dispatch holds no mutators; a tripwire fails any subsystem mutator instantiated in the gateway.
   - A gateway enqueue sends a payload-free `tasks_enqueued` IPC frame that wakes core's `TaskLoop`. The tick stays a safety net only.
   - A command executes only in the core loop, through one path: severity check through the principal → action-policy gate (AD-27) → consent (AD-18) → deterministic handler. No dry-run or preview branch returns before the severity check. There is no generic "run any command" endpoint.
@@ -134,11 +134,11 @@ flowchart LR
 
 ### AD-7 — Package boundaries, dependency direction and relocation before deletion [ADOPTED]
 
-- **Binds:** `src/stackowl/journal/`, `src/stackowl/commands/`, `src/stackowl/authz/`, `src/stackowl/authz/identity/`, `src/stackowl/bridge/`, `src/stackowl/voice/`, `control_plane/`, `config/`.
+- **Binds:** `src/stackowl/journal/`, `src/stackowl/commands/spec/`, `src/stackowl/authz/`, `src/stackowl/authz/identity/`, `src/stackowl/bridge/`, `src/stackowl/voice/`, `control_plane/`, `config/`.
 - **Prevents:** subsystems importing from the Bridge; `journal/` importing subsystems for names; surfaces importing `bridge/` for authority or copying it; the setup code or brute-force brake lost with control_plane; the old dashboard's guards leaking into the new server; dead code left behind.
 - **Rule:**
   - `journal/` holds the event registry and upcasters, recorder, store, attention policy, Needs-you items and resolver, record-reader registry, narrator, snapshot checkpoints and retention. Every subsystem may import it. It imports nothing from `bridge/`, `voice/` or any subsystem; names and records reach it through registered ports.
-  - `commands/` holds the `CommandSpec` table and the one submit entry. It depends on `authz/` and `pipeline/durable` only.
+  - `commands/spec/` holds the `CommandSpec` table and the one submit entry. It depends on `authz/` and `pipeline/durable` only, enforced by a tripwire. The rest of `commands/` is the existing slash-command surface, which submits through that entry (owner placement vote, 2026-09-13).
   - `authz/` holds the READ, WRITE and CONSEQUENTIAL severities, the principal `may` check, the action-policy gate, attendance and standing authority (AD-27). Every surface asks `authz/`.
   - `authz/identity/` holds owner identity, enrolment and device keys (AD-17, AD-37).
   - `bridge/` holds the gateway-hosted web server, the WebTransport and SSE carriers, fan-out, the notifier, the `web` conversation channel adapter, the snapshot, API and static assets. It may depend on `journal/`, `authz/`, `authz/identity/`, `commands/`, `ipc/`, `tools/consent` and the `channels` contract. No package imports it.
@@ -185,9 +185,9 @@ flowchart LR
 ### AD-13 — One local host name is the only origin, on the home network over IPv4 [ADOPTED]
 
 - **Binds:** the Bridge server, the guided setup, the WebAuthn RP ID, the service worker, the PWA, push registration, §8 item 5.
-- **Prevents:** split origins splitting tokens, passkeys, push subscriptions and PWA installs; passkeys attempted on an IP origin; exposure beyond the home network; a bundled copyleft mDNS library.
+- **Prevents:** split origins splitting tokens, passkeys, push subscriptions and PWA installs; passkeys attempted on an IP origin; exposure beyond the home network.
 - **Rule:**
-  - One install host name under `.local`, advertised on the home network by the operating system's own mDNS responder and configured by the guided setup, is the only Bridge origin for pages, API, the SSE fallback, WebTransport, WebRTC signalling, push registration, the PWA and the passkey RP ID. No page, token, passkey or subscription binds to an IP origin. A request by IP address or any other Host redirects to the name and never shows a passkey prompt. No mDNS library is bundled; python-zeroconf (LGPL-2.1-or-later) is excluded.
+  - One install host name under `.local`, advertised on the home network by the operating system's mDNS responder, or by a bundled mDNS library such as python-zeroconf where the OS responder cannot publish it, and configured by the guided setup, is the only Bridge origin for pages, API, the SSE fallback, WebTransport, WebRTC signalling, push registration, the PWA and the passkey RP ID. No page, token, passkey or subscription binds to an IP origin. A request by IP address or any other Host redirects to the name and never shows a passkey prompt.
   - The Bridge is reachable only on the home network over IPv4. The listener binds IPv4 and accepts only loopback and sources on the host's directly attached private IPv4 subnets; any other source is refused with a logged remedy.
   - One port number: HTTPS over TCP (aiohttp) serves pages, API and the SSE fallback with the AD-14 server certificate; the same port over UDP (aioquic) serves WebTransport only, with the AD-14 hashed certificates. No `Alt-Svc` is advertised, so pages never load over HTTP/3.
   - A tripwire pins the allowlist of unauthenticated routes. QUIC address validation (Retry), connection caps and request-size caps apply (AD-38). The bind, port and install name are settings in the `bridge` section.
@@ -253,7 +253,7 @@ flowchart LR
     | `question`, `incident`, `alert` | narrator text | yes |
 
   - On resolve, the notifier edits the Telegram message and replaces the push notification, using the item `id` as its tag.
-  - Web Push is standard VAPID with an encrypted payload, built on `http-ece` plus a VAPID signer over `cryptography`. The payload is metadata only: item `id`, kind, intensity and the narrator's public rendering (AD-30). A subscription row belongs to its device session and is deleted on revocation. A push endpoint must be `https` and is refused when it resolves to a loopback, private or link-local address.
+  - Web Push is standard VAPID with an encrypted payload, through any maintained library (pywebpush is allowed, 2026-09-14). The payload is metadata only: item `id`, kind, intensity and the narrator's public rendering (AD-30). A subscription row belongs to its device session and is deleted on revocation. A push endpoint must be `https` and is refused when it resolves to a loopback, private or link-local address.
   - Tapping a notification at home opens the item in the Bridge. When the Bridge is unreachable (away from home), the service worker shows a cached metadata-only summary of the item, with "open at home" and a link to continue in Telegram. The service-worker cache holds metadata only, never content.
   - Web Push is the one named exception to the self-hosted principle, and no alert depends on the push relay alone.
 
@@ -295,14 +295,14 @@ flowchart LR
 - **Prevents:** the Bridge showing an event for a rolled-back change, or missing a committed one.
 - **Rule:** `journal.record` takes the caller's connection and inserts the event in the same SQLite transaction as the state change (transactional outbox). The push to the gateway happens only after commit. State outside SQLite (md memory) records immediately after its write, and a failed record marks the journal health contributor degraded. An event with no SQLite state change (such as a voice presence change worth recording) is registered as `ephemeral_source` and recorded right after its action.
 
-### AD-25 — One licence and integrity rule for everything bundled or downloaded [ADOPTED]
+### AD-25 — One integrity rule for everything downloaded at runtime [ADOPTED]
 
 - **Binds:** Python and npm dependencies, vendored assets, fonts, model weights, engine installers, the voice worker, the browser client.
-- **Prevents:** a copyleft or proprietary component arriving through a runtime download; an unknown licence passing a deny-list; a tampered or moving download; code execution through model files; a feature that depends on a cloud speech service.
+- **Prevents:** a tampered or moving download; code execution through model files; a feature that depends on a cloud speech service.
 - **Rule:**
-  - Code is MIT, Apache or BSD; model weights may also be CC-BY; fonts may also be SIL OFL. The rule covers anything bundled and anything downloaded at runtime. An allow-list manifest declares every bundled or downloadable artifact with its licence, and a tripwire fails anything undeclared or outside the allowed set. Known exclusions: Piper (GPL-3, auto-install removed), python-zeroconf (LGPL-2.1-or-later), `pywebpush` and `py-vapid` (MPL-2.0).
-  - Every runtime download (weights, voices, engines, the NVIDIA opt-in) is pinned in that manifest by an immutable revision URL and SHA-256, and the downloader verifies the hash before an atomic rename. Weights are accepted only as safetensors, ONNX or GGUF, never pickle. Runtime package installs are exact-pinned with hashes.
-  - Browser cloud speech APIs are banned. NVIDIA-licensed models are never bundled: they are an opt-in download, offered only on NVIDIA hardware, with the licence shown first (Q44).
+  - Licence rules were dropped by owner decision on 2026-09-14 ("This is open source platform. No license"): no licence allow-list or licence tripwire exists, and Piper, python-zeroconf, pywebpush and NVIDIA-licensed models are ordinary engineering choices.
+  - Every runtime download (weights, voices, engines, NVIDIA models included) is pinned in a download manifest by an immutable revision URL and SHA-256, and the downloader verifies the hash before an atomic rename. Weights are accepted only as safetensors, ONNX or GGUF, never pickle. Runtime package installs are exact-pinned with hashes.
+  - Browser cloud speech APIs are banned.
 
 ### AD-26 — Typed COMMAND task kind on the one loop [ARCHITECT]
 
@@ -328,6 +328,7 @@ flowchart LR
   - An irreversible action that was not explicitly pre-authorised, in any run the owner is not attending, becomes a Needs-you item of kind `approval`. Attendance is defined once in `authz/`: the command's originating ingress is a live session with an authenticated person present. Scheduler and autonomous runs never attend.
   - The gate may add friction and never removes an always-ask consent category (AD-18).
   - Standing authority lives in one `authz/` table keyed by command type and scope, written only by `authority.grant` and `authority.revoke` commands that need a signed tap or an explicit Telegram approval. Session consent grants stay in memory and never satisfy the irreversible rule.
+  - Existing jobs are grandfathered (owner decision, 2026-09-13): when standing authority is introduced, a migration records it for each existing job's declared irreversible command types (provenance `grandfathered`), and the idempotent job seeder records it for platform-seeded jobs (provenance `seeded`). Both write through the same `authz/` API as `authority.grant` and record `authority.granted` events.
   - Requester kind, standing-authority rows and session rows are writable only through `authz/` APIs that are never exposed as agent tools; a tripwire fails any tool that reaches them.
   - Undo stays available on an action's card until the action is superseded (a later command changes the same target) or 24 hours pass, whichever comes first. After that the card no longer offers undo, and the gate refuses an undo command.
   - Take-over pauses the owl's mission and hands the owner its current plan to edit and resume, or to cancel. A taken-over mission never continues silently: it stays paused until the owner resumes or cancels it.
@@ -457,7 +458,7 @@ flowchart LR
 | Concern | Convention |
 | --- | --- |
 | Naming: event types | Dotted, lower-case, past tense, as in `task.claimed`. One registry name per type, versioned by `schema_version`, evolving additively with upcasters (AD-3). |
-| Naming: packages and paths | `src/stackowl/journal/`, `src/stackowl/commands/`, `src/stackowl/authz/` with `authz/identity/`, `src/stackowl/bridge/` with `bridge/static/`, the notifier and the `web` channel adapter, `src/stackowl/voice/`, front-end source in `web/bridge/`, the mark in `logo/`. New IPC frames go in `ipc/frames.py` (typed, `extra=forbid`). |
+| Naming: packages and paths | `src/stackowl/journal/`, `src/stackowl/commands/spec/`, `src/stackowl/authz/` with `authz/identity/`, `src/stackowl/bridge/` with `bridge/static/`, the notifier and the `web` channel adapter, `src/stackowl/voice/`, front-end source in `web/bridge/`, the mark in `logo/`. New IPC frames go in `ipc/frames.py` (typed, `extra=forbid`). |
 | Data: event envelope | `event_id`, `cursor`, `type`, `schema_version`, `occurred_at`, `actor_kind` + `actor_id`, `device_id`, `target_kind` + `target_id`, `outcome`, `attention` + `intensity`, `record_ref`, `attrs`, `trace_id`, optional `duration_ms`. Metadata only (AD-4). Travels as the `journal` kind on both carriers (AD-34). |
 | Data: attrs | Typed per event type in the registry. Ids, numbers, closed enums and bounded labels only; no display names, free text or exception text. Scanned at runtime by the leak guard (AD-4). |
 | Data: actor and target kinds | One closed list declared in the registry, including `device`, `voice_worker` and `autonomous`. A new kind is added only there (AD-3). |
@@ -479,7 +480,7 @@ flowchart LR
 | Cross-cutting: placement | Every new module argues its home in a `PLACEMENT:` docstring paragraph. A new package's placement is decided by vote. |
 | Cross-cutting: tripwires | Invariant guards carry `@pytest.mark.tripwire` and run through `scripts/tripwires.sh`. |
 | Cross-cutting: hardware tiering | Host-side tiers use one shared capability probe, lifted from the existing pattern in `media/image/capability.py` and `sandbox/capability.py`. The browser tier follows AD-20. |
-| Cross-cutting: portability and licences | Linux, macOS and Windows, on x86_64 and aarch64. No vendor names in `src/`. No hardcoded keyword lists. Licences and download integrity follow AD-25. |
+| Cross-cutting: portability and downloads | Linux, macOS and Windows, on x86_64 and aarch64. No vendor names in `src/`. No hardcoded keyword lists. Download integrity follows AD-25; there is no licence rule (owner decision, 2026-09-14). |
 | UI: rendering | Render on demand. The ambient tick is capped at 15–30 fps. Nothing is drawn while the page is hidden. Every mover maps to a real journal event or snapshot record and opens it. Each view declares how it samples events. |
 | UI: sound | Ambient cues never repeat, duck under Owl's voice, go silent when backgrounded and can be switched off on their own. The Needs-you alert is the only attention-grabbing sound. The Q39 acknowledgement sound sits outside the attention policy. While a voice session is open, cues and Owl's voice play through the voice peer connection so echo cancellation covers them (Q39, Q51, spike S5). |
 | UI: structure | Every canvas entity has a DOM/ARIA twin that is also the keyboard path. Moving content has a pause control. Text renders as text nodes only (AD-36). The accent colour and the Needs-you alert sound appear only for `attention = needs_you`. Identity tokens and type follow the two approved mockup briefs. |
@@ -680,9 +681,9 @@ Operational envelope:
 | Budgets | Bounded fan-out and per-client queues, resync for slow clients, a journal write budget per turn, a gateway memory budget for Jetson-class hosts. | AD-38 |
 | Backup and restore | One seeded backup set: identity, device key registry, VAPID keys, server certificate, journal, checkpoints. Restore keeps the install name. | AD-39 |
 | Upgrades | New tables come only by migration, numbered at merge. New frames bump `protocol_version`. control_plane settings migrate once to the `bridge` section. A browser whose `build_id` differs reloads. | AD-2, AD-7, AD-12, AD-21, AD-33 |
-| Environments | Dev uses a `localhost` origin on the same code path with no CA, and the `web` channel is drivable by `scripts/dev_ingress.py`. CI runs the Node build with `npm ci --ignore-scripts`, the byte compare and the tripwires. Spikes run on stock devices on a home network, not the dev box. | AD-21, conventions |
+| Environments | Dev uses a `localhost` origin on the same code path with no CA, and the `web` channel is drivable by `scripts/dev_ingress.py`. CI runs the Node build with `npm ci --ignore-scripts`, the byte compare and the tripwires. Spikes run on the platform's own box, as on any customer's clone, with the owner's stock devices for device checks; voice spikes are the built-in `stackowl voice check` (owner decision, 2026-09-13). | AD-21, conventions |
 | Committed assets | The manifest tripwire fails when `web/bridge/` and `bridge/static/` diverge. A clone needs no Node. | AD-21 |
-| Licences and downloads | An allow-list manifest covers bundled components and runtime downloads, each download pinned by hash. | AD-25 |
+| Downloads | Runtime downloads are declared in a manifest and pinned by hash; there is no licence allow-list (owner decision, 2026-09-14). | AD-25 |
 | Any hardware | The host picks the voice tier through the shared capability probe (spike S8). The browser picks the Viewscreen tier from measured frame work time, with low-power 2D mode as the floor (spike B3). | AD-20, AD-22, conventions |
 
 ## Capability → Architecture Map
@@ -743,10 +744,10 @@ Operational envelope:
 | B5 — the committed build runs under the AD-36 CSP with Trusted Types on every B1 browser | AD-36 | The failing construct is removed from the build; the policy is never relaxed. |
 | S1 — non-spoken acknowledgement and first audio per tier, stub then real pipeline | AD-22, AD-23, AD-32 | Pipecat is not adopted and the worker drives the `media/stt` and `media/tts` selectors directly; a tier over its bound runs push-to-talk with the reason stated. |
 | S2 — first answer token and first progress over 30 voice prompts | AD-32 | A separate fast "on it" path is added. |
-| S3 — STT accuracy on owner phrases and noise | AD-22, AD-25 | That tier uses the best permissive engine within the bound; with none, that tier is push-to-talk only. |
-| S4 — TTS first audio and the owner's blind ranking | AD-22, AD-25 | The default voice set uses the best passing permissive engine; on NVIDIA hardware the Q44 opt-in download is offered. |
+| S3 — STT accuracy on owner phrases and noise | AD-22, AD-25 | That tier uses the best engine within the bound; with none, that tier is push-to-talk only. |
+| S4 — TTS first audio and the owner's blind ranking | AD-22, AD-25 | The default voice set uses the best passing engine, NVIDIA models included on NVIDIA hardware. |
 | S5 — barge-in and echo on iPhone, Android and laptop, including cue audio not triggering barge-in; WebRTC vs WebSocket | AD-23, AD-32, sound convention | Push-to-talk only on that tier. |
 | S6 — end of turn on hesitant utterances | AD-32 | Push-to-talk only on that tier until a turn detector passes. |
 | S7 — installed PWA permissions, lock, app switch, headset, and close-and-reopen with a working microphone; re-run on each major iOS release | AD-23, AD-31, sound convention | Phone voice is foreground-only, with a tap to start each session. |
-| S8 — probe four hosts, then force-degrade | AD-22, hardware tiering convention | The probe selects the lowest tier with the reason stated, and push-to-talk remains available; never a silent failure. |
+| S8 — probe the platform's own host (built into `stackowl voice check` on every install), then force-degrade | AD-22, hardware tiering convention | The probe selects the lowest tier with the reason stated, and push-to-talk remains available; never a silent failure. |
 | S9 — speaking over Owl during speech, generation and a running tool, across all interruption kinds | AD-27, AD-32 | Barge-in only pauses speech; stop, steer and correction go through on-screen controls until S9 passes. |
