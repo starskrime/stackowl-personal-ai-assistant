@@ -1,0 +1,187 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 09-14-2026 21:27
+last_updated: 09-14-2026 21:27
+project: stackowl-personal-ai-assistant
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-trust-the-bridge-s-own-certificate-on-your-phone-at-home: backlog
+  1-2-sign-in-with-a-passkey-on-the-local-name-and-approve-a-secon: backlog
+  1-3-push-microphone-and-the-away-from-home-summary-on-your-devic: backlog
+  1-4-a-live-stream-over-webtransport-with-automatic-sse-fallback: backlog
+  1-5-the-strict-security-policy-holds-on-every-browser: backlog
+  1-6-verdicts-decide-what-gets-built: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-the-journal-records-task-events-in-the-same-transaction-as-t: backlog
+  2-2-every-event-reads-as-a-plain-sentence-and-knows-whether-it-n: backlog
+  2-3-gateway-and-core-refuse-to-talk-across-versions: backlog
+  2-4-only-the-real-core-can-connect-to-the-gateway: backlog
+  2-5-split-mode-tui-progress-comes-back-from-the-journal: backlog
+  2-6-jobs-heals-and-health-have-a-history: backlog
+  2-7-every-turn-s-model-calls-tool-calls-and-delegation-hops-are: backlog
+  2-8-memory-writes-and-consent-decisions-are-recorded: backlog
+  2-9-deliveries-channels-and-providers-are-recorded: backlog
+  2-10-nothing-escapes-the-journal: backlog
+  2-11-the-journal-stays-small-on-small-hardware: backlog
+  2-12-journal-cost-measured-on-a-small-host: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-give-ups-become-durable-needs-you-items: backlog
+  3-2-one-answer-wins-on-every-surface: backlog
+  3-3-approvals-and-questions-become-needs-you-items: backlog
+  3-4-consent-never-grants-a-channel-nobody-can-answer: backlog
+  3-5-the-consent-address-survives-the-gateway-core-link: backlog
+  3-6-answer-from-telegram-and-watch-it-close: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-severities-and-the-principal-live-in-authz: backlog
+  4-2-every-tool-and-slash-command-declares-whether-it-changes-sta: backlog
+  4-3-a-declared-command-runs-through-one-door: backlog
+  4-4-one-action-policy-gate-decides: backlog
+  4-5-undo-for-24-hours: backlog
+  4-6-standing-authority-is-explicit-and-yours-alone: backlog
+  4-7-scheduling-runs-on-commands: backlog
+  4-8-messages-and-files-are-sent-through-commands: backlog
+  4-9-owls-skills-and-tools-change-only-through-commands: backlog
+  4-10-memory-config-and-everything-else-run-on-commands: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-guided-setup-creates-the-install-s-own-ca-and-local-name: backlog
+  5-2-the-bridge-server-runs-in-the-gateway-over-https-at-home: backlog
+  5-3-the-front-end-is-built-once-and-committed-with-no-drift: backlog
+  5-4-served-under-the-strict-security-policy-installable-as-an-ap: backlog
+  5-5-one-owner-record-and-every-web-handle-resolves-to-it: backlog
+  5-6-the-setup-code-and-brute-force-brake-move-to-authz-identity: backlog
+  5-7-first-sign-in-setup-code-then-passkey: backlog
+  5-8-each-device-holds-its-own-non-extractable-key: backlog
+  5-9-the-recovery-code: backlog
+  5-10-approve-a-new-device-by-matching-its-code: backlog
+  5-11-revoke-a-device: backlog
+  5-12-webtransport-certificates-rotate-on-their-own: backlog
+  5-13-a-restore-keeps-you-signed-in: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-the-live-stream-reaches-the-browser: backlog
+  6-2-one-snapshot-one-client-store-per-browser: backlog
+  6-3-webtransport-as-the-fast-path-with-automatic-fallback: backlog
+  6-4-the-bridge-shell-tokens-typefaces-and-the-owl-presence-mark: backlog
+  6-5-the-ship-s-log-and-the-station-sheet: backlog
+  6-6-the-crew-panel: backlog
+  6-7-the-needs-you-strip-on-every-screen: backlog
+  6-8-answer-approvals-questions-and-device-requests-in-place: backlog
+  6-9-failure-and-undo-cards-you-can-act-on: backlog
+  6-10-sounds: backlog
+  6-11-a-stale-or-restarting-ship-never-looks-alive: backlog
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  7-1-every-event-type-gets-one-truthful-visual-spike-b4-kit: backlog
+  7-2-the-dial-holds-its-frame-budget-on-older-phones-spike-b3-kit: backlog
+  7-3-dial-verdicts-decide-the-grammar-and-the-tiers: backlog
+  7-4-the-dial-frame-rings-labels-and-the-host-at-the-centre: backlog
+  7-5-the-schedule-bezel-shows-what-is-coming: backlog
+  7-6-the-comms-ports-and-the-crew-ring: backlog
+  7-7-the-memory-arcs-and-the-engineering-band: backlog
+  7-8-motion-that-is-always-true: backlog
+  7-9-rim-station-labels-and-the-phone-posture: backlog
+  7-10-low-power-2d-mode: backlog
+  epic-7-retrospective: optional
+
+  epic-8: backlog
+  8-1-the-web-conversation-channel: backlog
+  8-2-owl-s-replies-stream-into-comms-with-action-buttons: backlog
+  8-3-the-comms-station-talk-and-browse-your-threads: backlog
+  8-4-delivery-failures-and-the-undelivered-outbox: backlog
+  8-5-owl-is-the-host-renamable-the-crew-speak-when-addressed: backlog
+  epic-8-retrospective: optional
+
+  epic-9: backlog
+  9-1-the-crew-station-each-owl-s-activity-authority-skills-and-dn: backlog
+  9-2-pause-and-resume-an-owl: backlog
+  9-3-grant-authority-and-manage-an-owl-s-skills-from-crew: backlog
+  9-4-the-missions-station-tasks-history-schedules-retries-and-dea: backlog
+  9-5-job-and-task-controls-from-missions: backlog
+  9-6-steer-a-mission: backlog
+  9-7-take-over-a-mission: backlog
+  epic-9-retrospective: optional
+
+  epic-10: backlog
+  10-1-core-only-live-values-through-typed-query-frames: backlog
+  10-2-the-engineering-station: backlog
+  10-3-self-healing-incidents-you-can-read: backlog
+  10-4-the-archives-station-what-the-ship-knows-and-why-it-decided: backlog
+  10-5-snapshot-checkpoints: backlog
+  10-6-the-flight-recorder: backlog
+  10-7-the-security-station: backlog
+  epic-10-retrospective: optional
+
+  epic-11: backlog
+  11-1-push-keys-and-subscriptions: backlog
+  11-2-every-needs-you-item-also-arrives-by-web-push: backlog
+  11-3-tap-a-notification-at-home-or-away: backlog
+  11-4-what-changed-since-you-last-looked: backlog
+  11-5-the-briefing-lights-up-the-ship-as-it-is-read: backlog
+  epic-11-retrospective: optional
+
+  epic-12: backlog
+  12-1-speech-engines-are-downloaded-safely: backlog
+  12-2-the-voice-worker-runs-speech-in-its-own-process: backlog
+  12-3-one-voice-state-machine-and-the-voice-channel: backlog
+  12-4-stackowl-voice-check-measures-this-host-s-speed: backlog
+  12-5-stackowl-voice-check-measures-accuracy-and-voices: backlog
+  12-6-the-reference-run-sets-the-defaults: backlog
+  12-7-the-host-picks-its-voice-tier-honestly: backlog
+  12-8-push-to-talk-in-the-bridge: backlog
+  12-9-owl-acknowledges-at-once-and-speaks-at-milestones: backlog
+  12-10-a-backgrounded-phone-never-keeps-listening: backlog
+  12-11-each-owl-has-its-own-voice: backlog
+  epic-12-retrospective: optional
+
+  epic-13: backlog
+  13-1-stackowl-voice-check-covers-turn-taking: backlog
+  13-2-a-device-check-page-for-barge-in-and-the-installed-app: backlog
+  13-3-turn-taking-verdicts-set-the-voice-rules: backlog
+  13-4-hands-free-mode: backlog
+  13-5-owl-pauses-when-you-talk-and-resumes-after-mm-hm: backlog
+  13-6-owl-understands-stop-steer-a-new-question-or-a-correction: backlog
+  13-7-a-misheard-order-is-undone-automatically: backlog
+  13-8-proactive-speech-and-the-spoken-briefing: backlog
+  13-9-the-bridge-replaces-today-s-dashboard: backlog
+  epic-13-retrospective: optional
