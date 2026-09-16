@@ -193,6 +193,21 @@ class BudgetSettings(BaseModel):
         ),
         json_schema_extra={"hot_reload": True},
     )
+    enforce_default_token_ceiling: bool = Field(
+        default=True,
+        description=(
+            "When True (default), a turn/owl that carries no explicit "
+            "max_input_tokens cap of its own gets the platform's default "
+            "per-turn token ceiling filled in (DEFAULT_TURN_MAX_INPUT_TOKENS = "
+            "500,000; see authz/bounds.py) — today's exact behavior, unchanged. "
+            "Set False to opt OUT of that default fill-in: an owl's own explicit "
+            "max_input_tokens cap (if any) still applies untouched, but a turn "
+            "with none runs with NO per-turn token ceiling at all. Safe to "
+            "disable — BudgetGovernor.check already treats max_input_tokens=None "
+            "as a clean no-op on the token axis (pipeline/budget/governor.py)."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
 
 
 class ClarifySettings(BaseModel):

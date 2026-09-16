@@ -1476,7 +1476,7 @@ def _has_explicit_resource_caps(caps: ResourceCaps) -> bool:
     )
 
 
-def _resolve_token_ceiling(caps: ResourceCaps) -> ResourceCaps:
+def _resolve_token_ceiling(caps: ResourceCaps, *, enabled: bool = True) -> ResourceCaps:
     """Apply the default token ceiling unless the owl chose its own. A FLOOR, not an override.
 
     WHY THIS IS NOT PART OF THE no-caps BACKSTOP, which is where it was first wired
@@ -1490,9 +1490,43 @@ def _resolve_token_ceiling(caps: ResourceCaps) -> ResourceCaps:
     change would have silently deleted the only meter that works in exchange for one
     that cannot. Measured 2026-08-29: 0 of 11 live owls set explicit caps, so this
     was latent — which is why it is pinned by a test rather than left as a shrug.
+
+    ``enabled`` is ``BudgetSettings.enforce_default_token_ceiling`` (default True =
+    today's exact behavior — the fill-in always applies). False is the operator's
+    opt-out: an owl's own explicit cap still wins untouched, but a turn with none
+    keeps ``max_input_tokens=None`` — which ``BudgetGovernor.check`` already treats
+    as a clean no-op on the token axis (pipeline/budget/governor.py), so no per-turn
+    token ceiling is enforced at all.
     """
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] execute: _resolve_token_ceiling: entry",
+        extra={"_fields": {
+            "has_explicit_token_cap": caps.max_input_tokens is not None,
+            "enabled": enabled,
+        }},
+    )
+    # 2. DECISION — an owl's own explicit cap always wins, opt-out or not
     if caps.max_input_tokens is not None:
+        log.engine.debug(
+            "[pipeline] execute: _resolve_token_ceiling: exit — owl's own cap kept",
+            extra={"_fields": {"max_input_tokens": caps.max_input_tokens}},
+        )
         return caps
+    # 3. STEP — the operator can opt OUT of the default fill-in entirely
+    if not enabled:
+        log.engine.info(
+            "[pipeline] execute: _resolve_token_ceiling: exit — default token "
+            "ceiling disabled by config (BudgetSettings.enforce_default_token_"
+            "ceiling=False); turn runs with no per-turn token cap",
+            extra={"_fields": {"enforce_default_token_ceiling": False}},
+        )
+        return caps
+    # 4. EXIT — fill in the platform default
+    log.engine.debug(
+        "[pipeline] execute: _resolve_token_ceiling: exit — filled default ceiling",
+        extra={"_fields": {"max_input_tokens": DEFAULT_TURN_MAX_INPUT_TOKENS}},
+    )
     return caps.model_copy(update={"max_input_tokens": DEFAULT_TURN_MAX_INPUT_TOKENS})
 
 
@@ -2696,7 +2730,15 @@ async def _run_with_tools(
     _has_explicit_caps = _has_explicit_resource_caps(_caps)
     # The token ceiling applies to EVERY turn, not only to un-capped owls — see
     # _resolve_token_ceiling for the config that would otherwise have deleted it.
-    _caps = _resolve_token_ceiling(_caps)
+    # BudgetSettings.enforce_default_token_ceiling (default True = byte-identical
+    # fill-in) lets an operator opt OUT of the default ceiling entirely.
+    _budget_settings = _services.settings
+    _enforce_token_ceiling = (
+        _budget_settings.budget.enforce_default_token_ceiling
+        if _budget_settings is not None
+        else True
+    )
+    _caps = _resolve_token_ceiling(_caps, enabled=_enforce_token_ceiling)
     # Default safety backstop: when the owl set NO explicit caps, apply a default
     # time/step bound so the (already-tested) BudgetGovernor always runs and every
     # turn terminates in bounded time even when a weak model spirals. NON-interactive
