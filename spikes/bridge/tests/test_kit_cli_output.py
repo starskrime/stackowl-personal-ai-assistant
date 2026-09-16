@@ -1,6 +1,6 @@
 """Covers the "Fresh setup" and "Renewal" I/O matrix rows' printed-output
-requirement: the CA fingerprint, guided trust steps, and renewal-ceremony
-text the owner reads from the terminal.
+requirement: the CA fingerprint, guided trust steps, renewal-ceremony text,
+and (Story 1.2) the setup code the owner reads from the terminal.
 """
 
 from __future__ import annotations
@@ -20,3 +20,9 @@ def test_print_renewal_ceremony_tells_the_owner_to_drop_the_old_ca_first(capsys)
     printed = capsys.readouterr().out
     assert "remove the OLD CA" in printed
     assert "11:22:33" in printed
+
+
+def test_print_setup_code_prints_the_code_to_the_terminal(capsys) -> None:  # type: ignore[no-untyped-def]
+    kit._print_setup_code("AB23CD45")
+    printed = capsys.readouterr().out
+    assert "AB23CD45" in printed

@@ -5,6 +5,10 @@
 #     "cryptography>=42,<49",
 #     "aiohttp>=3.11,<4",
 #     "playwright>=1.59,<2",
+#     "webauthn>=2.0,<3",
+#     "python-telegram-bot>=21.0,<23",
+#     "pyyaml>=6.0.0,<7",
+#     "keyring>=25.0.0,<26",
 # ]
 # ///
 """Bridge TLS/mDNS spike kit entrypoint.
@@ -33,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import signal
 import socket
 import sys
@@ -42,6 +47,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bridge_spike import ca as ca_module  # noqa: E402
 from bridge_spike import mdns  # noqa: E402
+from bridge_spike import setup_code as setup_code_module  # noqa: E402
+from bridge_spike import telegram_bot  # noqa: E402
+from bridge_spike.device_requests import DeviceRequest  # noqa: E402
 from bridge_spike.server import (  # noqa: E402
     RESULTS_DIR,
     BridgeServer,
@@ -107,7 +115,36 @@ def _print_renewal_ceremony(fingerprint: str) -> None:
     )
 
 
-async def _serve(install_name: str, port: int, *, renewing: bool) -> None:
+def _print_setup_code(code: str) -> None:
+    print(f"\nSetup code (first passkey enrolment only, used once): {code}")
+
+
+def _start_test_telegram_bot(server: BridgeServer) -> telegram_bot.TestTelegramBot | None:
+    """Starts the kit's own *test* Telegram bot when a test token is
+    configured (AD-37) -- never the platform's bot/token. Returns None
+    (terminal-only) when no test token is configured; raises
+    `telegram_bot.BotTokenCollisionError` when the configured test token
+    equals the platform's resolved `telegram_channel.bot_token`, so the kit
+    refuses to start rather than risk knocking the live platform bot offline.
+    """
+    test_token = os.environ.get(telegram_bot.TEST_BOT_TOKEN_ENV)
+    if not test_token:
+        return None
+    allowed_user_ids = telegram_bot.allowed_user_ids_from_env(os.environ.get(telegram_bot.TEST_ALLOWED_USER_IDS_ENV))
+
+    async def _approve_via_telegram(request_id: str, code: str) -> None:
+        server.approve_device_request(request_id, code)
+
+    bot = telegram_bot.TestTelegramBot(test_token, allowed_user_ids, approve_callback=_approve_via_telegram)
+
+    async def _notify_device_request(device_request: DeviceRequest) -> None:
+        await bot.send_device_request(device_request.device_name, device_request.code, device_request.request_id)
+
+    server.on_device_request_created = _notify_device_request
+    return bot
+
+
+async def _serve(install_name: str, port: int, *, renewing: bool) -> int:
     artifacts = ca_module.renew(install_name) if renewing else ca_module.setup(install_name)
     print(f"{'Renewed' if renewing else 'Generated'} ephemeral CA + leaf certificate for {install_name!r}.")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -122,37 +159,74 @@ async def _serve(install_name: str, port: int, *, renewing: bool) -> None:
     if advertisement.running:
         print(f"\nAdvertising {install_name!r} via: {' '.join(advertisement.command)}")
 
-    config = ServerConfig(install_name=install_name, port=port, ca_artifacts=artifacts)
+    # Minted exactly once, here, at process start -- no route anywhere can
+    # mint another (see bridge_spike/setup_code.py).
+    setup_codes = setup_code_module.SetupCodeStore()
+    config = ServerConfig(install_name=install_name, port=port, ca_artifacts=artifacts, setup_codes=setup_codes)
     server = BridgeServer(config)
-    runner = await server.start()
-    print(f"\nServing https://{install_name}:{port}/ — Ctrl-C to stop.")
-
-    # Ctrl-C (SIGINT) and a plain `kill` (SIGTERM) must both stop the mDNS
-    # subprocess and close the listener cleanly -- otherwise avahi-publish-
-    # service/dns-sd is orphaned, still advertising a server that is gone.
-    # Python does not run a coroutine's `finally` on a bare SIGTERM (there is
-    # no default handler), so both signals are wired to the same stop event.
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):  # platform without signal-handler support
-            loop.add_signal_handler(sig, stop_event.set)
 
     try:
+        bot = _start_test_telegram_bot(server)
+    except telegram_bot.BotTokenCollisionError as exc:
+        print(f"\n{exc}")
+        advertisement.stop()
+        return 1
+
+    runner = await server.start()
+    # EVERYTHING from here on is wrapped in the same try/finally as the
+    # signal-wait below: `runner`/`advertisement` must be cleaned up on ANY
+    # exit path once the listener is up, not only the Ctrl-C path -- a
+    # `bot.start()` failure (bad token, no network) must not orphan the
+    # mDNS subprocess or leave the HTTPS listener bound.
+    try:
+        print(f"\nServing https://{install_name}:{port}/ — Ctrl-C to stop.")
+        _print_setup_code(setup_codes.code)
+
+        if bot is not None:
+            try:
+                await bot.start()
+            except Exception as exc:  # noqa: BLE001 — any start failure (bad token, no network, ...)
+                print(f"\nCould not start the kit's test Telegram bot: {exc}")
+                print(
+                    f"Remedy: verify {telegram_bot.TEST_BOT_TOKEN_ENV} is a valid token from @BotFather "
+                    "and that this host has network access, then restart the kit."
+                )
+                return 1
+            sent = await bot.send_setup_code(setup_codes.code)
+            if sent:
+                print("Setup code also sent via the kit's test Telegram bot.")
+            else:
+                print(
+                    "Test Telegram bot started, but the setup code is terminal-only: "
+                    f"{telegram_bot.TEST_ALLOWED_USER_IDS_ENV} must name exactly one allowed user id to auto-send it."
+                )
+
+        # Ctrl-C (SIGINT) and a plain `kill` (SIGTERM) must both stop the mDNS
+        # subprocess and close the listener cleanly -- otherwise avahi-publish-
+        # service/dns-sd is orphaned, still advertising a server that is gone.
+        # Python does not run a coroutine's `finally` on a bare SIGTERM (there
+        # is no default handler), so both signals are wired to the same event.
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError):  # platform without signal-handler support
+                loop.add_signal_handler(sig, stop_event.set)
+
         await stop_event.wait()
     finally:
+        if bot is not None:
+            await bot.stop()
         await runner.cleanup()
         advertisement.stop()
+    return 0
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    asyncio.run(_serve(args.name, args.port, renewing=False))
-    return 0
+    return asyncio.run(_serve(args.name, args.port, renewing=False))
 
 
 def cmd_renew(args: argparse.Namespace) -> int:
-    asyncio.run(_serve(args.name, args.port, renewing=True))
-    return 0
+    return asyncio.run(_serve(args.name, args.port, renewing=True))
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -161,6 +235,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     result = asyncio.run(check_module.run_check(install_name=args.name))
     print(f"\nCheck steps: {result.steps}")
     print(f"Result written to: {result.result_path}")
+    if result.passkey_result_path is not None:
+        print(f"Passkey check result written to: {result.passkey_result_path}")
     if result.ok:
         print("PASS — all steps succeeded.")
         return 0

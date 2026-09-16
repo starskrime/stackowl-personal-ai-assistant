@@ -37,6 +37,16 @@ async def test_automated_check_passes_against_chromium(monkeypatch, tmp_path) ->
     assert result.steps["result_writing"] is True
     assert result.steps["subnet_refusal"] is True
 
+    # The CDP virtual-authenticator steps (Story 1.2): setup-code refusal
+    # off-network, passkey create() AND get(), a copied-token replay refused,
+    # and a two-context matching-code device approval.
+    assert result.steps["setup_code_refused_off_network"] is True
+    assert result.steps["passkey_registration"] is True
+    assert result.steps["passkey_authentication"] is True
+    assert result.steps["token_replay_refused"] is True
+    assert result.steps["matching_code_shown_on_both"] is True
+    assert result.steps["matching_code_approval"] is True
+
     assert result.result_path.exists()
     written = json.loads(result.result_path.read_text())
     assert written["kit_version"] == check_module.KIT_VERSION
@@ -44,6 +54,13 @@ async def test_automated_check_passes_against_chromium(monkeypatch, tmp_path) ->
     assert written["browser"] == "chromium"
     assert "timestamp" in written
     assert "os" in written
+
+    assert result.passkey_result_path is not None
+    assert result.passkey_result_path.exists()
+    passkey_written = json.loads(result.passkey_result_path.read_text())
+    assert passkey_written["kit_version"] == check_module.KIT_VERSION
+    assert passkey_written["check"] == "passkey-desktop-chrome-automated"
+    assert passkey_written["ok"] is True
 
 
 async def test_certificate_chain_check_fails_for_a_leaf_not_signed_by_the_pinned_ca() -> None:

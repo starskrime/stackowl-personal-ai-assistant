@@ -17,6 +17,8 @@ Design notes on the two "Never" guards this module enforces:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import json
 import logging
@@ -24,7 +26,8 @@ import re
 import ssl
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,17 +35,23 @@ from aiohttp import web
 from aiohttp.typedefs import Handler
 
 from . import ca as ca_module
+from . import device_requests as device_requests_module
+from . import setup_code as setup_code_module
+from . import tokens as tokens_module
+from . import webauthn_flow as webauthn_flow_module
 
 logger = logging.getLogger("bridge_spike.server")
 
 STATIC_DIR = Path(__file__).parent / "static"
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 DEVICE_CLASS_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+DEVICE_NAME_RE = re.compile(r"^[\w .,'-]{1,64}$", re.UNICODE)
 KIT_VERSION = "0.1.0"
 
 _STATIC_FILES = {
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
     "/sw.js": ("sw.js", "application/javascript"),
+    "/app.js": ("app.js", "application/javascript"),
     "/icon-192.png": ("icon-192.png", "image/png"),
     "/icon-512.png": ("icon-512.png", "image/png"),
 }
@@ -170,6 +179,7 @@ class ServerConfig:
     port: int
     ca_artifacts: ca_module.CAArtifacts
     host: str = "0.0.0.0"  # nosec: IPv4-only bind, all local IPv4 interfaces.
+    setup_codes: setup_code_module.SetupCodeStore = field(default_factory=setup_code_module.SetupCodeStore)
 
 
 class BridgeServer:
@@ -182,12 +192,40 @@ class BridgeServer:
         # the event loop for every concurrent connection if re-run inside the
         # subnet-guard middleware.
         self._local_networks = local_ipv4_networks()
+        self.setup_codes = config.setup_codes
+        # RP ID = install name, exact expected origin (AD-16): every device
+        # this kit ever serves lands on the same https://<install-name>:<port>
+        # origin, so a single WebAuthnCeremony instance is correct here.
+        self.webauthn = webauthn_flow_module.WebAuthnCeremony(
+            config.install_name, origin=f"https://{config.install_name}:{config.port}"
+        )
+        self.tokens = tokens_module.TokenStore()
+        self.nonces = tokens_module.NonceStore()
+        self.enrollment_tickets = tokens_module.EnrollmentTicketStore()
+        self.device_requests = device_requests_module.DeviceRequestStore()
+        # Set by kit.py when a test Telegram bot is configured, so a new
+        # device-approval request also gets pushed there -- BridgeServer
+        # itself stays ignorant of Telegram entirely.
+        self.on_device_request_created: (
+            Callable[[device_requests_module.DeviceRequest], Awaitable[None]] | None
+        ) = None
         self.app = web.Application(middlewares=[self._subnet_guard, self._redirect_guard])
         self._install_routes()
 
     def _install_routes(self) -> None:
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_post("/api/results", self._handle_submit_result)
+        self.app.router.add_get("/api/auth/nonce", self._handle_nonce)
+        self.app.router.add_post("/api/webauthn/register/options", self._handle_webauthn_register_options)
+        self.app.router.add_post("/api/webauthn/register/verify", self._handle_webauthn_register_verify)
+        self.app.router.add_post("/api/webauthn/authenticate/options", self._handle_webauthn_authenticate_options)
+        self.app.router.add_post("/api/webauthn/authenticate/verify", self._handle_webauthn_authenticate_verify)
+        self.app.router.add_post("/api/device/register-key", self._handle_device_register_key)
+        self.app.router.add_get("/api/whoami", self._handle_whoami)
+        self.app.router.add_post("/api/device-requests", self._handle_create_device_request)
+        self.app.router.add_get("/api/device-requests/pending", self._handle_get_pending_device_request)
+        self.app.router.add_post("/api/device-requests/approve", self._handle_approve_device_request)
+        self.app.router.add_get("/api/device-requests/{request_id}", self._handle_get_device_request_status)
         for path, (filename, content_type) in _STATIC_FILES.items():
             self.app.router.add_get(path, self._make_static_handler(filename, content_type))
 
@@ -268,6 +306,184 @@ class BridgeServer:
         out_path = RESULTS_DIR / f"B1-{device_class}.json"
         out_path.write_text(json.dumps(result, indent=2))
         return web.json_response({"ok": True, "path": str(out_path)})
+
+    # -- passkey / device-key / device-approval routes --------------------
+    #
+    # Every route below is already behind `_subnet_guard` (home network only)
+    # and `_redirect_guard` (install-name origin only) -- neither guard is
+    # re-implemented here. The setup-code routes have no separate network
+    # gate of their own beyond that shared middleware: there is simply no
+    # route anywhere that MINTS a setup code (see setup_code.py), so "accepted
+    # only from the home network" falls out of the same subnet gate every
+    # other route already goes through.
+
+    @staticmethod
+    async def _json_body(request: web.Request) -> dict:
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise web.HTTPBadRequest(text="body must be JSON") from None
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="body must be a JSON object")
+        return payload
+
+    async def _require_signed_request(self, request: web.Request) -> tokens_module.Device:
+        """The signed-request-verifying decorator the AC calls for: every
+        authenticated route calls this first and lets `tokens_module`'s
+        `Unauthorized` become the one uniform `401` -- see tokens.py for why
+        the reason is logged here, not returned."""
+        body = await request.read()
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[len("Bearer ") :] if auth_header.startswith("Bearer ") else None
+        try:
+            return tokens_module.verify_signed_request(
+                tokens=self.tokens,
+                nonces=self.nonces,
+                token=token,
+                method=request.method,
+                path=request.path,
+                timestamp=request.headers.get("X-Bridge-Timestamp"),
+                nonce=request.headers.get("X-Bridge-Nonce"),
+                signature_b64=request.headers.get("X-Bridge-Signature"),
+                body=body,
+            )
+        except tokens_module.Unauthorized as exc:
+            raise tokens_module.unauthorized_response(exc.reason) from exc
+
+    async def _handle_nonce(self, request: web.Request) -> web.Response:
+        del request
+        return web.json_response({"nonce": self.nonces.issue()})
+
+    async def _handle_webauthn_register_options(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        setup_code = str(payload.get("setup_code") or "")
+        if not self.setup_codes.consume(setup_code):
+            logger.warning("bridge_spike.server: passkey registration refused — invalid or already-used setup code")
+            raise web.HTTPForbidden(text="invalid or already-used setup code")
+        options_json = self.webauthn.begin_registration()
+        return web.Response(text=options_json, content_type="application/json")
+
+    async def _handle_webauthn_register_verify(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        if "credential" not in payload:
+            raise web.HTTPBadRequest(text="body must include 'credential'")
+        try:
+            self.webauthn.finish_registration(payload["credential"])
+        except webauthn_flow_module.WebAuthnError as exc:
+            logger.warning("bridge_spike.server: passkey registration verify failed: %s", exc)
+            raise web.HTTPBadRequest(text="passkey registration could not be verified") from exc
+        ticket = self.enrollment_tickets.mint(self.webauthn.user_name)
+        return web.json_response({"ok": True, "enrollment_ticket": ticket})
+
+    async def _handle_webauthn_authenticate_options(self, request: web.Request) -> web.Response:
+        del request
+        try:
+            options_json = self.webauthn.begin_authentication()
+        except webauthn_flow_module.WebAuthnError as exc:
+            raise web.HTTPConflict(text=str(exc)) from exc
+        return web.Response(text=options_json, content_type="application/json")
+
+    async def _handle_webauthn_authenticate_verify(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        if "credential" not in payload:
+            raise web.HTTPBadRequest(text="body must include 'credential'")
+        try:
+            self.webauthn.finish_authentication(payload["credential"])
+        except webauthn_flow_module.WebAuthnError as exc:
+            logger.warning("bridge_spike.server: passkey authentication verify failed: %s", exc)
+            raise web.HTTPBadRequest(text="passkey authentication could not be verified") from exc
+        ticket = self.enrollment_tickets.mint(self.webauthn.user_name)
+        return web.json_response({"ok": True, "enrollment_ticket": ticket})
+
+    async def _handle_device_register_key(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        # Decode + fully validate the key BEFORE touching the ticket store:
+        # a malformed/wrong-curve key must never burn the one-time
+        # enrollment ticket, or the whole ceremony has to be redone just to
+        # resend a key.
+        try:
+            public_key_der = base64.b64decode(str(payload.get("device_public_key") or ""), validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise web.HTTPBadRequest(text="device_public_key must be base64-encoded DER SPKI") from exc
+        try:
+            self.tokens.parse_device_public_key(public_key_der)
+        except ValueError as exc:
+            # Distinct from the base64/DER text above: this key decoded fine
+            # but is the wrong curve/type (or, from parse_device_public_key's
+            # own message, still not valid DER content).
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+
+        ticket = str(payload.get("enrollment_ticket") or "")
+        device_name = self.enrollment_tickets.redeem(ticket)
+        if device_name is None:
+            raise web.HTTPForbidden(text="invalid or expired enrollment ticket")
+
+        device = self.tokens.issue(device_name, public_key_der)
+        return web.json_response({"ok": True, "token": device.token, "device_name": device.device_name})
+
+    async def _handle_whoami(self, request: web.Request) -> web.Response:
+        device = await self._require_signed_request(request)
+        return web.json_response({"device_name": device.device_name})
+
+    async def _handle_create_device_request(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        device_name = str(payload.get("device_name") or "")
+        if not DEVICE_NAME_RE.match(device_name):
+            raise web.HTTPBadRequest(text="device_name must match ^[\\w .,'-]{1,64}$")
+        try:
+            device_request = self.device_requests.create(device_name)
+        except device_requests_module.DeviceRequestError as exc:
+            raise web.HTTPConflict(text=str(exc)) from exc
+        if self.on_device_request_created is not None:
+            await self.on_device_request_created(device_request)
+        return web.json_response(
+            {
+                "request_id": device_request.request_id,
+                "device_name": device_request.device_name,
+                "code": device_request.code,
+            }
+        )
+
+    async def _handle_get_pending_device_request(self, request: web.Request) -> web.Response:
+        await self._require_signed_request(request)
+        pending = self.device_requests.get_pending()
+        if pending is None:
+            return web.json_response({"pending": None})
+        return web.json_response(
+            {"pending": {"request_id": pending.request_id, "device_name": pending.device_name, "code": pending.code}}
+        )
+
+    def approve_device_request(self, request_id: str, code: str) -> device_requests_module.DeviceRequest:
+        """Approve + mint-and-assign the enrollment ticket, as ONE step --
+        the signed-tap route and the Telegram-callback path (kit.py) both
+        call this so they can never silently diverge on what "approved"
+        means. Raises `device_requests_module.DeviceRequestError` on any
+        refusal (unknown/expired request, mismatched code); callers map that
+        to whatever response shape fits their own transport."""
+        approved = self.device_requests.approve(request_id, code)
+        approved.enrollment_ticket = self.enrollment_tickets.mint(approved.device_name)
+        return approved
+
+    async def _handle_approve_device_request(self, request: web.Request) -> web.Response:
+        await self._require_signed_request(request)
+        payload = await self._json_body(request)
+        request_id = str(payload.get("request_id") or "")
+        code = str(payload.get("code") or "")
+        try:
+            self.approve_device_request(request_id, code)
+        except device_requests_module.DeviceRequestError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        return web.json_response({"ok": True})
+
+    async def _handle_get_device_request_status(self, request: web.Request) -> web.Response:
+        request_id = request.match_info["request_id"]
+        found = self.device_requests.get(request_id)
+        if found is None:
+            raise web.HTTPNotFound(text="unknown device request")
+        body: dict[str, object] = {"request_id": found.request_id, "approved": found.approved}
+        if found.approved:
+            body["enrollment_ticket"] = found.enrollment_ticket
+        return web.json_response(body)
 
     # -- lifecycle ---------------------------------------------------------
 

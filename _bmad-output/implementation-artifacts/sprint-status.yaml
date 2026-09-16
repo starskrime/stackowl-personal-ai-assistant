@@ -37,7 +37,7 @@ story_location: _bmad-output/implementation-artifacts
 development_status:
   epic-1: backlog
   1-1-trust-the-bridge-s-own-certificate-on-your-phone-at-home: done
-  1-2-sign-in-with-a-passkey-on-the-local-name-and-approve-a-secon: backlog
+  1-2-sign-in-with-a-passkey-on-the-local-name-and-approve-a-secon: done
   1-3-push-microphone-and-the-away-from-home-summary-on-your-devic: backlog
   1-4-a-live-stream-over-webtransport-with-automatic-sse-fallback: backlog
   1-5-the-strict-security-policy-holds-on-every-browser: backlog
