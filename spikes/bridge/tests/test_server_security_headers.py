@@ -4,12 +4,16 @@ not just the happy path. Runs directly against `aiohttp.test_utils.TestClient`
 (no real TLS socket -- see tests/test_server.py's own module docstring for
 why) and asserts the headers on:
 
-  * a normal 200 route (the install-name index page), and
+  * a normal 200 route (the install-name index page),
   * an error route raised as `web.HTTPException` deeper in the middleware
     stack (the subnet guard's 403, and the redirect guard's 307) --
     exercising the `except web.HTTPException` branch in
     `_security_headers_guard`, since raising an HTTPException IS aiohttp's
-    own response path for those.
+    own response path for those, and
+  * a route handler that raises a plain (non-HTTP) `Exception` -- exercising
+    `_security_headers_guard`'s `except Exception` branch (added during
+    Story 1.5's own review-fix pass, previously untested; see this story's
+    follow-up).
 
 `SECURITY_HEADERS` is imported from `bridge_spike.server` (never
 re-declared) so this test can never silently drift from the policy the
@@ -137,6 +141,36 @@ async def test_redirect_307_response_carries_the_exact_security_header_set() -> 
         response = await client.get("/some/path", allow_redirects=False)
         assert response.status == 307
         _assert_exact_security_headers(response.headers)
+
+
+async def test_unhandled_exception_response_carries_the_exact_security_header_set(caplog) -> None:
+    """A plain (non-HTTP) `Exception` raised inside a route handler is the
+    third, previously-untested branch of `_security_headers_guard`'s
+    try/except (`except Exception`, added in Story 1.5's own review-fix
+    pass). Proves it the same way as the HTTPException cases above: a real
+    request through the real middleware stack, against a route registered
+    on this test's own `BridgeServer` for exactly this purpose, whose
+    handler raises `RuntimeError` directly -- never `web.HTTPException`.
+    Without that except branch, aiohttp's own auto-generated 500 for an
+    unhandled error ships with none of `SECURITY_HEADERS`."""
+    bridge_server = _make_server()
+
+    async def _raise_plain_exception(request):
+        raise RuntimeError("boom: story-1.5-followup unhandled-exception probe")
+
+    bridge_server.app.router.add_get("/test-only/unhandled-exception", _raise_plain_exception)
+
+    async with TestClient(TestServer(bridge_server.app)) as client:
+        with caplog.at_level("WARNING", logger="bridge_spike.server"):
+            response = await client.get(
+                "/test-only/unhandled-exception", headers={"Host": f"{INSTALL_NAME}:{PORT}"}
+            )
+        assert response.status == 500
+        _assert_exact_security_headers(response.headers)
+
+    unhandled_logs = [record.message for record in caplog.records if "unhandled error" in record.message]
+    assert unhandled_logs, "expected the unhandled-exception branch to log a warning"
+    assert "boom: story-1.5-followup unhandled-exception probe" in unhandled_logs[0]
 
 
 async def test_sse_stream_wire_response_carries_the_exact_security_header_set() -> None:
