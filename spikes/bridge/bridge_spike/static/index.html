@@ -99,6 +99,21 @@
   </section>
 
   <section>
+    <h2>Push notifications</h2>
+    <p>Requires passkey sign-in above. Subscribes this device for Web Push (VAPID, encrypted, metadata-only payloads).</p>
+    <button id="enable-push-btn" type="button">Enable push notifications</button>
+    <div id="push-result"></div>
+  </section>
+
+  <section>
+    <h2>Microphone</h2>
+    <p>Grants microphone access and shows a live level meter of captured audio.</p>
+    <button id="start-mic-btn" type="button">Start microphone test</button>
+    <meter id="mic-meter" min="0" max="1" value="0" style="width: 100%; margin-top: 0.5rem;"></meter>
+    <div id="mic-result"></div>
+  </section>
+
+  <section>
     <h2>Checklist result</h2>
     <form id="checklist-form">
       <label for="device_class">Device class</label>
@@ -232,6 +247,42 @@
         pendingEl.appendChild(approveBtn);
       } catch (err) {
         pendingEl.textContent = `Error: ${err}`;
+      }
+    });
+
+    document.getElementById("enable-push-btn").addEventListener("click", async () => {
+      const resultEl = document.getElementById("push-result");
+      resultEl.textContent = "Requesting notification permission…";
+      try {
+        if ("Notification" in window && Notification.permission !== "granted") {
+          await Notification.requestPermission();
+        }
+        const result = await window.BridgePush.subscribe();
+        resultEl.textContent = result.ok
+          ? `Subscribed: ${result.endpoint}`
+          : `Failed at ${result.step}: ${result.status}`;
+        resultEl.className = result.ok ? "ok" : "error";
+      } catch (err) {
+        resultEl.textContent = `Error: ${err}`;
+        resultEl.className = "error";
+      }
+    });
+
+    document.getElementById("start-mic-btn").addEventListener("click", async () => {
+      const resultEl = document.getElementById("mic-result");
+      const meterEl = document.getElementById("mic-meter");
+      resultEl.textContent = "Requesting microphone access…";
+      try {
+        const result = await window.BridgeMic.captureLevel();
+        meterEl.value = result.level || 0;
+        const permission = await window.BridgeMic.permissionState();
+        resultEl.textContent = result.ok
+          ? `Captured audio — peak level ${(result.level * 100).toFixed(0)}%. Permission: ${permission}.`
+          : `Failed: ${result.error || "unknown error"}`;
+        resultEl.className = result.ok ? "ok" : "error";
+      } catch (err) {
+        resultEl.textContent = `Error: ${err}`;
+        resultEl.className = "error";
       }
     });
 

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bridge — away from home</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/icon-192.png" />
+<meta name="theme-color" content="#1b5e8f" />
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #0b1520; }
+  h1 { font-size: 1.3rem; }
+  .kind { text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.06em; color: #5b6b7a; }
+  .rendering { font-size: 1.1rem; margin: 0.5rem 0 1rem; }
+  .actions a { display: inline-block; margin-right: 1rem; }
+  .empty { color: #5b6b7a; }
+</style>
+</head>
+<body>
+  <h1>You're away from home</h1>
+  <p>
+    This device can't reach the Bridge right now, so here's the last cached
+    summary for this notification — no full content, just the metadata the
+    push itself carried.
+  </p>
+
+  <section id="summary">Loading…</section>
+
+  <section class="actions">
+    <p><strong>Open at home:</strong> reload this page once you're back on the
+    home network to see the full item.</p>
+    <p><a id="telegram-link" href="https://t.me/">Continue in Telegram</a></p>
+  </section>
+
+  <script>
+    (async () => {
+      const summaryEl = document.getElementById("summary");
+      const params = new URLSearchParams(location.search);
+      const itemId = params.get("item") || "";
+      try {
+        // Same cache name/key shape as bridge_spike/static/sw.js's
+        // PUSH_SUMMARY_CACHE / pushSummaryCacheKey() -- Cache Storage is
+        // shared per-origin, so this page can read what the service worker
+        // wrote without any message-passing.
+        const cache = await caches.open("bridge-spike-push-summaries-v1");
+        const match = await cache.match(`/__push-summary__/${encodeURIComponent(itemId)}`);
+        if (!match) {
+          summaryEl.innerHTML = '<p class="empty">No cached summary for this item yet.</p>';
+          return;
+        }
+        const metadata = await match.json();
+        summaryEl.innerHTML = "";
+        const kind = document.createElement("p");
+        kind.className = "kind";
+        kind.textContent = metadata.kind || "";
+        const rendering = document.createElement("p");
+        rendering.className = "rendering";
+        rendering.textContent = metadata.rendering || "";
+        summaryEl.appendChild(kind);
+        summaryEl.appendChild(rendering);
+        window.__bridgeOfflineSummaryMetadata = metadata; // check.py reads this via page.evaluate
+      } catch (err) {
+        summaryEl.innerHTML = `<p class="empty">Could not read the cached summary: ${err}</p>`;
+      }
+    })();
+  </script>
+</body>
+</html>

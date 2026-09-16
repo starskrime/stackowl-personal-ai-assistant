@@ -9,6 +9,9 @@
 #     "python-telegram-bot>=21.0,<23",
 #     "pyyaml>=6.0.0,<7",
 #     "keyring>=25.0.0,<26",
+#     "pywebpush>=2.5,<3",
+#     "http-ece>=1.2,<2",
+#     "requests>=2.34,<3",
 # ]
 # ///
 """Bridge TLS/mDNS spike kit entrypoint.
@@ -47,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bridge_spike import ca as ca_module  # noqa: E402
 from bridge_spike import mdns  # noqa: E402
+from bridge_spike import push as push_module  # noqa: E402
 from bridge_spike import setup_code as setup_code_module  # noqa: E402
 from bridge_spike import telegram_bot  # noqa: E402
 from bridge_spike.device_requests import DeviceRequest  # noqa: E402
@@ -162,7 +166,16 @@ async def _serve(install_name: str, port: int, *, renewing: bool) -> int:
     # Minted exactly once, here, at process start -- no route anywhere can
     # mint another (see bridge_spike/setup_code.py).
     setup_codes = setup_code_module.SetupCodeStore()
-    config = ServerConfig(install_name=install_name, port=port, ca_artifacts=artifacts, setup_codes=setup_codes)
+    # Same discipline as the CA above: one VAPID keypair per kit run, wired
+    # into the config before the server (and thus every route) exists.
+    vapid_private_key = push_module.generate_vapid_keypair()
+    config = ServerConfig(
+        install_name=install_name,
+        port=port,
+        ca_artifacts=artifacts,
+        setup_codes=setup_codes,
+        vapid_private_key=vapid_private_key,
+    )
     server = BridgeServer(config)
 
     try:
@@ -237,6 +250,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"Result written to: {result.result_path}")
     if result.passkey_result_path is not None:
         print(f"Passkey check result written to: {result.passkey_result_path}")
+    if result.push_mic_result_path is not None:
+        print(f"Push/mic check result written to: {result.push_mic_result_path}")
     if result.ok:
         print("PASS — all steps succeeded.")
         return 0

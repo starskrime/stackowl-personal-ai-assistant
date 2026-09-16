@@ -336,5 +336,171 @@
     getPendingDeviceRequest,
     approveDeviceRequest,
     whoAmI,
+    // Exposed so bridge_spike/check.py can sign in a device for its own
+    // push/mic checks using a server-minted ticket (mirroring
+    // tests/test_server_push_routes.py's _enroll_device() fixture) instead
+    // of spending the kit's one-time setup code or re-running a full
+    // WebAuthn ceremony already proven by the passkey check step.
+    completeDeviceEnrollment,
+  };
+
+  // -- push notifications (Story 1.3, AD-19) -------------------------------
+
+  async function getVapidPublicKey() {
+    const response = await fetch("/api/push/vapid-public-key");
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    const body = await response.json();
+    return { ok: true, key: body.key };
+  }
+
+  /** Posts an already-built subscription info object (the shape a real
+   * PushSubscription.toJSON() produces: {endpoint, keys:{p256dh,auth}}) to
+   * the signed subscribe route. Split out from subscribe() below so
+   * bridge_spike/check.py can drive the real server-side store/validate
+   * route with a subscription it built itself, pointed at the kit's own
+   * local push-service stand-in, without ever calling a real push relay's
+   * PushManager.subscribe() from the automated check. */
+  async function subscribeWithInfo(subscriptionInfo) {
+    const response = await signedFetch("POST", "/api/push/subscribe", {
+      endpoint: subscriptionInfo.endpoint,
+      keys: { p256dh: subscriptionInfo.keys.p256dh, auth: subscriptionInfo.keys.auth },
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    return { ok: true };
+  }
+
+  async function unsubscribeWithInfo(endpoint) {
+    const response = await signedFetch("POST", "/api/push/unsubscribe", { endpoint });
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    return { ok: true, ...(await response.json()) };
+  }
+
+  /** The real production path: a real PushManager.subscribe() against the
+   * kit's own VAPID public key, then stored via subscribeWithInfo() above.
+   * Real device runs (Story 1.6) use this; the automated check does not,
+   * to avoid ever contacting a real push relay from a build-host run. */
+  async function subscribe() {
+    const keyResult = await getVapidPublicKey();
+    if (!keyResult.ok) {
+      return { ok: false, step: "vapid-key", status: keyResult.status };
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64urlToBuf(keyResult.key),
+    });
+    const subscriptionJson = subscription.toJSON();
+    const stored = await subscribeWithInfo(subscriptionJson);
+    if (!stored.ok) {
+      return { ok: false, step: "store", status: stored.status };
+    }
+    return { ok: true, endpoint: subscriptionJson.endpoint };
+  }
+
+  /** Test-only seam (bridge_spike/check.py): asks the active service worker
+   * to run its real notificationclick handler on a fabricated notification
+   * `data` object, since no automation surface can simulate a real OS
+   * notification click -- see sw.js's "message" listener docstring. */
+  async function simulateNotificationClick(metadata, timeoutMs = 5000) {
+    const registration = await navigator.serviceWorker.ready;
+    if (!registration.active) {
+      return { ok: false, error: "no active service worker" };
+    }
+    const TIMEOUT = Symbol("timeout");
+    const result = await new Promise((resolve) => {
+      let settled = false;
+      function onMessage(event) {
+        if (event.data && event.data.type === "bridge-spike-test-notification-click-result") {
+          settled = true;
+          navigator.serviceWorker.removeEventListener("message", onMessage);
+          resolve(event.data.result);
+        }
+      }
+      navigator.serviceWorker.addEventListener("message", onMessage);
+      registration.active.postMessage({ type: "bridge-spike-test-notification-click", metadata });
+      // A future service-worker regression that stops replying must not
+      // hang this call forever -- resolve with a distinguishable timeout
+      // sentinel instead.
+      setTimeout(() => {
+        if (settled) return;
+        navigator.serviceWorker.removeEventListener("message", onMessage);
+        resolve(TIMEOUT);
+      }, timeoutMs);
+    });
+    if (result === TIMEOUT) {
+      return { ok: false, error: "timeout" };
+    }
+    return { ok: true, result };
+  }
+
+  window.BridgePush = {
+    getVapidPublicKey,
+    subscribe,
+    subscribeWithInfo,
+    unsubscribeWithInfo,
+    simulateNotificationClick,
+  };
+
+  // -- microphone (Story 1.3, NFR29 scope: capture + level meter) ---------
+
+  /** Captures live microphone audio for `durationMs`, reporting a 0..1 peak
+   * level via a Web Audio AnalyserNode -- exposed for both the on-page level
+   * meter (below) and bridge_spike/check.py's automated proof that captured
+   * audio is non-silent. Always stops every track before returning/throwing,
+   * so a failed or check-driven capture never leaves the mic indicator lit. */
+  async function captureLevel(durationMs = 500) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      // A new AudioContext starts "suspended" under most browsers' autoplay
+      // policy until a user gesture resumes it -- resume() is safe to call
+      // even when already running, and without it captureLevel would
+      // silently read all-zero samples on a page that opened this without a
+      // click (e.g. bridge_spike/check.py's automated capture).
+      await audioContext.resume();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      let peak = 0;
+      const start = performance.now();
+      while (performance.now() - start < durationMs) {
+        analyser.getByteTimeDomainData(data);
+        for (const sample of data) {
+          peak = Math.max(peak, Math.abs(sample - 128) / 128);
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await audioContext.close();
+      return { ok: true, level: peak };
+    } finally {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+  }
+
+  async function permissionState() {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      return "unknown";
+    }
+    try {
+      const status = await navigator.permissions.query({ name: "microphone" });
+      return status.state;
+    } catch (err) {
+      console.warn("bridge-spike app: navigator.permissions.query failed", err);
+      return "unknown";
+    }
+  }
+
+  window.BridgeMic = {
+    captureLevel,
+    permissionState,
   };
 })();

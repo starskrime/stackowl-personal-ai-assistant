@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import gc
+import ipaddress
 from dataclasses import dataclass
 
 from cryptography import x509
@@ -83,10 +84,13 @@ def _sign_leaf_cert(
     ca_cert: x509.Certificate,
     leaf_key: ec.EllipticCurvePrivateKey,
     install_name: str,
+    ip_sans: list[ipaddress.IPv4Address | ipaddress.IPv6Address] | None = None,
 ) -> x509.Certificate:
     not_before = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)
     not_after = not_before + datetime.timedelta(days=LEAF_VALIDITY_DAYS)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, install_name)])
+    san_entries: list[x509.GeneralName] = [x509.DNSName(install_name)]
+    san_entries.extend(x509.IPAddress(ip) for ip in ip_sans or [])
     builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -95,7 +99,7 @@ def _sign_leaf_cert(
         .serial_number(x509.random_serial_number())
         .not_valid_before(not_before)
         .not_valid_after(not_after)
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(install_name)]), critical=False)
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -129,17 +133,26 @@ def _key_pem(key: ec.EllipticCurvePrivateKey) -> bytes:
     )
 
 
-def setup(install_name: str) -> CAArtifacts:
+def setup(
+    install_name: str, *, ip_sans: list[ipaddress.IPv4Address | ipaddress.IPv6Address] | None = None
+) -> CAArtifacts:
     """Generate a fresh ephemeral CA, sign one leaf cert, then drop the CA key.
 
     The CA private key exists only in this function's local scope. It is
     explicitly `del`eted and the interpreter is asked to collect it before
     this function returns, so no caller can ever observe or persist it.
+
+    `ip_sans` is additive and optional (default: none, identical to every
+    existing caller's behavior) -- it exists only for `push_stub.py`'s local
+    push-service stand-in (Story 1.3), which is dialed by IP literal
+    (`127.0.0.1`) rather than by `.local` host name, so its leaf cert needs
+    an `iPAddress` SAN entry alongside the usual DNS name for TLS
+    verification to succeed against that literal.
     """
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_cert = _build_ca_cert(ca_key, install_name)
     leaf_key = ec.generate_private_key(ec.SECP256R1())
-    leaf_cert = _sign_leaf_cert(ca_key, ca_cert, leaf_key, install_name)
+    leaf_cert = _sign_leaf_cert(ca_key, ca_cert, leaf_key, install_name, ip_sans)
 
     artifacts = CAArtifacts(
         install_name=install_name,

@@ -23,3 +23,11 @@ location: spikes/bridge/bridge_spike/mdns.py:50-58 (build_command, Darwin branch
 source_spec: `spec-1-1-trust-the-bridge-s-own-certificate-on-your-phone-at-home.md`
 reason: spikes/bridge/bridge_spike/mdns.py's own docstring for the Darwin branch already discloses "Not verified on real macOS hardware -- based on dns-sd's documented -P proxy-record option; Story 1.6 covers real-device verification." tests/test_mdns.py only asserts the argv shape (test_build_command_darwin_uses_proxy_record_mode), never runs dns-sd. What would settle it: run the kit on real macOS hardware and confirm `dns-sd -P ...` makes `<install-name>.local` resolve, e.g. via `dscacheutil -q host -a name <name>.local` or `ping <name>.local`.
 status: open
+
+### DW-3: AD-19 says a push-subscription row "is deleted on revocation," but no device-revocation/unenroll route exists anywhere in the kit.
+origin: spec-deferred e263d975f876
+location: spikes/bridge/bridge_spike/server.py, spikes/bridge/bridge_spike/push.py
+source_spec: `spec-1-3-push-microphone-and-the-away-from-home-summary-on-your-devices.md`
+severity: low
+reason: Confirmed by reading server.py's full route list: no revoke/unenroll endpoint exists for any resource type (passkey device, bearer token, or push subscription). This is a pre-existing gap in the device/token lifecycle dating back to Story 1.2 (which introduced signed-in devices but never a revoke path), not something Story 1.3 introduced or worsened, and it is outside this story's captured intent (the epics.md AC list for Story 1.3 never asks for revocation).
+status: open

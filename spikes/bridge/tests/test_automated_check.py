@@ -47,6 +47,23 @@ async def test_automated_check_passes_against_chromium(monkeypatch, tmp_path) ->
     assert result.steps["matching_code_shown_on_both"] is True
     assert result.steps["matching_code_approval"] is True
 
+    # Story 1.3: push (VAPID key shape, endpoint refusal, real
+    # encrypted+signed delivery to the local stand-in, SW cache scoping,
+    # notificationclick on/off the home network) and microphone.
+    assert result.steps["push_mic_device_signed_in"] is True
+    assert result.steps["vapid_public_key_available"] is True
+    assert result.steps["push_endpoint_refusals"] is True
+    assert result.steps["push_subscribe_to_local_stand_in"] is True
+    assert result.steps["push_delivered_encrypted_and_signed"] is True
+    assert result.steps["push_payload_decrypts_to_metadata_only"] is True
+    assert result.steps["push_delivered_to_service_worker"] is True
+    assert result.steps["cache_holds_metadata_only"] is True
+    assert result.steps["notificationclick_away_from_home"] is True
+    assert result.steps["notificationclick_on_home_network"] is True
+    assert result.steps["offline_summary_page_renders_cached_metadata"] is True
+    assert result.steps["mic_capture_produces_a_nonzero_level"] is True
+    assert result.steps["mic_permission_persists_after_close_and_reopen"] is True
+
     assert result.result_path.exists()
     written = json.loads(result.result_path.read_text())
     assert written["kit_version"] == check_module.KIT_VERSION
@@ -61,6 +78,13 @@ async def test_automated_check_passes_against_chromium(monkeypatch, tmp_path) ->
     assert passkey_written["kit_version"] == check_module.KIT_VERSION
     assert passkey_written["check"] == "passkey-desktop-chrome-automated"
     assert passkey_written["ok"] is True
+
+    assert result.push_mic_result_path is not None
+    assert result.push_mic_result_path.exists()
+    push_mic_written = json.loads(result.push_mic_result_path.read_text())
+    assert push_mic_written["kit_version"] == check_module.KIT_VERSION
+    assert push_mic_written["check"] == "push-mic-desktop-chrome-automated"
+    assert push_mic_written["ok"] is True
 
 
 async def test_certificate_chain_check_fails_for_a_leaf_not_signed_by_the_pinned_ca() -> None:

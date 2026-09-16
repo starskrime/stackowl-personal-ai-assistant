@@ -17,6 +17,7 @@ Design notes on the two "Never" guards this module enforces:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import ipaddress
@@ -33,9 +34,11 @@ from pathlib import Path
 
 from aiohttp import web
 from aiohttp.typedefs import Handler
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from . import ca as ca_module
 from . import device_requests as device_requests_module
+from . import push as push_module
 from . import setup_code as setup_code_module
 from . import tokens as tokens_module
 from . import webauthn_flow as webauthn_flow_module
@@ -52,6 +55,7 @@ _STATIC_FILES = {
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
     "/sw.js": ("sw.js", "application/javascript"),
     "/app.js": ("app.js", "application/javascript"),
+    "/offline-summary.html": ("offline-summary.html", "text/html"),
     "/icon-192.png": ("icon-192.png", "image/png"),
     "/icon-512.png": ("icon-512.png", "image/png"),
 }
@@ -180,6 +184,10 @@ class ServerConfig:
     ca_artifacts: ca_module.CAArtifacts
     host: str = "0.0.0.0"  # nosec: IPv4-only bind, all local IPv4 interfaces.
     setup_codes: setup_code_module.SetupCodeStore = field(default_factory=setup_code_module.SetupCodeStore)
+    # Generated once per kit run (kit.py's _serve()), mirroring setup_codes'
+    # own "minted exactly once, at process start" discipline -- every device
+    # this run ever serves subscribes against the SAME VAPID key.
+    vapid_private_key: ec.EllipticCurvePrivateKey = field(default_factory=push_module.generate_vapid_keypair)
 
 
 class BridgeServer:
@@ -203,6 +211,7 @@ class BridgeServer:
         self.nonces = tokens_module.NonceStore()
         self.enrollment_tickets = tokens_module.EnrollmentTicketStore()
         self.device_requests = device_requests_module.DeviceRequestStore()
+        self.push_subscriptions = push_module.PushSubscriptionStore()
         # Set by kit.py when a test Telegram bot is configured, so a new
         # device-approval request also gets pushed there -- BridgeServer
         # itself stays ignorant of Telegram entirely.
@@ -226,6 +235,9 @@ class BridgeServer:
         self.app.router.add_get("/api/device-requests/pending", self._handle_get_pending_device_request)
         self.app.router.add_post("/api/device-requests/approve", self._handle_approve_device_request)
         self.app.router.add_get("/api/device-requests/{request_id}", self._handle_get_device_request_status)
+        self.app.router.add_get("/api/push/vapid-public-key", self._handle_push_vapid_public_key)
+        self.app.router.add_post("/api/push/subscribe", self._handle_push_subscribe)
+        self.app.router.add_post("/api/push/unsubscribe", self._handle_push_unsubscribe)
         for path, (filename, content_type) in _STATIC_FILES.items():
             self.app.router.add_get(path, self._make_static_handler(filename, content_type))
 
@@ -484,6 +496,47 @@ class BridgeServer:
         if found.approved:
             body["enrollment_ticket"] = found.enrollment_ticket
         return web.json_response(body)
+
+    # -- push subscribe/unsubscribe routes (Story 1.3, AD-19, FR26, NFR29) --
+    #
+    # Both mutating routes are behind `_require_signed_request` -- an already
+    # signed-in device only, same as every other authenticated route. The
+    # public key route is unauthenticated on purpose: a browser needs it
+    # BEFORE it can call `PushManager.subscribe`, i.e. before there is any
+    # device key/token to sign a request with at all.
+
+    async def _handle_push_vapid_public_key(self, request: web.Request) -> web.Response:
+        del request
+        return web.json_response({"key": push_module.vapid_public_key_b64url(self.config.vapid_private_key)})
+
+    async def _handle_push_subscribe(self, request: web.Request) -> web.Response:
+        device = await self._require_signed_request(request)
+        payload = await self._json_body(request)
+        endpoint = str(payload.get("endpoint") or "")
+        keys = payload.get("keys") if isinstance(payload.get("keys"), dict) else {}
+        p256dh = str(keys.get("p256dh") or "")
+        auth = str(keys.get("auth") or "")
+        if not p256dh or not auth:
+            raise web.HTTPBadRequest(text="body must include keys.p256dh and keys.auth")
+        # Validate BEFORE storing (the same ordering _handle_device_register_key
+        # already established): a refused endpoint must never reach the store,
+        # or a malformed/SSRF-aimed subscription would sit there until the
+        # next send attempt discovers it.
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, push_module.validate_endpoint, endpoint)
+        except push_module.EndpointRefused as exc:
+            logger.warning("bridge_spike.server: push subscribe refused — %s", exc)
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        self.push_subscriptions.add(device.device_id, endpoint, p256dh, auth)
+        return web.json_response({"ok": True})
+
+    async def _handle_push_unsubscribe(self, request: web.Request) -> web.Response:
+        device = await self._require_signed_request(request)
+        payload = await self._json_body(request)
+        endpoint = str(payload.get("endpoint") or "")
+        removed = self.push_subscriptions.remove(device.device_id, endpoint)
+        return web.json_response({"ok": True, "removed": removed})
 
     # -- lifecycle ---------------------------------------------------------
 
