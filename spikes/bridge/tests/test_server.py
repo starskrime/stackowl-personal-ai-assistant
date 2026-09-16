@@ -252,4 +252,12 @@ async def test_index_page_registers_the_manifest_and_service_worker() -> None:
         response = await client.get("/", headers={"Host": f"{INSTALL_NAME}:{PORT}"})
         text = await response.text()
         assert 'rel="manifest" href="/manifest.webmanifest"' in text
-        assert 'navigator.serviceWorker.register("/sw.js")' in text
+        # Story 1.5 (AD-36): the service-worker registration call moved from
+        # an inline <script> into the external index-bootstrap.js (the
+        # enforced `script-src 'self'` has no 'unsafe-inline') -- the page
+        # itself only needs to reference that file.
+        assert '<script src="/index-bootstrap.js"></script>' in text
+
+        bootstrap_response = await client.get("/index-bootstrap.js", headers={"Host": f"{INSTALL_NAME}:{PORT}"})
+        bootstrap_text = await bootstrap_response.text()
+        assert "navigator.serviceWorker.register(swScriptUrl)" in bootstrap_text

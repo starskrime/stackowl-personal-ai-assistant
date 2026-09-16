@@ -57,7 +57,16 @@ client keeps advancing (proving the replayer/fan-out never blocks) — plus
 connect time, resume-replay time and this process's own memory as P50/P95
 across repeated samples, writing
 `results/B2-carrier-desktop-chrome-automated.json`. Real-device WebTransport
-interop (Safari, cellular, Jetson-class memory) is Story 1.6's job.
+interop (Safari, cellular, Jetson-class memory) is Story 1.6's job. Story 1.5
+extends it once more with the committed `frontend/build/` Svelte/Three.js
+build served at `/csp-check/`: the exact AD-36 header set (asserted on
+success **and** error responses alike), the owl mark rendered as a DOM
+`<img>` and inside a `WebGPURenderer` scene that auto-falls back to WebGL2 on
+default headless Chromium, the kit's one named Trusted Types policy created
+exactly once and genuinely exercised, zero real `securitypolicyviolation`
+events, and a self-test proving that violation detector isn't vacuous,
+writing `results/B5-desktop-chrome-automated.json`. Real-device browser runs
+across every B1 browser class are Story 1.6's job.
 
 ## Layout
 
@@ -71,6 +80,13 @@ interop (Safari, cellular, Jetson-class memory) is Story 1.6's job.
 - `bridge_spike/server.py` — the one HTTPS listener: IPv4-only, subnet
   allowlist, redirect-first middleware, the static PWA, the checklist
   results endpoint, and the passkey/device-key/device-approval routes.
+  `SECURITY_HEADERS` (AD-36, verbatim) is stamped on **every** response by
+  the outermost `_security_headers_guard` middleware, including error
+  responses raised as `web.HTTPException` deeper in the stack (the subnet
+  guard's 403, the redirect guard's 307); `check.py` imports the same
+  constant rather than re-declaring it, so the enforced and asserted
+  policies can never drift apart. Also mounts the committed
+  `frontend/build/` output at `/csp-check/` (Story 1.5).
 - `bridge_spike/setup_code.py` — the one-time setup code minted at kit start
   (Story 1.2); no route can mint another.
 - `bridge_spike/webauthn_flow.py` — py_webauthn passkey registration/
@@ -111,8 +127,33 @@ interop (Safari, cellular, Jetson-class memory) is Story 1.6's job.
   to pull from — see the story's own spec Design Notes.
 - `bridge_spike/check.py` — the automated Chromium check shared by
   `kit.py check` and `tests/test_automated_check.py`.
+- `frontend/` — a standalone, pinned-stack (Svelte 5.57.0, `three` 0.186.0,
+  Vite 8.3.0, TypeScript 6.0.3/svelte-check 4.7.6, Node ≥22.12.0)
+  Vite+Svelte+TypeScript project proving the Bridge's real front-end stack
+  (AD-20) holds under AD-36's strict CSP/Trusted Types policy (Story 1.5).
+  Its own `package.json`/`package-lock.json` pin every version exactly and
+  never enter the platform's `pyproject.toml`/`uv.lock`, mirroring this
+  kit's own PEP 723 isolation. `src/App.svelte` renders the AD-40 owl mark
+  (`logo/stackowl-mark.svg`, never hand-redrawn) both as a DOM `<img>` and,
+  via `src/scene.ts`, inside a `three/webgpu` `WebGPURenderer` scene
+  (`SVGLoader` fetches the same SVG file at runtime) that auto-falls back to
+  WebGL2. `src/trusted-types-policy.ts` registers the kit's one named
+  Trusted Types policy, genuinely exercised by the renderer-backend status
+  label and by patching `SVGLoader`'s own `DOMParser.parseFromString` call.
+  `npm run build` outputs to `build/` (never `dist/` — root `.gitignore`
+  ignores that repo-wide), which **is committed** so a fresh clone needs
+  neither Node nor a network to serve it; `npm run lint` runs
+  `scripts/verify-lint.mjs`, which fails on `{@html}`/`.innerHTML =`/
+  `.insertAdjacentHTML(` both in the real `src/` (zero errors required) and
+  against the three `fixtures/` files (each MUST fail, proving the ban still
+  fires); `npm run check` runs `svelte-check`. A scoped
+  `frontend/.gitignore` ignores only `node_modules/`.
 - `bridge_spike/static/` — the PWA (`index.html`, `app.js`,
-  `manifest.webmanifest`, `sw.js`, `offline-summary.html`, icons). `app.js`
+  `manifest.webmanifest`, `sw.js`, `offline-summary.html`, icons). Styling
+  and scripting are entirely external (`styles.css`, `index-bootstrap.js`,
+  `offline-summary.js`) — the enforced `style-src`/`script-src 'self'` has
+  no `unsafe-inline` — and no page uses `innerHTML`/`insertAdjacentHTML`
+  (Story 1.5). `app.js`
   exposes its passkey/device-key/device-approval, push
   (`window.BridgePush`), microphone (`window.BridgeMic`), and live-stream
   (`window.BridgeStream`) functions so `check.py` can drive them directly
@@ -129,7 +170,8 @@ interop (Safari, cellular, Jetson-class memory) is Story 1.6's job.
   notification click.
 - `tests/` — see the test file per module above, plus `test_ca.py`,
   `test_server.py`, `test_server_auth_routes.py`, `test_server_push_routes.py`,
-  `test_server_stream_routes.py`, `test_stream.py`, `test_webtransport_cert.py`,
+  `test_server_stream_routes.py`, `test_server_security_headers.py`,
+  `test_stream.py`, `test_webtransport_cert.py`,
   `test_webtransport_server.py`,
   `test_push.py`, `test_push_stub.py`, `test_automated_check.py`,
   `test_mdns.py`, `test_kit_cli_output.py`.
@@ -160,8 +202,14 @@ uv run --with cryptography --with aiohttp --with webauthn --with python-telegram
 
 # The full automated done-check, including the Playwright/Chromium test,
 # the CDP virtual-authenticator passkey/device-approval ceremonies, the
-# push/microphone proofs, and the WebTransport/SSE live-stream proofs:
+# push/microphone proofs, the WebTransport/SSE live-stream proofs, and the
+# CSP/Trusted-Types/frontend-build proofs:
 uv run spikes/bridge/kit.py check
+
+# The frontend/ project's own checks (Story 1.5) — lint fails on a
+# forbidden-pattern fixture and passes on real source, svelte-check
+# type-checks, and the build must match the committed build/ with no drift:
+cd spikes/bridge/frontend && npm ci && npm run lint && npm run check && npm run build
 ```
 
 ## Never
@@ -185,3 +233,13 @@ uv run spikes/bridge/kit.py check
   entirely against the kit's own aioquic listener on `127.0.0.1` through a
   real headless Chromium; every other multi-device/network interop run is
   Story 1.6's job (`awaiting-operator`).
+- Relax, shrink, or make conditional any part of `SECURITY_HEADERS` (AD-36)
+  to get a page working — fix the offending markup/script instead. Story
+  1.5's own gate (B5) is explicit: the failing construct is removed from the
+  build; the policy itself is never the thing that gives.
+- Add a real-device (non-Chromium, non-build-host) browser run for Story
+  1.5 — that is Story 1.6's job.
+- Enter `frontend/`'s dependencies into the platform's own
+  `pyproject.toml`/`uv.lock`, or build/fetch `frontend/build/` at kit-run
+  time — the committed output must serve from a fresh clone with neither
+  Node nor a network.

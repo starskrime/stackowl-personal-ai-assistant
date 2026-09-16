@@ -64,6 +64,18 @@ async def test_automated_check_passes_against_chromium(monkeypatch, tmp_path) ->
     assert result.steps["mic_capture_produces_a_nonzero_level"] is True
     assert result.steps["mic_permission_persists_after_close_and_reopen"] is True
 
+    # Story 1.5: exact header set, owl mark rendered (DOM + Three.js scene),
+    # WebGPU-unavailable -> WebGL2 fallback, the one Trusted Types policy
+    # created exactly once, zero real securitypolicyviolation events, and
+    # the self-test proving that detector isn't vacuous.
+    assert result.steps["csp_header_set_exact"] is True
+    assert result.steps["owl_mark_rendered_in_dom"] is True
+    assert result.steps["webgl2_fallback_backend"] is True
+    assert result.steps["trusted_types_policy_created_exactly_once"] is True
+    assert result.steps["trusted_types_policy_genuinely_used"] is True
+    assert result.steps["zero_csp_violations_on_real_page"] is True
+    assert result.steps["csp_violation_detector_self_test"] is True
+
     assert result.result_path.exists()
     written = json.loads(result.result_path.read_text())
     assert written["kit_version"] == check_module.KIT_VERSION
@@ -85,6 +97,13 @@ async def test_automated_check_passes_against_chromium(monkeypatch, tmp_path) ->
     assert push_mic_written["kit_version"] == check_module.KIT_VERSION
     assert push_mic_written["check"] == "push-mic-desktop-chrome-automated"
     assert push_mic_written["ok"] is True
+
+    assert result.csp_result_path is not None
+    assert result.csp_result_path.exists()
+    csp_written = json.loads(result.csp_result_path.read_text())
+    assert csp_written["kit_version"] == check_module.KIT_VERSION
+    assert csp_written["check"] == "csp-frontend-desktop-chrome-automated"
+    assert csp_written["ok"] is True
 
 
 async def test_certificate_chain_check_fails_for_a_leaf_not_signed_by_the_pinned_ca() -> None:

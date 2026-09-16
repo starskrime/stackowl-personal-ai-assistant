@@ -49,14 +49,50 @@ logger = logging.getLogger("bridge_spike.server")
 
 STATIC_DIR = Path(__file__).parent / "static"
 RESULTS_DIR = Path(__file__).parent.parent / "results"
+# Story 1.5 (AD-36, AD-40): the committed Vite/Svelte/Three.js build output --
+# never built or fetched at kit-run time, so a fresh clone needs neither Node
+# nor a network to serve it (see frontend/README notes in the kit's own
+# README.md).
+FRONTEND_BUILD_DIR = Path(__file__).parent.parent / "frontend" / "build"
 DEVICE_CLASS_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 DEVICE_NAME_RE = re.compile(r"^[\w .,'-]{1,64}$", re.UNICODE)
 KIT_VERSION = "0.1.0"
+
+# Story 1.5 / AD-36, verbatim from ARCHITECTURE-SPINE.md. Defined ONCE here
+# and imported by check.py rather than re-declared, so the enforced policy
+# and the asserted one can never drift apart. Never relax, shrink, or make
+# any part of this conditional to get a page working (the AC's own explicit
+# non-negotiable) -- fix the offending markup/script instead.
+_CSP = (
+    "default-src 'none'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "media-src 'self' blob:; "
+    "worker-src 'self'; "
+    "manifest-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'; "
+    "form-action 'none'; "
+    "require-trusted-types-for 'script'"
+)
+SECURITY_HEADERS: dict[str, str] = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy": "microphone=(self)",
+}
 
 _STATIC_FILES = {
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
     "/sw.js": ("sw.js", "application/javascript"),
     "/app.js": ("app.js", "application/javascript"),
+    "/styles.css": ("styles.css", "text/css"),
+    "/index-bootstrap.js": ("index-bootstrap.js", "application/javascript"),
+    "/offline-summary.js": ("offline-summary.js", "application/javascript"),
     "/offline-summary.html": ("offline-summary.html", "text/html"),
     "/icon-192.png": ("icon-192.png", "image/png"),
     "/icon-512.png": ("icon-512.png", "image/png"),
@@ -229,11 +265,21 @@ class BridgeServer:
         self.on_device_request_created: (
             Callable[[device_requests_module.DeviceRequest], Awaitable[None]] | None
         ) = None
-        self.app = web.Application(middlewares=[self._subnet_guard, self._redirect_guard])
+        self.app = web.Application(
+            middlewares=[self._security_headers_guard, self._subnet_guard, self._redirect_guard]
+        )
         self._install_routes()
 
     def _install_routes(self) -> None:
         self.app.router.add_get("/", self._handle_index)
+        # aiohttp's static resource returns 403 for a bare directory-root
+        # request (no filename) unless `show_index=True`, which would list
+        # the directory instead of serving the SPA's own index.html -- an
+        # explicit route for the exact "/csp-check/" path is needed ahead of
+        # the static mount below, which then covers every other path under
+        # it (the built JS/CSS/SVG assets).
+        self.app.router.add_get("/csp-check/", self._handle_csp_check_index)
+        self.app.router.add_static("/csp-check/", FRONTEND_BUILD_DIR)
         self.app.router.add_post("/api/results", self._handle_submit_result)
         self.app.router.add_get("/api/auth/nonce", self._handle_nonce)
         self.app.router.add_post("/api/webauthn/register/options", self._handle_webauthn_register_options)
@@ -267,6 +313,35 @@ class BridgeServer:
         return str(peername[0])
 
     @web.middleware
+    async def _security_headers_guard(self, request: web.Request, handler: Handler) -> web.StreamResponse:
+        """Stamps the exact AD-36 header set on every response this kit ever
+        sends -- success or error alike (Story 1.5). Prepended ahead of
+        every other middleware (see `__init__`) so it is the OUTERMOST one:
+        raising `web.HTTPException` -- aiohttp's own response path for a
+        4xx/3xx from a deeper middleware or route handler, e.g. the subnet
+        guard's 403 or the redirect guard's 307 -- still passes back through
+        this function, which must set headers directly on the exception
+        object (an `HTTPException` IS a `web.Response`) before re-raising it,
+        or those responses would carry no security headers at all. A plain
+        (non-HTTP) `Exception` is also caught: left alone, aiohttp's own
+        auto-generated 500 ships with none of `SECURITY_HEADERS` either, which
+        the same "success or error alike" bar in this docstring forbids.
+        """
+        logger.debug("bridge_spike.server: _security_headers_guard handling %s %s", request.method, request.path)
+        try:
+            response = await handler(request)
+        except web.HTTPException as exc:
+            exc.headers.update(SECURITY_HEADERS)
+            raise
+        except Exception as exc:
+            logger.warning("bridge_spike.server: unhandled error for %s %s: %s", request.method, request.path, exc)
+            error = web.HTTPInternalServerError()
+            error.headers.update(SECURITY_HEADERS)
+            raise error from exc
+        response.headers.update(SECURITY_HEADERS)
+        return response
+
+    @web.middleware
     async def _subnet_guard(self, request: web.Request, handler: Handler) -> web.StreamResponse:
         peer_ip = self._peer_ip(request)
         if not is_source_allowed(peer_ip, networks=self._local_networks):
@@ -291,6 +366,15 @@ class BridgeServer:
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         return web.Response(text=(STATIC_DIR / "index.html").read_text(), content_type="text/html")
+
+    async def _handle_csp_check_index(self, request: web.Request) -> web.Response:
+        """The Story 1.5 Svelte/Three.js build's own `index.html`, for the
+        bare `/csp-check/` directory root -- everything else under that
+        prefix (built JS/CSS/SVG assets) is covered by the `add_static`
+        mount installed right after this route."""
+        del request
+        logger.debug("bridge_spike.server: serving /csp-check/ frontend build index")
+        return web.Response(text=(FRONTEND_BUILD_DIR / "index.html").read_text(), content_type="text/html")
 
     def _make_static_handler(self, filename: str, content_type: str) -> Handler:
         path = STATIC_DIR / filename
@@ -591,6 +675,13 @@ class BridgeServer:
             status=200,
             headers={"Content-Type": "text/event-stream", "Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
+        # `_security_headers_guard`'s post-handler `response.headers.update(...)`
+        # runs too late for a StreamResponse: headers are written to the wire
+        # by `prepare()` below, before control ever returns to that
+        # middleware. Set them here so the SSE fallback carrier's real wire
+        # response -- not just its in-memory headers dict -- carries the
+        # exact AD-36 set (Story 1.5).
+        response.headers.update(SECURITY_HEADERS)
         await response.prepare(request)
         generator = stream_module.stream_for_client(self.stream_hub, last_cursor)
         try:

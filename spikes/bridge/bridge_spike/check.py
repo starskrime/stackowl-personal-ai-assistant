@@ -66,7 +66,7 @@ from . import push_stub as push_stub_module
 from . import stream as stream_module
 from . import webtransport_cert as webtransport_cert_module
 from . import webtransport_server as webtransport_server_module
-from .server import KIT_VERSION, RESULTS_DIR, BridgeServer, ServerConfig
+from .server import KIT_VERSION, RESULTS_DIR, SECURITY_HEADERS, BridgeServer, ServerConfig
 
 DEFAULT_CHECK_INSTALL_NAME = "bridge-spike-check.local"
 
@@ -80,6 +80,7 @@ class CheckResult:
     passkey_result_path: Path | None = None
     push_mic_result_path: Path | None = None
     stream_result_path: Path | None = None
+    csp_result_path: Path | None = None
 
 
 def _spki_pin(cert_pem: bytes) -> str:
@@ -1067,13 +1068,260 @@ async def _check_webtransport_and_sse(
     )
 
 
+# -- Story 1.5: the strict CSP/Trusted Types policy holds on every browser --
+#
+# Everything below is driven against the kit's real global security-headers
+# middleware and the real committed frontend/build/ output at /csp-check/ --
+# never a second reimplementation of either. SECURITY_HEADERS is imported
+# from .server (never re-declared here) so the enforced policy and the
+# asserted one can never drift apart.
+
+FRONTEND_SRC_DIR = Path(__file__).parent.parent / "frontend" / "src"
+
+
+def _count_trusted_types_create_policy_calls(src_dir: Path) -> int:
+    """Counts `.createPolicy(` occurrences across this kit's OWN front-end
+    source (`.ts`/`.svelte` files under `frontend/src/` -- never
+    `node_modules/`, never the built bundle). NFR22 ("exactly one named
+    Trusted Types policy exists across the kit's front-end code") is scoped
+    to code this kit wrote, not to every `trustedTypes.createPolicy` call
+    any dependency's own runtime might make internally -- see
+    _check_csp_and_frontend_build's docstring.
+
+    `//` line comments are stripped before counting, via `_strip_line_comment`
+    (string-literal-aware, so a `//` inside a `'`/`"`/`` ` `` string is never
+    mistaken for a comment start) -- so a comment that merely MENTIONS
+    `.createPolicy(` -- e.g. explaining this exact rule -- can never be
+    miscounted as a second call site, and a real second call site after a
+    `//`-containing string literal on the same line is never undercounted.
+    """
+    count = 0
+    for path in sorted(src_dir.rglob("*")):
+        if path.suffix not in {".ts", ".svelte"}:
+            continue
+        for line in path.read_text().splitlines():
+            count += _strip_line_comment(line).count(".createPolicy(")
+    return count
+
+
+def _strip_line_comment(line: str) -> str:
+    """Returns `line` with any trailing `//` line comment removed -- but,
+    unlike a naive `line.split("//", 1)[0]`, tracks whether the scan
+    position is inside a `'`/`"`/`` ` `` string literal first, so a `//`
+    that is merely PART OF a string (e.g. an `"https://..."` substring
+    preceding a real second `.createPolicy(` call later on the same line)
+    is never mistaken for a comment start -- which would truncate the line
+    before that real call site and undercount it.
+    """
+    in_string: str | None = None
+    i = 0
+    length = len(line)
+    while i < length:
+        ch = line[i]
+        if in_string is not None:
+            if ch == "\\":
+                i += 2  # skip the escaped character too -- e.g. an escaped quote
+                continue
+            if ch == in_string:
+                in_string = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            in_string = ch
+            i += 1
+            continue
+        if ch == "/" and i + 1 < length and line[i + 1] == "/":
+            return line[:i]
+        i += 1
+    return line
+
+
+async def _check_csp_and_frontend_build(
+    install_name: str,
+    port: int,
+    spki_pin: str,
+    steps: dict[str, bool],
+    detail: dict[str, str],
+) -> None:
+    """Proves Story 1.5's AC end to end through real Chromium: the exact
+    AD-36 header set on `/csp-check/`, the owl mark rendered both as a DOM
+    `<img>` and inside the Three.js scene, the WebGPU-unavailable-on-
+    headless-Chromium fallback to WebGL2, that the kit's one named Trusted
+    Types policy is actually created exactly once (proving it is real code,
+    not zero -- dead/never-registered -- and not more than one, NFR22), zero
+    `securitypolicyviolation` events on a real page load, and a self-test
+    proving that violation detector is not vacuous (a deliberate raw-string
+    assignment to a dynamically created `<script>` element's `.textContent`,
+    in a disposable context -- a genuine Trusted-Types-gated sink that
+    `require-trusted-types-for 'script'` blocks for real page mutations;
+    see the self-test's own inline comment for why a bare `eval()` call
+    through `page.evaluate` does NOT work here).
+    """
+    origin = f"https://{install_name}:{port}"
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            args=[
+                f"--host-resolver-rules=MAP {install_name} 127.0.0.1",
+                f"--ignore-certificate-errors-spki-list={spki_pin}",
+            ]
+        )
+        try:
+            # `add_init_script` runs before ANY page script, including the
+            # frontend build's own module evaluation -- the only way to
+            # observe every `securitypolicyviolation` event from the very
+            # first tick, rather than racing App.svelte's own onMount.
+            init_script = """
+                window.__cspViolations = [];
+                document.addEventListener('securitypolicyviolation', (event) => {
+                    window.__cspViolations.push({
+                        violatedDirective: event.violatedDirective,
+                        blockedURI: event.blockedURI,
+                    });
+                });
+            """
+            context = await browser.new_context()
+            await context.add_init_script(init_script)
+            page = await context.new_page()
+            response = await page.goto(f"{origin}/csp-check/", wait_until="load")
+
+            # -- exact header set (Playwright's response.headers keys are
+            # already lower-cased) --------------------------------------
+            response_headers = response.headers if response else {}
+            header_matches = {
+                name: response_headers.get(name.lower()) == value for name, value in SECURITY_HEADERS.items()
+            }
+            steps["csp_header_set_exact"] = bool(response) and response.ok and all(header_matches.values())
+            detail["csp_header_set_exact"] = json.dumps(
+                {"expected": SECURITY_HEADERS, "matches": header_matches}
+            )
+
+            # -- owl mark rendered in the DOM, imported from
+            # logo/stackowl-mark.svg (AD-40) ------------------------------
+            img_loaded = await page.evaluate(
+                "() => { const img = document.querySelector('[data-testid=\"owl-mark-img\"]'); "
+                "return !!img && img.complete && img.naturalWidth > 0; }"
+            )
+            steps["owl_mark_rendered_in_dom"] = bool(img_loaded)
+            detail["owl_mark_rendered_in_dom"] = json.dumps({"img_loaded": img_loaded})
+
+            # -- WebGPU unavailable on default headless Chromium ->
+            # WebGPURenderer auto-falls back to WebGL2 (scene.ts) ----------
+            backend_ready = await _wait_until(
+                lambda: page.evaluate(
+                    "() => !!(window.__cspCheckRendererBackend && window.__cspCheckRendererBackend())"
+                ),
+                timeout=8,
+            )
+            backend = (
+                await page.evaluate("() => window.__cspCheckRendererBackend()") if backend_ready else None
+            )
+            steps["webgl2_fallback_backend"] = backend == "webgl2"
+            detail["webgl2_fallback_backend"] = json.dumps({"backend": backend})
+
+            # -- exactly one named Trusted Types policy call across the
+            # kit's OWN front-end source (NFR22) -- a STATIC source count,
+            # deliberately never a runtime count of every
+            # `trustedTypes.createPolicy` call the page makes: Svelte's own
+            # compiled runtime registers a second, unrelated policy
+            # (`svelte-trusted-html`, in
+            # svelte/internal/client/dom/reconciler.js) purely to mount
+            # static markup templates -- framework code this kit never
+            # wrote, which a runtime count could never distinguish from
+            # this kit's own one call in App.svelte/scene.ts.
+            policy_call_count = _count_trusted_types_create_policy_calls(FRONTEND_SRC_DIR)
+            steps["trusted_types_policy_created_exactly_once"] = policy_call_count == 1
+            detail["trusted_types_policy_created_exactly_once"] = json.dumps(
+                {"count": policy_call_count, "src_dir": str(FRONTEND_SRC_DIR)}
+            )
+
+            # -- ... and genuinely exercised, not dead code (NFR22): the
+            # renderer-backend status label is built ONLY through the
+            # Trusted-Types-gated Range.createContextualFragment sink (see
+            # App.svelte) -- if that label reflects the real resolved
+            # backend, the policy demonstrably ran for real.
+            label_ready = await _wait_until(
+                lambda: page.evaluate(
+                    "() => { const el = document.querySelector('[data-testid=\"renderer-backend\"]'); "
+                    "return !!el && el.textContent.trim().length > 0; }"
+                ),
+                timeout=8,
+            )
+            label_text = (
+                await page.evaluate(
+                    "() => document.querySelector('[data-testid=\"renderer-backend\"]').textContent.trim()"
+                )
+                if label_ready
+                else None
+            )
+            steps["trusted_types_policy_genuinely_used"] = bool(label_ready) and label_text == backend
+            detail["trusted_types_policy_genuinely_used"] = json.dumps(
+                {"label_text": label_text, "backend": backend}
+            )
+
+            # -- zero securitypolicyviolation events on this real page load -
+            violations = await page.evaluate("() => window.__cspViolations")
+            steps["zero_csp_violations_on_real_page"] = violations == []
+            detail["zero_csp_violations_on_real_page"] = json.dumps({"violations": violations})
+
+            await context.close()
+
+            # -- detector self-test, in a DISPOSABLE context (never the one
+            # above) so a deliberately tripped violation can never pollute
+            # the "zero violations" proof just made. Note: a bare
+            # `page.evaluate(() => eval(...))` does NOT reproduce a real
+            # violation here -- Playwright/CDP's `Runtime.evaluate` is
+            # exempt from the page's own CSP eval restriction (a documented
+            # devtools-evaluation carve-out), so it would silently succeed
+            # and make this detector vacuous. Assigning a raw string to a
+            # dynamically created `<script>` element's `.textContent` is a
+            # genuine TrustedScript sink that IS enforced for real DOM
+            # mutations made from page.evaluate -- it throws inside the
+            # page (caught below) and fires a real
+            # `securitypolicyviolation` with `violatedDirective:
+            # 'require-trusted-types-for'`.
+            self_test_context = await browser.new_context()
+            await self_test_context.add_init_script(init_script)
+            self_test_page = await self_test_context.new_page()
+            await self_test_page.goto(f"{origin}/csp-check/", wait_until="load")
+            await self_test_page.evaluate(
+                "() => { try { "
+                "const s = document.createElement('script'); "
+                "s.textContent = 'window.__deliberateInlineScriptRan = true;'; "
+                "document.head.appendChild(s); "
+                "} catch (err) { /* expected: require-trusted-types-for blocks the raw-string assignment */ } }"
+            )
+            await _wait_until(
+                lambda: self_test_page.evaluate("() => window.__cspViolations.length > 0"), timeout=5
+            )
+            self_test_violations = await self_test_page.evaluate("() => window.__cspViolations")
+            self_test_script_ran = await self_test_page.evaluate("() => window.__deliberateInlineScriptRan === true")
+            steps["csp_violation_detector_self_test"] = (
+                bool(self_test_violations)
+                and any(
+                    "trusted-types" in (violation.get("violatedDirective") or "")
+                    for violation in self_test_violations
+                )
+                and not self_test_script_ran
+            )
+            detail["csp_violation_detector_self_test"] = json.dumps(
+                {"violations": self_test_violations, "script_ran": self_test_script_ran}
+            )
+            await self_test_context.close()
+        finally:
+            await browser.close()
+
+
 async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResult:
     """Start a real instance of the kit's server and prove the story's AC,
     including the passkey/device-key/device-approval ceremonies driven
     through a CDP virtual authenticator and the push/microphone proofs
-    (Story 1.3), then write `results/B1-build-host-chromium.json`,
-    `results/B1-passkey-desktop-chrome-automated.json`, and
-    `results/B1-push-mic-desktop-chrome-automated.json`."""
+    (Story 1.3), the WebTransport/SSE stream proofs (Story 1.4), and the
+    CSP/Trusted-Types/frontend-build proofs (Story 1.5), then write
+    `results/B1-build-host-chromium.json`,
+    `results/B1-passkey-desktop-chrome-automated.json`,
+    `results/B1-push-mic-desktop-chrome-automated.json`,
+    `results/B2-carrier-desktop-chrome-automated.json`, and
+    `results/B5-desktop-chrome-automated.json`."""
     port = _free_port()
     artifacts = ca_module.setup(install_name)
     webtransport_cert_store = webtransport_cert_module.WebTransportCertStore(install_name)
@@ -1109,6 +1357,8 @@ async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResu
     stream_steps: dict[str, bool] = {}
     stream_detail: dict[str, str] = {}
     stream_metrics: dict[str, dict[str, float]] = {}
+    csp_steps: dict[str, bool] = {}
+    csp_detail: dict[str, str] = {}
     try:
         server.stream_hub.start()
         await webtransport_listener.start()
@@ -1120,6 +1370,7 @@ async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResu
         await _check_webtransport_and_sse(
             install_name, port, spki_pin, server, stream_steps, stream_detail, stream_metrics
         )
+        await _check_csp_and_frontend_build(install_name, port, spki_pin, csp_steps, csp_detail)
     finally:
         await webtransport_listener.stop()
         await server.stream_hub.stop()
@@ -1182,14 +1433,29 @@ async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResu
     }
     stream_result_path = _write_result(stream_payload, "B2-carrier-desktop-chrome-automated.json")
 
+    csp_ok = bool(csp_steps) and all(csp_steps.values())
+    csp_payload = {
+        "kit_version": KIT_VERSION,
+        "check": "csp-frontend-desktop-chrome-automated",
+        "install_name": install_name,
+        "browser": "chromium",
+        "os": platform.platform(),
+        "steps": csp_steps,
+        "detail": csp_detail,
+        "ok": csp_ok,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    csp_result_path = _write_result(csp_payload, "B5-desktop-chrome-automated.json")
+
     return CheckResult(
-        ok=ok and passkey_ok and push_mic_ok and stream_ok,
-        steps={**steps, **passkey_steps, **push_mic_steps, **stream_steps},
-        detail={**detail, **passkey_detail, **push_mic_detail, **stream_detail},
+        ok=ok and passkey_ok and push_mic_ok and stream_ok and csp_ok,
+        steps={**steps, **passkey_steps, **push_mic_steps, **stream_steps, **csp_steps},
+        detail={**detail, **passkey_detail, **push_mic_detail, **stream_detail, **csp_detail},
         result_path=result_path,
         passkey_result_path=passkey_result_path,
         push_mic_result_path=push_mic_result_path,
         stream_result_path=stream_result_path,
+        csp_result_path=csp_result_path,
     )
 
 
