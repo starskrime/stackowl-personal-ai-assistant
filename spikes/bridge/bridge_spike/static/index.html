@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bridge TLS Spike</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/icon-192.png" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<meta name="theme-color" content="#1b5e8f" />
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #0b1520; }
+  h1 { font-size: 1.4rem; }
+  section { margin-bottom: 2rem; }
+  ol { padding-left: 1.2rem; }
+  label { display: block; margin-top: 0.75rem; font-weight: 600; }
+  input, select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.25rem; box-sizing: border-box; }
+  button { margin-top: 1rem; padding: 0.5rem 1rem; }
+  #status { margin-top: 0.75rem; font-weight: 600; }
+  .error { color: #b00020; }
+  .ok { color: #1b8f3a; }
+</style>
+</head>
+<body>
+  <h1>Bridge TLS Spike — Trust Ceremony</h1>
+
+  <section>
+    <p>
+      This device is talking to the Bridge spike over HTTPS using a
+      per-install <strong>ephemeral CA</strong> that signed exactly one
+      certificate for this install's <code>.local</code> host name. The CA's
+      private key was destroyed the moment that certificate was signed — it
+      is never written to disk and never kept around.
+    </p>
+    <p>If your browser showed a certificate warning, trust the CA first using the steps below, then reload this page.</p>
+  </section>
+
+  <section>
+    <h2>iOS</h2>
+    <ol>
+      <li>Open the CA certificate file the terminal printed a path for when the kit started (AirDrop it to this device).</li>
+      <li>Settings &rarr; General &rarr; VPN &amp; Device Management &rarr; select the profile &rarr; Install.</li>
+      <li>Settings &rarr; General &rarr; About &rarr; Certificate Trust Settings &rarr; enable full trust for the new CA.</li>
+      <li>Reload this page.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Android</h2>
+    <ol>
+      <li>Copy the CA certificate file the terminal printed a path for when the kit started onto the device.</li>
+      <li>Settings &rarr; Security &rarr; Encryption &amp; credentials &rarr; Install a certificate &rarr; CA certificate.</li>
+      <li>Confirm the install-time warning (installing a CA certificate is intentional here).</li>
+      <li>Reload this page.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Desktop Chrome</h2>
+    <ol>
+      <li><strong>macOS:</strong> open the CA cert in Keychain Access, set it to "Always Trust".</li>
+      <li><strong>Linux:</strong> copy it into <code>/usr/local/share/ca-certificates/</code> and run <code>update-ca-certificates</code>, or import it via <code>certutil</code> into <code>~/.pki/nssdb</code> for Chrome/Chromium's own NSS store.</li>
+      <li>Restart the browser, then reload this page.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Renewal</h2>
+    <p>
+      If the owner runs the kit's renewal command, a new CA fingerprint is
+      printed. Remove the old CA from this device's trust store and repeat
+      the steps above for the new one — the old certificate keeps working
+      only until you do.
+    </p>
+  </section>
+
+  <section>
+    <h2>Checklist result</h2>
+    <form id="checklist-form">
+      <label for="device_class">Device class</label>
+      <select id="device_class" name="device_class" required>
+        <option value="ios">iOS</option>
+        <option value="android">Android</option>
+        <option value="desktop-chrome">Desktop Chrome</option>
+        <option value="desktop-chrome-automated">Desktop Chrome (automated check)</option>
+      </select>
+
+      <label for="passed">Result</label>
+      <select id="passed" name="passed" required>
+        <option value="true">Pass</option>
+        <option value="false">Fail</option>
+      </select>
+
+      <label for="note">Note</label>
+      <textarea id="note" name="note" rows="3" required placeholder="What you saw (required)"></textarea>
+
+      <button type="submit">Submit result</button>
+      <div id="status"></div>
+    </form>
+  </section>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
+    const DEVICE_CLASS_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+    document.getElementById("checklist-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const statusEl = document.getElementById("status");
+      const deviceClass = document.getElementById("device_class").value.trim();
+      const note = document.getElementById("note").value.trim();
+      const passed = document.getElementById("passed").value === "true";
+
+      if (!DEVICE_CLASS_RE.test(deviceClass)) {
+        statusEl.textContent = "Rejected: device class is malformed.";
+        statusEl.className = "error";
+        return;
+      }
+      if (!note) {
+        statusEl.textContent = "Rejected: a note is required.";
+        statusEl.className = "error";
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            device_class: deviceClass,
+            passed: passed,
+            note: note,
+            browser: navigator.userAgent,
+            os: navigator.platform,
+          }),
+        });
+        if (!response.ok) {
+          const body = await response.text();
+          statusEl.textContent = `Rejected by server: ${body}`;
+          statusEl.className = "error";
+          return;
+        }
+        const body = await response.json();
+        statusEl.textContent = `Recorded: ${body.path}`;
+        statusEl.className = "ok";
+      } catch (err) {
+        statusEl.textContent = `Network error: ${err}`;
+        statusEl.className = "error";
+      }
+    });
+  </script>
+</body>
+</html>

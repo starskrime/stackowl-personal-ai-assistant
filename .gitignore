@@ -51,3 +51,8 @@ graphify-out/
 # Hermes Agent research clone — reference only, NEVER push (see progress.yml teacher.constraints)
 do_not_push_to_git_research_only/
 _bmad/render/
+
+# Bridge TLS/mDNS spike kit — generated checklist evidence and the exported
+# CA cert, never committed (the kit itself lives under spikes/bridge/ and IS versioned).
+spikes/bridge/results/*.json
+spikes/bridge/results/*.pem
