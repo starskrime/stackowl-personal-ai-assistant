@@ -253,3 +253,70 @@ def test_a_NEGATIVE_or_missing_seed_cannot_bank_budget() -> None:
     )
     breach = gov.check(iteration=1)
     assert breach is not None and breach.actual == 150
+
+
+# ---------------------------------------------------------------------------
+# The default ceiling has an opt-out (BudgetSettings.enforce_default_token_ceiling)
+# ---------------------------------------------------------------------------
+
+
+def test_the_ceiling_still_fills_in_by_default() -> None:
+    """`enabled` defaults True: the fill-in call site must stay byte-identical
+    for every caller that does not pass it explicitly (today's only caller,
+    pre-toggle)."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    assert _resolve_token_ceiling(ResourceCaps()).max_input_tokens == (
+        DEFAULT_TURN_MAX_INPUT_TOKENS
+    )
+
+
+def test_the_operator_can_opt_OUT_of_the_default_ceiling() -> None:
+    """`enabled=False` — the fill-in must NOT happen. `max_input_tokens` stays
+    `None`, which the BudgetGovernor already treats as a no-op on the token axis
+    (see `test_NO_cap_means_no_token_check` above)."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = _resolve_token_ceiling(ResourceCaps(), enabled=False)
+    assert caps.max_input_tokens is None, (
+        "the opt-out setting did not stop the default ceiling from filling in"
+    )
+
+
+def test_opting_OUT_does_not_touch_an_owls_own_explicit_cap() -> None:
+    """The toggle only gates the FILL-IN. An owl's own choice always wins,
+    opt-out or not — same contract as `test_an_owl_that_sets_its_OWN_token_cap_keeps_it`."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = ResourceCaps(max_input_tokens=25_000)
+    assert _resolve_token_ceiling(caps, enabled=False).max_input_tokens == 25_000
+
+
+def test_opting_OUT_end_to_end_no_breach_where_the_default_would_have_fired() -> None:
+    """The real path: fill-in disabled → governor built from the resulting caps →
+    a turn that would have breached the 500k default does not breach at all.
+
+    Mirrors `test_a_runaway_turn_is_STOPPED` (683,728 tokens breaches the
+    500k default) to prove the opt-out actually removes that enforcement,
+    not just the field in isolation.
+    """
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = _resolve_token_ceiling(ResourceCaps(max_steps=1000), enabled=False)
+    gov = BudgetGovernor(
+        caps, cost_tracker=_Tokens(683_728), trace_id="t",
+        started_monotonic=0.0, clock=_Clock(),
+    )
+    assert gov.check(iteration=5) is None, (
+        "opting out of the default token ceiling still breached — the setting "
+        "does not actually change enforcement"
+    )
+
+
+def test_the_default_shipped_setting_is_True_byte_identical_behavior() -> None:
+    """BudgetSettings.enforce_default_token_ceiling defaults True — the shipped
+    default must keep today's exact behavior (the 500k fill-in), not silently
+    opt every install out."""
+    from stackowl.config.settings import BudgetSettings
+
+    assert BudgetSettings().enforce_default_token_ceiling is True
