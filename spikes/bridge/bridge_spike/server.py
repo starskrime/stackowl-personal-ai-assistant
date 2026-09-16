@@ -40,8 +40,10 @@ from . import ca as ca_module
 from . import device_requests as device_requests_module
 from . import push as push_module
 from . import setup_code as setup_code_module
+from . import stream as stream_module
 from . import tokens as tokens_module
 from . import webauthn_flow as webauthn_flow_module
+from . import webtransport_cert as webtransport_cert_module
 
 logger = logging.getLogger("bridge_spike.server")
 
@@ -188,6 +190,11 @@ class ServerConfig:
     # own "minted exactly once, at process start" discipline -- every device
     # this run ever serves subscribes against the SAME VAPID key.
     vapid_private_key: ec.EllipticCurvePrivateKey = field(default_factory=push_module.generate_vapid_keypair)
+    # Set by kit.py (Story 1.4) once its aioquic WebTransport listener is
+    # constructed -- None here only lets tests that never touch the stream
+    # carrier build a ServerConfig without it. The cert-hash snapshot route
+    # below refuses with 503 while this is unset, rather than crash.
+    webtransport_cert_store: webtransport_cert_module.WebTransportCertStore | None = None
 
 
 class BridgeServer:
@@ -212,6 +219,10 @@ class BridgeServer:
         self.enrollment_tickets = tokens_module.EnrollmentTicketStore()
         self.device_requests = device_requests_module.DeviceRequestStore()
         self.push_subscriptions = push_module.PushSubscriptionStore()
+        # The one cursor-numbered event source both stream carriers read
+        # from (AD-31, Story 1.4) -- kit.py calls .start() once the server
+        # is up, and .stop() in its shutdown finally block.
+        self.stream_hub = stream_module.StreamHub()
         # Set by kit.py when a test Telegram bot is configured, so a new
         # device-approval request also gets pushed there -- BridgeServer
         # itself stays ignorant of Telegram entirely.
@@ -238,6 +249,9 @@ class BridgeServer:
         self.app.router.add_get("/api/push/vapid-public-key", self._handle_push_vapid_public_key)
         self.app.router.add_post("/api/push/subscribe", self._handle_push_subscribe)
         self.app.router.add_post("/api/push/unsubscribe", self._handle_push_unsubscribe)
+        self.app.router.add_get("/api/stream/cert-hashes", self._handle_stream_cert_hashes)
+        self.app.router.add_get("/api/stream/sse", self._handle_stream_sse)
+        self.app.router.add_post("/api/stream/send", self._handle_stream_send)
         for path, (filename, content_type) in _STATIC_FILES.items():
             self.app.router.add_get(path, self._make_static_handler(filename, content_type))
 
@@ -537,6 +551,68 @@ class BridgeServer:
         endpoint = str(payload.get("endpoint") or "")
         removed = self.push_subscriptions.remove(device.device_id, endpoint)
         return web.json_response({"ok": True, "removed": removed})
+
+    # -- live stream: cert-hash snapshot + SSE/POST fallback (Story 1.4, --
+    # -- AD-9, AD-11, AD-12, AD-14, AD-31, AD-38, NFR11/13/14/46) -----------
+    #
+    # Both stream routes sit behind `_require_signed_request`, the exact
+    # same gate push's routes use -- a device that never signed in over
+    # HTTPS gets no stream, on either carrier. WebTransport's own signed
+    # auth message (webtransport_server.py) reuses this same verification
+    # function directly, so the two carriers can never diverge on who counts
+    # as authenticated.
+
+    async def _handle_stream_cert_hashes(self, request: web.Request) -> web.Response:
+        """The WebTransport cert current+next SHA-256 hashes, served ONLY
+        from this authenticated HTTPS route (AD-14) -- never from an
+        unauthenticated route, and never any other way."""
+        await self._require_signed_request(request)
+        if self.config.webtransport_cert_store is None:
+            raise web.HTTPServiceUnavailable(text="WebTransport is not running on this kit instance")
+        return web.json_response({"hashes": self.config.webtransport_cert_store.hashes_b64()})
+
+    async def _handle_stream_sse(self, request: web.Request) -> web.Response:
+        """`fetch`-streamed SSE GET -- the automatic fallback when
+        WebTransport is unavailable (NFR14). Never `EventSource` (the
+        client never uses it -- see app.js), and every event carried here
+        comes from the exact same `stream_for_client` generator the
+        WebTransport carrier drives, so both carriers speak one envelope
+        family from one cursor-numbered source (AD-31)."""
+        device = await self._require_signed_request(request)
+        del device  # authentication is the point; no per-device filtering exists yet
+        try:
+            last_cursor = int(request.query.get("cursor", "0"))
+        except ValueError:
+            raise web.HTTPBadRequest(text="cursor must be an integer") from None
+        if last_cursor < 0:
+            raise web.HTTPBadRequest(text="cursor must not be negative")
+
+        response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+        await response.prepare(request)
+        generator = stream_module.stream_for_client(self.stream_hub, last_cursor)
+        try:
+            async for item in generator:
+                await response.write(f"data: {json.dumps(item)}\n\n".encode())
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            pass  # the client disconnected (tab close, navigation, simulateDrop()) -- nothing left to write to
+        finally:
+            await generator.aclose()
+        return response
+
+    async def _handle_stream_send(self, request: web.Request) -> web.Response:
+        """The HTTPS POST half of the SSE fallback carrier -- same signed
+        origin as the GET above, so a future client-to-server message on
+        this carrier never needs a distinct auth mechanism from the one
+        WebTransport's own auth stream already uses. This story sends
+        nothing client-initiated yet; the route exists (and is proven by
+        `tests/test_server_stream_routes.py`) so the fallback carrier is
+        symmetrical with WebTransport's bidirectional capability from day one."""
+        await self._require_signed_request(request)
+        payload = await self._json_body(request)
+        return web.json_response({"ok": True, "received": payload})
 
     # -- lifecycle ---------------------------------------------------------
 

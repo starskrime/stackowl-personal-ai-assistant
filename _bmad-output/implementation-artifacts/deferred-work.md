@@ -31,3 +31,19 @@ source_spec: `spec-1-3-push-microphone-and-the-away-from-home-summary-on-your-de
 severity: low
 reason: Confirmed by reading server.py's full route list: no revoke/unenroll endpoint exists for any resource type (passkey device, bearer token, or push subscription). This is a pre-existing gap in the device/token lifecycle dating back to Story 1.2 (which introduced signed-in devices but never a revoke path), not something Story 1.3 introduced or worsened, and it is outside this story's captured intent (the epics.md AC list for Story 1.3 never asks for revocation).
 status: open
+
+### DW-4: A signed-request construction (method/path/timestamp/nonce/signature over a SHA-256 body hash) is independently reimplemented in check.py's `_sign_stream_request`, `test_server_stream_routes.py`'s
+origin: spec-deferred eb052b5d5ac3
+location: spikes/bridge/bridge_spike/check.py, spikes/bridge/tests/test_server_stream_routes.py, spikes/bridge/tests/test_webtransport_server.py
+source_spec: `spec-1-4-a-live-stream-over-webtransport-with-automatic-sse-fallback-on-your-phone.md`
+severity: low
+reason: Confirmed by reading all three call sites: each hand-builds the same method/path/timestamp/nonce/body-hash message and ECDSA signature independently. This duplication convention predates Story 1.4 -- test_server_auth_routes.py and test_server_push_routes.py already duplicate the identical pattern from Stories 1.2/1.3 -- so Story 1.4 only followed the kit's own existing (imperfect) test/check convention rather than introducing it.
+status: open
+
+### DW-5: `_handle_stream_sse`'s broadened (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) catch around the SSE write loop has no test exercising any of the three exception types.
+origin: spec-deferred 691fdb5c90aa
+location: spikes/bridge/bridge_spike/server.py:_handle_stream_sse, spikes/bridge/tests/test_server_stream_routes.py
+source_spec: `spec-1-4-a-live-stream-over-webtransport-with-automatic-sse-fallback-on-your-phone.md`
+severity: medium
+reason: Confirmed by reading spikes/bridge/tests/test_server_stream_routes.py in full: every test either reads a fixed, bounded number of envelopes to completion or asserts a 400/401/503 on malformed/unauthenticated requests -- none aborts the client mid-stream or mocks response.write to raise any of the three caught types, so a regression narrowing the except tuple back to one type (or over-broadening it) would go uncaught. A faithful test needs to exercise the exception path from inside _handle_stream_sse specifically -- proving the connection merely drops is not enough, since aiohttp's own framework-level exception handling already guarantees that regardless of this except clause -- which needs either a hand-built aiohttp.web.Request via make_mocked_request (unlike this file's established TestClient/TestServer pattern) or an intrusive monkeypatch of web.StreamResponse.write.
+status: open

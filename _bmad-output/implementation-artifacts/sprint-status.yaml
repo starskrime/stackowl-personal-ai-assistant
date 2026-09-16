@@ -29,17 +29,17 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-14-2026 21:27
-last_updated: 09-14-2026 21:27
+last_updated: 09-16-2026 08:10
 project: stackowl-personal-ai-assistant
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: backlog
+  epic-1: in-progress
   1-1-trust-the-bridge-s-own-certificate-on-your-phone-at-home: done
   1-2-sign-in-with-a-passkey-on-the-local-name-and-approve-a-secon: done
   1-3-push-microphone-and-the-away-from-home-summary-on-your-devic: done
-  1-4-a-live-stream-over-webtransport-with-automatic-sse-fallback: backlog
+  1-4-a-live-stream-over-webtransport-with-automatic-sse-fallback: done
   1-5-the-strict-security-policy-holds-on-every-browser: backlog
   1-6-verdicts-decide-what-gets-built: backlog
   epic-1-retrospective: optional

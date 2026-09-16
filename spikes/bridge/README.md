@@ -46,7 +46,18 @@ again with the VAPID public key's availability/shape, endpoint refusal
 stand-in (never a real relay), the service worker's push handling and
 metadata-only cache scoping (FR25/FR26), notificationclick routing on and
 off the home network, and microphone capture with permission persistence,
-writing `results/B1-push-mic-desktop-chrome-automated.json`.
+writing `results/B1-push-mic-desktop-chrome-automated.json`. Story 1.4
+extends it again with the live stream carrier: a real aioquic WebTransport
+connect (self-signed, `serverCertificateHashes`-pinned), automatic fallback
+to `fetch`-streamed SSE, resume-after-a-dropped-connection with no
+loss/duplicates (proven by comparing sent vs. received cursors), staleness
+within one heartbeat timeout, two-tab leader hand-off with no cursor gap,
+and a deliberately throttled client receiving `resync` while a healthy
+client keeps advancing (proving the replayer/fan-out never blocks) — plus
+connect time, resume-replay time and this process's own memory as P50/P95
+across repeated samples, writing
+`results/B2-carrier-desktop-chrome-automated.json`. Real-device WebTransport
+interop (Safari, cellular, Jetson-class memory) is Story 1.6's job.
 
 ## Layout
 
@@ -80,13 +91,37 @@ writing `results/B1-push-mic-desktop-chrome-automated.json`.
   acks a Web Push POST the way a real relay would, for `check.py` to prove
   `push.py`'s sender against. Never a real relay (FCM/APNs/Mozilla), same
   principle as `telegram_bot.py`'s test bot (Story 1.3).
+- `bridge_spike/webtransport_cert.py` — short-lived (≤14-day), self-signed
+  ECDSA P-256 certificates for the WebTransport listener, with a
+  current+next `WebTransportCertStore` kept in memory only and rotated with
+  overlap (AD-14, Story 1.4).
+- `bridge_spike/webtransport_server.py` — the aioquic WebTransport listener:
+  binds the identical port NUMBER as the HTTPS TCP site, over UDP only
+  (AD-13). `Origin` checked before auth, a signed auth message enforced
+  within 5s/4KB or the session is closed, 0-RTT never wired up at all (no
+  `session_ticket_fetcher`/`session_ticket_handler` ever passed to
+  `serve()`), QUIC address validation (`retry=True`) and a connection cap
+  (Story 1.4, AD-38, NFR25).
+- `bridge_spike/stream.py` — the one cursor-numbered synthetic event source
+  both carriers stream from (`StreamHub`, `stream_for_client`): replayed at
+  recorded rates including a deliberate burst, a heartbeat carrying
+  `head_cursor` at an announced interval, and a bounded per-client queue
+  that resyncs instead of blocking the replayer on overflow (Story 1.4,
+  AD-31, NFR11/13/46). No real recorded-platform-event journal exists yet
+  to pull from — see the story's own spec Design Notes.
 - `bridge_spike/check.py` — the automated Chromium check shared by
   `kit.py check` and `tests/test_automated_check.py`.
 - `bridge_spike/static/` — the PWA (`index.html`, `app.js`,
   `manifest.webmanifest`, `sw.js`, `offline-summary.html`, icons). `app.js`
   exposes its passkey/device-key/device-approval, push
-  (`window.BridgePush`), and microphone (`window.BridgeMic`) functions so
-  `check.py` can drive them directly through a real browser. `sw.js` handles
+  (`window.BridgePush`), microphone (`window.BridgeMic`), and live-stream
+  (`window.BridgeStream`) functions so `check.py` can drive them directly
+  through a real browser. `window.BridgeStream` connects WebTransport-first
+  with automatic SSE fallback, elects one leader tab per browser via Web
+  Locks + `BroadcastChannel` (AD-31), tracks the resume cursor in
+  `localStorage`, and exposes `simulateDrop()`/`forceFallback()`/
+  `releaseLeadership()` test seams (no CDP surface exists for WebTransport,
+  mirroring the WebAuthn/push precedent below). `sw.js` handles
   `push` (metadata-only cache, FR25/FR26) and `notificationclick` (opens the
   item at home, else the cached summary — never an error page); it also
   exposes a `message`-driven test seam calling the same click-decision
@@ -94,6 +129,8 @@ writing `results/B1-push-mic-desktop-chrome-automated.json`.
   notification click.
 - `tests/` — see the test file per module above, plus `test_ca.py`,
   `test_server.py`, `test_server_auth_routes.py`, `test_server_push_routes.py`,
+  `test_server_stream_routes.py`, `test_stream.py`, `test_webtransport_cert.py`,
+  `test_webtransport_server.py`,
   `test_push.py`, `test_push_stub.py`, `test_automated_check.py`,
   `test_mdns.py`, `test_kit_cli_output.py`.
 - `results/` — checklist + check output, gitignored (`.gitkeep` keeps the
@@ -119,11 +156,11 @@ channel config.
 
 ```bash
 # All kit unit tests (no Playwright needed):
-uv run --with cryptography --with aiohttp --with webauthn --with python-telegram-bot --with pywebpush --with http-ece --with requests python -m pytest spikes/bridge/tests
+uv run --with cryptography --with aiohttp --with webauthn --with python-telegram-bot --with pywebpush --with http-ece --with requests --with aioquic python -m pytest spikes/bridge/tests
 
 # The full automated done-check, including the Playwright/Chromium test,
-# the CDP virtual-authenticator passkey/device-approval ceremonies, and the
-# push/microphone proofs:
+# the CDP virtual-authenticator passkey/device-approval ceremonies, the
+# push/microphone proofs, and the WebTransport/SSE live-stream proofs:
 uv run spikes/bridge/kit.py check
 ```
 
@@ -143,3 +180,8 @@ uv run spikes/bridge/kit.py check
   suite. `push.py`'s sender is proven for real (VAPID signing, `aes128gcm`
   encryption) only against `push_stub.py`'s local stand-in — real-device
   delivery against a real relay is Story 1.6's job.
+- Exercise a real WebTransport peer beyond localhost under test (Safari/iOS,
+  cellular, a real network drop). `check.py`'s WebTransport/SSE proofs run
+  entirely against the kit's own aioquic listener on `127.0.0.1` through a
+  real headless Chromium; every other multi-device/network interop run is
+  Story 1.6's job (`awaiting-operator`).

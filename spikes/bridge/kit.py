@@ -12,6 +12,7 @@
 #     "pywebpush>=2.5,<3",
 #     "http-ece>=1.2,<2",
 #     "requests>=2.34,<3",
+#     "aioquic>=1.3,<2",
 # ]
 # ///
 """Bridge TLS/mDNS spike kit entrypoint.
@@ -40,6 +41,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import logging
 import os
 import signal
 import socket
@@ -53,6 +55,7 @@ from bridge_spike import mdns  # noqa: E402
 from bridge_spike import push as push_module  # noqa: E402
 from bridge_spike import setup_code as setup_code_module  # noqa: E402
 from bridge_spike import telegram_bot  # noqa: E402
+from bridge_spike import webtransport_cert as webtransport_cert_module  # noqa: E402
 from bridge_spike.device_requests import DeviceRequest  # noqa: E402
 from bridge_spike.server import (  # noqa: E402
     RESULTS_DIR,
@@ -60,6 +63,7 @@ from bridge_spike.server import (  # noqa: E402
     ServerConfig,
     primary_local_ipv4_address,
 )
+from bridge_spike.webtransport_server import WebTransportListener  # noqa: E402
 
 # `bridge_spike.check` imports playwright, which `start`/`renew` never need --
 # imported lazily inside cmd_check()/main() so `uv run --with cryptography
@@ -67,6 +71,11 @@ from bridge_spike.server import (  # noqa: E402
 # still import and exercise this module for its non-check subcommands.
 
 DEFAULT_PORT = 8443
+# Well under AD-14's 14-day ceiling -- rotating at roughly the halfway
+# point of a cert's own validity window leaves generous overlap (the "next"
+# cert has been advertised, unused, for days before it ever becomes
+# "current") even on a kit process that runs for a long stretch.
+WEBTRANSPORT_CERT_ROTATION_INTERVAL_SECONDS = (webtransport_cert_module.MAX_VALIDITY_DAYS // 2) * 24 * 60 * 60
 
 # Condensed per-platform trust steps -- the AC requires these printed to the
 # terminal, not just pointed at from the web page. The full guided text (same
@@ -169,12 +178,17 @@ async def _serve(install_name: str, port: int, *, renewing: bool) -> int:
     # Same discipline as the CA above: one VAPID keypair per kit run, wired
     # into the config before the server (and thus every route) exists.
     vapid_private_key = push_module.generate_vapid_keypair()
+    # WebTransport's own short-lived, self-signed cert pair (AD-14) -- kept
+    # in memory only, exactly like the VAPID key above; the signed cert-hash
+    # snapshot route (server.py) reads current+next straight off this config.
+    webtransport_cert_store = webtransport_cert_module.WebTransportCertStore(install_name)
     config = ServerConfig(
         install_name=install_name,
         port=port,
         ca_artifacts=artifacts,
         setup_codes=setup_codes,
         vapid_private_key=vapid_private_key,
+        webtransport_cert_store=webtransport_cert_store,
     )
     server = BridgeServer(config)
 
@@ -186,12 +200,36 @@ async def _serve(install_name: str, port: int, *, renewing: bool) -> int:
         return 1
 
     runner = await server.start()
+    # Constructing the listener is pure in-memory setup (never fails), so it
+    # is safe before the try below; the actual bind (`.start()`) is not.
+    webtransport_listener = WebTransportListener(
+        install_name=install_name,
+        port=port,
+        host=config.host,
+        cert_store=webtransport_cert_store,
+        tokens=server.tokens,
+        nonces=server.nonces,
+        hub=server.stream_hub,
+    )
+    rotation_task: asyncio.Task[None] | None = None
     # EVERYTHING from here on is wrapped in the same try/finally as the
-    # signal-wait below: `runner`/`advertisement` must be cleaned up on ANY
-    # exit path once the listener is up, not only the Ctrl-C path -- a
-    # `bot.start()` failure (bad token, no network) must not orphan the
-    # mDNS subprocess or leave the HTTPS listener bound.
+    # signal-wait below: `runner`/`advertisement`/the stream carriers must
+    # be cleaned up on ANY exit path once the HTTPS listener is up, not only
+    # the Ctrl-C path -- a WebTransport bind failure or a `bot.start()`
+    # failure (bad token, no network) must not orphan the mDNS subprocess or
+    # leave the HTTPS listener bound.
     try:
+        # The one shared event source both stream carriers read from (Story
+        # 1.4, AD-31) -- started once the HTTPS listener itself is up,
+        # stopped in the same finally block below.
+        server.stream_hub.start()
+        # The aioquic WebTransport listener: SAME port number as the HTTPS
+        # site above, over UDP (AD-13). Bound after `server.start()`
+        # succeeds so a TCP bind failure never leaves a UDP listener
+        # orphaned with nothing to pair it with.
+        await webtransport_listener.start()
+        rotation_task = asyncio.ensure_future(_rotate_webtransport_cert_forever(webtransport_listener))
+
         print(f"\nServing https://{install_name}:{port}/ — Ctrl-C to stop.")
         _print_setup_code(setup_codes.code)
 
@@ -229,9 +267,31 @@ async def _serve(install_name: str, port: int, *, renewing: bool) -> int:
     finally:
         if bot is not None:
             await bot.stop()
+        if rotation_task is not None:
+            rotation_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await rotation_task
+        await webtransport_listener.stop()
+        await server.stream_hub.stop()
         await runner.cleanup()
         advertisement.stop()
     return 0
+
+
+async def _rotate_webtransport_cert_forever(listener: WebTransportListener) -> None:
+    """Rotates the WebTransport cert pair on a fixed interval for as long as
+    the kit runs (AD-14). Most kit runs never live long enough to see this
+    fire even once, but a long-running instance still gets real rotation
+    with overlap rather than a cert pair generated once at boot and never
+    touched again."""
+    while True:
+        await asyncio.sleep(WEBTRANSPORT_CERT_ROTATION_INTERVAL_SECONDS)
+        try:
+            listener.rotate_certificate()
+        except Exception:  # noqa: BLE001 -- one bad rotation must not silently end rotation forever
+            logging.getLogger(__name__).exception(
+                "bridge_spike.kit: WebTransport certificate rotation failed -- will retry at the next interval"
+            )
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -252,6 +312,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"Passkey check result written to: {result.passkey_result_path}")
     if result.push_mic_result_path is not None:
         print(f"Push/mic check result written to: {result.push_mic_result_path}")
+    if result.stream_result_path is not None:
+        print(f"Live stream check result written to: {result.stream_result_path}")
     if result.ok:
         print("PASS — all steps succeeded.")
         return 0

@@ -43,7 +43,9 @@ import platform
 import socket
 import struct
 import tempfile
+import time
 import wave
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,13 +55,17 @@ import aiohttp
 import http_ece
 import requests
 from cryptography import x509
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import utils as ec_utils
 from playwright.async_api import async_playwright
 
 from . import ca as ca_module
 from . import push as push_module
 from . import push_stub as push_stub_module
+from . import stream as stream_module
+from . import webtransport_cert as webtransport_cert_module
+from . import webtransport_server as webtransport_server_module
 from .server import KIT_VERSION, RESULTS_DIR, BridgeServer, ServerConfig
 
 DEFAULT_CHECK_INSTALL_NAME = "bridge-spike-check.local"
@@ -73,6 +79,7 @@ class CheckResult:
     result_path: Path
     passkey_result_path: Path | None = None
     push_mic_result_path: Path | None = None
+    stream_result_path: Path | None = None
 
 
 def _spki_pin(cert_pem: bytes) -> str:
@@ -626,6 +633,440 @@ async def _check_push_and_mic(
         fake_audio_path.unlink(missing_ok=True)
 
 
+# -- Story 1.4: live stream over WebTransport with automatic SSE fallback --
+#
+# There is no CDP surface for WebTransport (unlike WebAuthn's virtual
+# authenticator or push's ServiceWorker.deliverPushMessage), so every
+# browser-side proof below is driven through `window.BridgeStream` --
+# exactly the code path a real phone runs, never a second reimplementation.
+# "Deliberately throttled client / replayer never blocks" is server-side
+# backpressure rather than browser interop, so it is proven the SAME way
+# _check_subnet_refusal proves the subnet guard: a real HTTP client against
+# the real running server, no browser involved at all.
+
+STREAM_METRIC_SAMPLE_COUNT = 3
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((pct / 100) * (len(ordered) - 1))))
+    return ordered[index]
+
+
+def _p50_p95(values: list[float]) -> dict[str, float]:
+    return {"p50": _percentile(values, 50), "p95": _percentile(values, 95)}
+
+
+def _process_rss_kb(pid: int) -> int:
+    """Resident memory (KB) of the given process, read from
+    `/proc/<pid>/status` -- Linux only, matching this kit's own documented
+    test-run/build-host assumption. Never raises: a missing sample beats
+    crashing the whole check over an unavailable metric."""
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (FileNotFoundError, OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+async def _wait_until(condition: Callable[[], Awaitable[bool]], *, timeout: float, interval: float = 0.05) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        if await condition():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(interval)
+
+
+def _stream_device_keypair_and_token(server: BridgeServer, device_name: str) -> tuple[ec.EllipticCurvePrivateKey, str]:
+    """Mints a signed-in device directly against the server's own stores --
+    the same shortcut `_check_push_and_mic` already documents: no need to
+    spend the kit's one-time setup code or re-run WebAuthn, already proven
+    by `_check_passkey_and_device_approval`."""
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_der = private_key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    device = server.tokens.issue(device_name, public_der)
+    return private_key, device.token
+
+
+def _sign_stream_request(
+    server: BridgeServer, private_key: ec.EllipticCurvePrivateKey, method: str, path: str, body: bytes = b""
+) -> dict[str, str]:
+    nonce = server.nonces.issue()
+    timestamp = str(int(time.time()))
+    body_hash = hashlib.sha256(body).hexdigest()
+    message = f"{method}\n{path}\n{timestamp}\n{nonce}\n{body_hash}".encode()
+    der_signature = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
+    r, s = ec_utils.decode_dss_signature(der_signature)
+    raw_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return {
+        "X-Bridge-Timestamp": timestamp,
+        "X-Bridge-Nonce": nonce,
+        "X-Bridge-Signature": base64.b64encode(raw_signature).decode(),
+    }
+
+
+class _SseEnvelopeReader:
+    """Reads `count`-at-a-time SSE envelopes off one `aiohttp.ClientResponse`
+    across repeated calls. The decode buffer is instance state, not a local
+    that resets every call: a single `iter_any()` chunk often contains more
+    than one frame (or a trailing partial frame), and a plain per-call
+    buffer would silently discard whatever arrived after the envelope that
+    satisfied an earlier call's `count` -- exactly the kind of loss this
+    check exists to detect, but in the check's own harness instead of the
+    server under test."""
+
+    def __init__(self, response: aiohttp.ClientResponse) -> None:
+        self._chunks = response.content.iter_any()
+        self._buffer = ""
+
+    async def read_n(self, count: int) -> list[dict]:
+        envelopes: list[dict] = []
+
+        def _drain_buffer() -> bool:
+            while "\n\n" in self._buffer:
+                frame, self._buffer = self._buffer.split("\n\n", 1)
+                if frame.startswith("data: "):
+                    envelopes.append(json.loads(frame[len("data: ") :]))
+                    if len(envelopes) >= count:
+                        return True
+            return False
+
+        if _drain_buffer():
+            return envelopes
+        async for chunk in self._chunks:
+            self._buffer += chunk.decode()
+            if _drain_buffer():
+                return envelopes
+        return envelopes
+
+
+async def _abort_route(route: object) -> None:
+    await route.abort()  # type: ignore[attr-defined]
+
+
+async def _check_slow_client_resync_and_replayer_never_blocks(
+    install_name: str, port: int, server: BridgeServer, steps: dict[str, bool], detail: dict[str, str]
+) -> None:
+    """A deliberately throttled client (never reads its response body) has
+    its queue overflow and gets `resync`, while a second, healthy client
+    keeps advancing the whole time -- proving the replayer/fan-out was
+    never blocked by the slow one (NFR46, AD-38).
+
+    The slow client's queue is shrunk via `server.stream_hub`'s own bound
+    JUST long enough to register that one client (confirmed by its own
+    `hello` frame arriving before the bound is restored) -- a live kit does
+    not need an artificially tiny default queue for this to eventually
+    happen for real, only a much longer flood than this check can afford
+    to wait for.
+    """
+    slow_key, slow_token = _stream_device_keypair_and_token(server, "slow-stream-check-device")
+    other_key, other_token = _stream_device_keypair_and_token(server, "other-stream-check-device")
+    base_url = f"https://127.0.0.1:{port}"
+    host_header = f"{install_name}:{port}"
+
+    # Both clients resume from the CURRENT head, not 0 -- the check server's
+    # background replayer (server.stream_hub.start(), begun once for the
+    # whole run_check()) may already have recorded many events by the time
+    # this step runs. Starting from 0 would hand each client an unbounded
+    # backfill (events_after() is deliberately NOT subject to the bounded
+    # queue -- it reads recorded history directly) that would drown out the
+    # very overflow signal this check is trying to isolate.
+    start_cursor = server.stream_hub.head_cursor
+
+    async with aiohttp.ClientSession() as session:
+        original_maxsize = server.stream_hub._client_queue_maxsize  # noqa: SLF001 -- deliberate, test-only throttle
+        slow_headers = {
+            "Host": host_header,
+            "Authorization": f"Bearer {slow_token}",
+            **_sign_stream_request(server, slow_key, "GET", "/api/stream/sse"),
+        }
+        server.stream_hub._client_queue_maxsize = 2  # noqa: SLF001
+        try:
+            slow_response = await session.get(
+                f"{base_url}/api/stream/sse?cursor={start_cursor}", headers=slow_headers, ssl=False
+            )
+            slow_reader = _SseEnvelopeReader(slow_response)
+            # blocks until the slow client's hello -- registration confirmed
+            await asyncio.wait_for(slow_reader.read_n(1), timeout=5)
+        finally:
+            server.stream_hub._client_queue_maxsize = original_maxsize  # noqa: SLF001 -- every OTHER client gets the real bound
+
+        other_headers = {
+            "Host": host_header,
+            "Authorization": f"Bearer {other_token}",
+            **_sign_stream_request(server, other_key, "GET", "/api/stream/sse"),
+        }
+        other_response = await session.get(
+            f"{base_url}/api/stream/sse?cursor={start_cursor}", headers=other_headers, ssl=False
+        )
+        other_reader = _SseEnvelopeReader(other_response)
+        await asyncio.wait_for(other_reader.read_n(1), timeout=5)  # the healthy client's own hello
+
+        for i in range(50):
+            server.stream_hub.record_now(kind="alert", intensity=float(i) / 50, rendering=f"flood-{i}")
+
+        try:
+            other_events = await asyncio.wait_for(other_reader.read_n(5), timeout=5)
+        except TimeoutError:
+            other_events = []
+        steps["replayer_never_blocks_other_clients"] = len(other_events) >= 5
+        detail["replayer_never_blocks_other_clients"] = f"healthy_client_received={len(other_events)}_of_5_expected"
+
+        try:
+            slow_events = await asyncio.wait_for(slow_reader.read_n(1), timeout=5)
+        except TimeoutError:
+            slow_events = []
+        steps["slow_client_gets_resync"] = any(e.get("type") == "resync" for e in slow_events)
+        detail["slow_client_gets_resync"] = json.dumps(slow_events)
+
+        slow_response.close()
+        other_response.close()
+
+
+async def _check_webtransport_and_sse(
+    install_name: str,
+    port: int,
+    spki_pin: str,
+    server: BridgeServer,
+    steps: dict[str, bool],
+    detail: dict[str, str],
+    metrics: dict[str, dict[str, float]],
+) -> None:
+    """Proves Story 1.4's AC end to end through real Chromium, driven via
+    `window.BridgeStream`: WebTransport connect, automatic SSE fallback,
+    resume-after-a-dropped-connection with no loss/dupes (NFR13, proven by
+    comparing sent vs. received cursors), staleness within roughly one
+    heartbeat timeout (NFR11), and two-tab leader hand-off with no cursor
+    gap (AD-31) -- plus connect/resume-replay time and this process's own
+    memory as P50/P95 across `STREAM_METRIC_SAMPLE_COUNT` repeated samples.
+    """
+    origin = f"https://{install_name}:{port}"
+    connect_times_ms: list[float] = []
+    resume_times_ms: list[float] = []
+    memory_samples_kb: list[float] = []
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            args=[
+                f"--host-resolver-rules=MAP {install_name} 127.0.0.1",
+                f"--ignore-certificate-errors-spki-list={spki_pin}",
+            ]
+        )
+        try:
+
+            async def new_signed_in_page(device_name: str):
+                ctx = await browser.new_context()
+                pg = await ctx.new_page()
+                await pg.goto(f"{origin}/", wait_until="load")
+                ticket = server.enrollment_tickets.mint(device_name)
+                enrollment = await pg.evaluate(
+                    "([ticket, name]) => window.BridgeAuth.completeDeviceEnrollment(ticket, name)",
+                    [ticket, device_name],
+                )
+                return ctx, pg, enrollment
+
+            async def sample_connect_and_resume(device_name: str, *, record_first_sign_in: bool = False):
+                """Connects, drops, and resumes once. Returns
+                `(connected, gap_resumed_cleanly, cursor_before_drop, log_after_resume)`.
+                Only a SUCCESSFUL sample's timings are added to the shared
+                `connect_times_ms`/`resume_times_ms` metric lists -- a timed-out
+                sample must never corrupt the P50/P95 metrics with a partial or
+                meaningless measurement."""
+                ctx, pg, enrollment = await new_signed_in_page(device_name)
+                if record_first_sign_in:
+                    steps["stream_device_signed_in"] = bool(enrollment.get("token"))
+                    detail["stream_device_signed_in"] = json.dumps(enrollment)
+                try:
+                    started = time.monotonic()
+                    await pg.evaluate("() => window.BridgeStream.connect()")
+                    connected = await _wait_until(
+                        lambda: pg.evaluate("() => window.BridgeStream.getCarrier() === 'webtransport'"), timeout=8
+                    )
+                    if connected:
+                        connect_times_ms.append((time.monotonic() - started) * 1000)
+                        memory_samples_kb.append(float(_process_rss_kb(os.getpid())))
+
+                    cursor_before_drop = await pg.evaluate("() => window.BridgeStream.getCursor()")
+                    log_before_drop = await pg.evaluate("() => window.BridgeStream.getReceivedCursorLog()")
+                    resume_started = time.monotonic()
+                    await pg.evaluate("() => window.BridgeStream.simulateDrop()")
+                    resumed = await _wait_until(
+                        lambda: pg.evaluate(
+                            "cursorBefore => window.BridgeStream.getCursor() > cursorBefore", cursor_before_drop
+                        ),
+                        timeout=8,
+                    )
+                    if resumed:
+                        resume_times_ms.append((time.monotonic() - resume_started) * 1000)
+                    log_after_resume = await pg.evaluate("() => window.BridgeStream.getReceivedCursorLog()")
+                finally:
+                    await ctx.close()
+                new_cursors = log_after_resume[len(log_before_drop) :]
+                no_duplicates = len(log_after_resume) == len(set(log_after_resume))
+                continuous_from_drop = (
+                    bool(new_cursors)
+                    and new_cursors[0] == cursor_before_drop + 1
+                    and new_cursors == list(range(new_cursors[0], new_cursors[0] + len(new_cursors)))
+                )
+                gap_resumed_cleanly = resumed and no_duplicates and continuous_from_drop
+                return connected, gap_resumed_cleanly, cursor_before_drop, log_after_resume
+
+            sample_results = [
+                await sample_connect_and_resume(
+                    f"stream-check-device-{sample_index}", record_first_sign_in=(sample_index == 0)
+                )
+                for sample_index in range(STREAM_METRIC_SAMPLE_COUNT)
+            ]
+            # EVERY sample must succeed -- a flaky/broken carrier on a later
+            # sample must not be masked by a passing first sample.
+            steps["webtransport_session"] = all(result[0] for result in sample_results)
+            detail["webtransport_session"] = (
+                f"connected {sum(1 for result in sample_results if result[0])}/{len(sample_results)} samples"
+            )
+            steps["cursor_resume_no_loss_no_dupes"] = all(result[1] for result in sample_results)
+            first_cursor_before_drop, first_log_after_resume = sample_results[0][2], sample_results[0][3]
+            detail["cursor_resume_no_loss_no_dupes"] = json.dumps(
+                {
+                    "gap_resumed_cleanly_samples": f"{sum(1 for result in sample_results if result[1])}/{len(sample_results)}",
+                    "cursor_before_drop": first_cursor_before_drop,
+                    "log": first_log_after_resume[-20:],
+                }
+            )
+
+            # -- forced SSE fallback (NFR14) --------------------------------
+            fallback_context, fallback_page, _fallback_enrollment = await new_signed_in_page(
+                "stream-fallback-check-device"
+            )
+            await fallback_page.evaluate("() => window.BridgeStream.forceFallback(true)")
+            await fallback_page.evaluate("() => window.BridgeStream.connect()")
+            fell_back = await _wait_until(
+                lambda: fallback_page.evaluate("() => window.BridgeStream.getCarrier() === 'sse'"), timeout=8
+            )
+            steps["sse_fallback_forced"] = fell_back
+            detail["sse_fallback_forced"] = "carrier=sse" if fell_back else "never reached carrier=sse"
+
+            # -- resume-from-cursor with no loss/dupes on the SSE carrier too
+            # (NFR13): the AC requires this proven on BOTH carriers, not just
+            # WebTransport -- mirrors sample_connect_and_resume's drop/resume/
+            # cursor-log comparison above, driven through the real
+            # `_connectSse`/`_readEnvelopeLines` browser path.
+            sse_cursor_before_drop = await fallback_page.evaluate("() => window.BridgeStream.getCursor()")
+            sse_log_before_drop = await fallback_page.evaluate("() => window.BridgeStream.getReceivedCursorLog()")
+            await fallback_page.evaluate("() => window.BridgeStream.simulateDrop()")
+            sse_resumed = await _wait_until(
+                lambda: fallback_page.evaluate(
+                    "cursorBefore => window.BridgeStream.getCursor() > cursorBefore", sse_cursor_before_drop
+                ),
+                timeout=8,
+            )
+            sse_log_after_resume = await fallback_page.evaluate("() => window.BridgeStream.getReceivedCursorLog()")
+            sse_new_cursors = sse_log_after_resume[len(sse_log_before_drop) :]
+            sse_no_duplicates = len(sse_log_after_resume) == len(set(sse_log_after_resume))
+            sse_continuous_from_drop = (
+                bool(sse_new_cursors)
+                and sse_new_cursors[0] == sse_cursor_before_drop + 1
+                and sse_new_cursors == list(range(sse_new_cursors[0], sse_new_cursors[0] + len(sse_new_cursors)))
+            )
+            steps["sse_cursor_resume_no_loss_no_dupes"] = sse_resumed and sse_no_duplicates and sse_continuous_from_drop
+            detail["sse_cursor_resume_no_loss_no_dupes"] = json.dumps(
+                {"cursor_before_drop": sse_cursor_before_drop, "log": sse_log_after_resume[-20:]}
+            )
+
+            # -- staleness within roughly one heartbeat timeout (NFR11) -----
+            # Every stream route is intercepted and aborted for real (never
+            # a code-level patch, same principle _check_push_and_mic's
+            # notificationclick-away-from-home step uses) so the reconnect
+            # loop's own retries keep failing and lastActivityAt stays
+            # frozen -- a genuinely sustained outage, not a one-off blip.
+            await fallback_context.route("**/api/stream/**", _abort_route)
+            await fallback_page.evaluate("() => window.BridgeStream.simulateDrop()")
+            went_stale = await _wait_until(
+                lambda: fallback_page.evaluate("() => window.BridgeStream.isStale()"),
+                timeout=stream_module.DEFAULT_HEARTBEAT_INTERVAL_SECONDS * 4,
+            )
+            steps["stale_after_missed_heartbeat"] = went_stale
+            detail["stale_after_missed_heartbeat"] = json.dumps({"went_stale": went_stale})
+            await fallback_context.unroute("**/api/stream/**")
+            await fallback_context.close()
+
+            # -- leader hand-off on tab close, no cursor gap (AD-31) --------
+            leader_context, leader_page, _leader_enrollment = await new_signed_in_page("stream-leader-check-device")
+            await leader_page.evaluate("() => window.BridgeStream.connect()")
+            await _wait_until(
+                lambda: leader_page.evaluate("() => window.BridgeStream.getCarrier() !== null"), timeout=8
+            )
+            follower_page = await leader_context.new_page()
+            await follower_page.goto(f"{origin}/", wait_until="load")
+            await follower_page.evaluate("() => window.BridgeStream.connect()")
+            await asyncio.sleep(0.3)  # lets the follower's lock request actually queue behind the held lock
+            leader_was_leader = await leader_page.evaluate("() => window.BridgeStream.isLeader()")
+            follower_was_leader_before = await follower_page.evaluate("() => window.BridgeStream.isLeader()")
+            cursor_before_close = await leader_page.evaluate("() => window.BridgeStream.getCursor()")
+            await leader_page.close()  # the real scenario: the leader TAB closes
+            # `isLeader()` flips true the MOMENT the Web Lock is (re-)granted,
+            # before the new leader's own reconnect has actually completed --
+            # waiting on cursor >= cursor_before_close too is what actually
+            # proves "no cursor gap", not just "took over eventually".
+            handed_off = await _wait_until(
+                lambda: follower_page.evaluate(
+                    "cursorBefore => window.BridgeStream.isLeader() && window.BridgeStream.getCursor() >= cursorBefore",
+                    cursor_before_close,
+                ),
+                timeout=8,
+            )
+            cursor_after_handoff = await follower_page.evaluate("() => window.BridgeStream.getCursor()")
+            steps["leader_handoff_no_cursor_gap"] = (
+                leader_was_leader
+                and not follower_was_leader_before
+                and handed_off
+                and cursor_after_handoff >= cursor_before_close
+            )
+            detail["leader_handoff_no_cursor_gap"] = json.dumps(
+                {
+                    "leader_was_leader": leader_was_leader,
+                    "handed_off": handed_off,
+                    "cursor_before_close": cursor_before_close,
+                    "cursor_after_handoff": cursor_after_handoff,
+                }
+            )
+            await leader_context.close()
+        finally:
+            await browser.close()
+
+    await _check_slow_client_resync_and_replayer_never_blocks(install_name, port, server, steps, detail)
+
+    metrics["connect_time_ms"] = _p50_p95(connect_times_ms)
+    metrics["resume_replay_time_ms"] = _p50_p95(resume_times_ms)
+    metrics["server_process_memory_kb"] = _p50_p95(memory_samples_kb)
+    detail["local_network_access_prompt"] = json.dumps(
+        {
+            "applicable": False,
+            "reason": (
+                "not exercised by headless Chromium on the build host -- a real device's Local Network "
+                "Access prompt is Story 1.6's job"
+            ),
+        }
+    )
+    detail["cert_hash_checklist"] = json.dumps(
+        {
+            # A static config-presence check, NOT a claim that the browser
+            # ever fetched or used the hashes -- `cert_hashes_worked` below
+            # is the actual over-the-wire signal (a real WebTransport
+            # session only succeeds if the fetched hashes matched).
+            "webtransport_cert_store_configured": server.config.webtransport_cert_store is not None,
+            "cert_hashes_worked": bool(connect_times_ms) and steps.get("webtransport_session", False),
+        }
+    )
+
+
 async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResult:
     """Start a real instance of the kit's server and prove the story's AC,
     including the passkey/device-key/device-approval ceremonies driven
@@ -635,9 +1076,29 @@ async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResu
     `results/B1-push-mic-desktop-chrome-automated.json`."""
     port = _free_port()
     artifacts = ca_module.setup(install_name)
-    config = ServerConfig(install_name=install_name, port=port, ca_artifacts=artifacts, host="127.0.0.1")
+    webtransport_cert_store = webtransport_cert_module.WebTransportCertStore(install_name)
+    config = ServerConfig(
+        install_name=install_name,
+        port=port,
+        ca_artifacts=artifacts,
+        host="127.0.0.1",
+        webtransport_cert_store=webtransport_cert_store,
+    )
     server = BridgeServer(config)
     runner = await server.start()
+    # Constructing the listener is pure in-memory setup (never fails), so it
+    # is safe before the try below; the actual bind (`.start()`) is not --
+    # it must run inside the try so a bind failure still triggers the
+    # finally's `runner.cleanup()` instead of leaking the HTTPS listener.
+    webtransport_listener = webtransport_server_module.WebTransportListener(
+        install_name=install_name,
+        port=port,
+        host="127.0.0.1",
+        cert_store=webtransport_cert_store,
+        tokens=server.tokens,
+        nonces=server.nonces,
+        hub=server.stream_hub,
+    )
 
     steps: dict[str, bool] = {}
     detail: dict[str, str] = {}
@@ -645,13 +1106,23 @@ async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResu
     passkey_detail: dict[str, str] = {}
     push_mic_steps: dict[str, bool] = {}
     push_mic_detail: dict[str, str] = {}
+    stream_steps: dict[str, bool] = {}
+    stream_detail: dict[str, str] = {}
+    stream_metrics: dict[str, dict[str, float]] = {}
     try:
+        server.stream_hub.start()
+        await webtransport_listener.start()
         spki_pin = _spki_pin(artifacts.ca_cert_pem)
         await _check_certificate_chain_and_redirect(install_name, port, spki_pin, steps, detail)
         await _check_subnet_refusal(install_name, port, steps, detail)
         await _check_passkey_and_device_approval(install_name, port, spki_pin, server, passkey_steps, passkey_detail)
         await _check_push_and_mic(install_name, port, spki_pin, server, push_mic_steps, push_mic_detail)
+        await _check_webtransport_and_sse(
+            install_name, port, spki_pin, server, stream_steps, stream_detail, stream_metrics
+        )
     finally:
+        await webtransport_listener.stop()
+        await server.stream_hub.stop()
         await runner.cleanup()
 
     ok = bool(steps) and all(steps.values())
@@ -696,13 +1167,29 @@ async def run_check(install_name: str = DEFAULT_CHECK_INSTALL_NAME) -> CheckResu
     }
     push_mic_result_path = _write_result(push_mic_payload, "B1-push-mic-desktop-chrome-automated.json")
 
+    stream_ok = bool(stream_steps) and all(stream_steps.values())
+    stream_payload = {
+        "kit_version": KIT_VERSION,
+        "check": "stream-carrier-desktop-chrome-automated",
+        "install_name": install_name,
+        "browser": "chromium",
+        "os": platform.platform(),
+        "steps": stream_steps,
+        "detail": stream_detail,
+        "metrics": stream_metrics,
+        "ok": stream_ok,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    stream_result_path = _write_result(stream_payload, "B2-carrier-desktop-chrome-automated.json")
+
     return CheckResult(
-        ok=ok and passkey_ok and push_mic_ok,
-        steps={**steps, **passkey_steps, **push_mic_steps},
-        detail={**detail, **passkey_detail, **push_mic_detail},
+        ok=ok and passkey_ok and push_mic_ok and stream_ok,
+        steps={**steps, **passkey_steps, **push_mic_steps, **stream_steps},
+        detail={**detail, **passkey_detail, **push_mic_detail, **stream_detail},
         result_path=result_path,
         passkey_result_path=passkey_result_path,
         push_mic_result_path=push_mic_result_path,
+        stream_result_path=stream_result_path,
     )
 
 

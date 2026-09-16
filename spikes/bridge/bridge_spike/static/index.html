@@ -114,6 +114,25 @@
   </section>
 
   <section>
+    <h2>Live stream</h2>
+    <p>
+      Requires passkey sign-in above. Connects over WebTransport when
+      available, falling back automatically to a signed SSE stream on the
+      same origin otherwise.
+    </p>
+    <button id="start-stream-btn" type="button">Start live stream</button>
+    <button id="force-fallback-btn" type="button">Force SSE fallback</button>
+    <dl>
+      <dt>Carrier</dt>
+      <dd id="stream-carrier">&mdash;</dd>
+      <dt>Cursor</dt>
+      <dd id="stream-cursor">&mdash;</dd>
+      <dt>Status</dt>
+      <dd id="stream-status">not connected</dd>
+    </dl>
+  </section>
+
+  <section>
     <h2>Checklist result</h2>
     <form id="checklist-form">
       <label for="device_class">Device class</label>
@@ -285,6 +304,32 @@
         resultEl.className = "error";
       }
     });
+
+    document.getElementById("start-stream-btn").addEventListener("click", () => {
+      window.BridgeStream.connect();
+    });
+
+    document.getElementById("force-fallback-btn").addEventListener("click", (event) => {
+      window.BridgeStream.forceFallback(true);
+      event.target.textContent = "SSE fallback forced";
+    });
+
+    setInterval(() => {
+      const carrier = window.BridgeStream.getCarrier();
+      document.getElementById("stream-carrier").textContent = carrier || "—";
+      document.getElementById("stream-cursor").textContent = window.BridgeStream.getCursor();
+      const statusEl = document.getElementById("stream-status");
+      if (!carrier) {
+        statusEl.textContent = "not connected";
+        statusEl.className = "";
+      } else if (window.BridgeStream.isStale()) {
+        statusEl.textContent = "stale — no heartbeat within the announced interval";
+        statusEl.className = "error";
+      } else {
+        statusEl.textContent = window.BridgeStream.isLeader() ? "live (this tab is the leader)" : "live (mirrored)";
+        statusEl.className = "ok";
+      }
+    }, 500);
 
     const DEVICE_CLASS_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
