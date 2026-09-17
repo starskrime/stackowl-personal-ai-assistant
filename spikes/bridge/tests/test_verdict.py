@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from bridge_spike import verdict as verdict_module
 
@@ -168,6 +169,24 @@ def test_passed_schema_true_scores_pass(tmp_path) -> None:
     assert ads_confirmed is True
 
 
+def test_passed_schema_non_boolean_scores_fail_as_malformed(tmp_path) -> None:
+    """A `passed` field that isn't a JSON boolean (string/number/null) must
+    be named as a malformed-schema failure -- not silently treated as an
+    ordinary human-submitted FAIL with the generic note, mirroring how an
+    invalid `steps` map is already named as malformed."""
+    tmp_path.mkdir(exist_ok=True)
+    _write(tmp_path, "B1-desktop-chrome.json", {"device_class": "desktop-chrome", "passed": "yes", "note": "fine"})
+
+    verdict, failing_steps, ads_confirmed = verdict_module.score_result_file(tmp_path / "B1-desktop-chrome.json")
+
+    assert verdict == "FAIL"
+    assert ads_confirmed is False
+    assert len(failing_steps) == 1
+    assert "malformed" in failing_steps[0].lower()
+    assert "'passed'" in failing_steps[0]
+    assert "no per-step breakdown" not in failing_steps[0]
+
+
 # ---------------------------------------------------------------------------
 # Malformed JSON -> FAIL, parse error named, WARNING logged, never raised
 # uncaught and never silently skipped or treated as "not run".
@@ -258,6 +277,40 @@ def test_unrecognized_schema_scores_fail(tmp_path) -> None:
     assert verdict == "FAIL"
     assert ads_confirmed is False
     assert failing_steps
+
+
+def test_non_dict_json_root_scores_fail_without_raising(tmp_path) -> None:
+    """Pins today's `isinstance(data, dict)` guard: a syntactically-valid
+    JSON file whose root is a bool/number/null (not an object) must still
+    score as an ordinary FAIL, never raise uncaught -- a regression that
+    narrowed the guard would otherwise crash the whole report."""
+    tmp_path.mkdir(exist_ok=True)
+    for non_dict_root in (True, 5, None, "just a string"):
+        path = tmp_path / "B1-desktop-chrome.json"
+        path.write_text(json.dumps(non_dict_root))
+
+        verdict, failing_steps, ads_confirmed = verdict_module.score_result_file(path)
+
+        assert verdict == "FAIL"
+        assert ads_confirmed is False
+        assert failing_steps
+
+
+def test_result_path_is_a_directory_scores_fail_without_raising(tmp_path) -> None:
+    """A required-row path that exists but is unreadable for an OS-level
+    reason (here: a directory sitting where the file is expected) must be
+    caught by the same `except OSError` clause that guards a real
+    permission/read failure -- never raised uncaught."""
+    tmp_path.mkdir(exist_ok=True)
+    candidate = tmp_path / "B1-desktop-chrome.json"
+    candidate.mkdir()
+
+    verdict, failing_steps, ads_confirmed = verdict_module.score_result_file(candidate)
+
+    assert verdict == "FAIL"
+    assert ads_confirmed is False
+    assert failing_steps
+    assert "could not read result file" in failing_steps[0]
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +472,43 @@ def test_rendered_markdown_pass_row_shows_confirmed_ads_and_no_fail_branch_text(
     assert cells[3] == "confirmed"
     assert cells[4] == "—"
     assert b1.spec.fail_branch not in row_line
+
+
+def test_rendered_markdown_escapes_pipe_and_newline_in_failing_steps(tmp_path) -> None:
+    """A failing-step name or human-submitted note containing a literal
+    `|` or a newline must never corrupt the generated table: `|` is
+    escaped and newlines are collapsed to a space, so the row stays one
+    row with exactly five cells."""
+    tmp_path.mkdir(exist_ok=True)
+    _write(
+        tmp_path,
+        "B1-desktop-chrome.json",
+        {
+            "device_class": "desktop-chrome",
+            "passed": False,
+            "note": "line one | pipe here\nline two breaks the table",
+        },
+    )
+
+    spike_verdicts = verdict_module.build_epic_verdicts(tmp_path)
+    markdown = verdict_module.render_markdown(spike_verdicts)
+
+    b1 = next(sv for sv in spike_verdicts if sv.spec.key == "B1")
+    section = _section_for(markdown, b1.spec.label)
+    table_lines = [line for line in section.splitlines() if line.startswith("|")]
+    row_line = next(line for line in table_lines if "`desktop-chrome`" in line)
+
+    # The escaped note must stay on ONE table row with exactly five cells.
+    # A real Markdown parser (and this assertion) treats "\|" as a literal
+    # pipe, not a column separator -- only split on an UNESCAPED '|'; a
+    # regression that stopped escaping would show up as extra cells here.
+    cell_parts = re.split(r"(?<!\\)\|", row_line)
+    cells = [cell.strip() for cell in cell_parts[1:-1]]
+    assert len(cells) == 5
+    assert "line two breaks the table" in row_line
+    # The raw (unescaped) pipe must not appear as its own column separator:
+    # every '|' in the note is preceded by the escaping backslash.
+    assert "line one \\| pipe here" in row_line
 
 
 def test_rendered_markdown_includes_fail_branch_and_gates_per_spike(tmp_path) -> None:

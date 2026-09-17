@@ -2,7 +2,7 @@
 title: 'Story 1.6: Verdicts decide what gets built'
 type: 'feature'
 created: '2026-09-17'
-status: 'done'
+status: 'in-review'
 baseline_revision: '7606612ea5eec1520f7953902252479a24717474'
 review_loop_iteration: 0
 followup_review_recommended: false
@@ -12,7 +12,25 @@ context:
   - 'docs/agentic-os-dashboard/architecture/ARCHITECTURE-SPINE.md'
   - 'spikes/bridge/README.md'
 warnings: ['oversized']
-deferred: []
+deferred:
+  - summary: >-
+      spikes/bridge/results/B1-desktop-chrome.json scores as the required
+      desktop-chrome row (PASS/confirmed) even though its own note field
+      reads "Automated build-host Chromium check." -- it is build-host
+      automation, not an owner-driven real-device run, despite matching
+      the required-row filename convention exactly.
+    evidence: |-
+      Confirmed on disk: the file is present today (gitignored,
+      pre-existing before this story's diff) and verdict.py correctly
+      scores it per its own documented contract (score the file's own
+      recorded fields, match by filename only) -- this is a pre-existing
+      data-provenance gap in the real results/ directory, not a
+      verdict.py defect, and the story's own Boundaries explicitly forbid
+      building a new submission/validation mechanism to detect it. Flag
+      for the operator before any real epic-1-verdicts.md commit to main.
+    location: >-
+      spikes/bridge/results/B1-desktop-chrome.json
+    severity: medium
 ---
 
 <intent-contract>
@@ -104,6 +122,42 @@ deferred: []
 - **[low, rejected] `_read_ok_field` treats a present-but-non-boolean `"ok"` value identically to an absent one, with no log line either way (Blind Hunter #8).** Verified against verdict.py:215-216. Rejected as low: every real writer in this codebase (`check.py`'s five automated files) always writes a boolean `ok`, so this is unlikely to be encountered, and the fix (a new branch plus a new log call) is more than a direct correction.
 - **[low, rejected] `cmd_verdict()` has no try/except around `verdict.write_verdicts()`, so an infra-level failure (permission denied, disk full) surfaces as a raw traceback instead of a `return 1` (Edge Case Hunter E3).** Verified against `kit.py`: `cmd_start`/`cmd_renew` show the same "let it propagate" pattern for infra-level exceptions (only `cmd_check`'s own domain-level PASS/FAIL uses `return 1`), so this isn't a deviation from an established convention. Rejected as low: unlikely in everyday local-operator use, and the fix (a new try/except plus an error-reporting branch) is more than a direct correction.
 
+### 2026-09-17 — Review pass (independent 4-layer review)
+
+The prior entry above was written by the implementation subagent during its own out-of-scope self-review (it ran review layers and wrote status/triage itself, which is the orchestrator's job, not step-03's). This entry is the orchestrator-run pass: independent, context-free Blind Hunter, Edge Case Hunter, Verification Gap, and Intent Alignment layers launched in parallel against the diff since baseline, triaged here fresh.
+
+- verdicts: 19 findings — high 0, medium 4, low 11, false 4, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` (verification-gap) A syntactically-valid JSON file with a non-dict root (e.g. `true`, `5`, `null`) is correctly scored FAIL by the existing `isinstance(data, dict)` guards in `score_result_file`/`_read_ok_field`, but no test exercises this shape -- confirmed via a repo-wide symbol search showing only dict-literal fixtures in `test_verdict.py`. A future narrowing of that guard would crash the whole report uncaught (same failure class as the UnicodeDecodeError bug this diff's own earlier pass already found), with nothing to catch it. Action: add a test writing a non-dict JSON root and asserting `score_result_file` returns `FAIL` without raising.
+  - `[medium]` `[patch]` (blind-hunter) The spec's own frontmatter `deferred: []` didn't reflect the `[defer, medium]` finding already recorded in this file's own Review Triage Log (the `B1-desktop-chrome.json` provenance gap) -- confirmed by reading the frontmatter before this pass. Action: populated `deferred:` with that item directly (orchestrator-level frontmatter fix, not sent to the implementation subagent).
+  - `[false]` (blind-hunter) claimed `review_loop_iteration: 0` next to a triage log with five fixed issues is ambiguous -- refuted: per this workflow's own step-04 semantics, that counter increments only before a `bad_spec` loopback; the prior pass had only `patch`-routed findings, so `0` is correct.
+  - `[low]` `[patch]` (blind-hunter, 3 grouped findings -- same root cause) The new `deferred-work.md` entry this diff added (the `B1-desktop-chrome.json` provenance item) doesn't match the file's own established schema: DW-1 through DW-5 each carry a `### DW-N:` heading, `status:`, and (where applicable) `severity:` fields with a blank line before the heading; the new entry has none of that and runs directly into DW-5 with no separating blank line. Confirmed by reading the full file. Action: reformatted the entry as `### DW-6:` matching the established shape (origin/location/source_spec/severity/status, blank line before it).
+  - `[low]` `[reject]` (blind-hunter) claimed verdict values (`"PASS"`/`"FAIL"`/`"NOT RUN"`) should be a `Literal`/enum instead of bare `str` -- real but rejected as low: the fix touches multiple signatures across the module for a defect unlikely to bite in practice (all three literals are defined and consumed within one small file).
+  - `[low]` `[patch]` (blind-hunter) No test confirms `kit.py verdict --name foo`/`--port` are rejected (the new subparser deliberately takes neither, per this spec's own Boundaries) -- confirmed by reading `test_kit_cli_output.py`: only the parsed-Namespace shape is checked, not that passing the flags fails. Action: add a test asserting `SystemExit` from `build_parser().parse_args(["verdict", "--name", "x"])`.
+  - `[low]` `[reject]` `carried` (blind-hunter) claimed `getattr(args, "name", None)` still resolves and attaches an unused `name` attribute for the `verdict` subcommand -- same location and claim as the prior pass's own `[low, rejected]` row (Blind Hunter #1 there); code reads the same. Verdict and route carried unchanged; not re-verified, not re-patched.
+  - `[low]` `[patch]` (blind-hunter) The spec's `## Verification` section never mentioned a lint check -- confirmed by reading it. Action: ran `ruff check` on every file this story added/edited myself (clean, aside from one pre-existing, unrelated `I001` finding on `kit.py` present on the pre-story baseline too) and added the command to `## Verification` directly (orchestrator-level spec fix).
+  - `[low]` `[patch]` (blind-hunter) No test covers a required-row path that exists but is unreadable for an OS-level reason (e.g. a directory in place of the file), though `score_result_file`'s `except OSError` clause is written to guard exactly that. Confirmed by reading `test_verdict.py`: only malformed-content and non-UTF-8 cases exist. Action: add a test where the expected path is a directory, asserting `FAIL` without raising.
+  - `[false]` (intent-alignment) claimed the diff's B2 fail-branch text (always the whole spine paragraph) diverges from epics.md's AC, which appears to list an "interop failure" branch and a "silent-gap client class" branch as alternatives -- refuted by re-reading `ARCHITECTURE-SPINE.md:741` verbatim: it is one compound (AND) statement ("the carrier is SSE-only... A client class that shows silent gaps uses SSE + POST. The retention default and budgets are lowered...") describing consequences that can all apply together, not a switch between alternatives. Showing the whole verbatim paragraph on every B2 FAIL row is the complete, faithful reading; splitting it into a per-condition selector would be the narrower (and inferior) reading this spec's own Boundaries already forbid.
+  - `[false]` (intent-alignment) claimed epics.md's flattened AD parenthetical (missing AD-6, AD-35 relative to the spine's own per-spike union) is an unreconciled discrepancy -- refuted: this spec's own Design Notes already document treating the architecture spine's per-spike gate tables as canonical, and the AC's own text names "the full-picture §9 and spine pass criteria" as the two sources to score against -- the spine's per-spike tables are the more granular, directly-cited "pass criteria" table; epics.md's parenthetical is a compressed cross-spike summary, not a competing authoritative source.
+  - `[medium]` `[patch]` (intent-alignment) Confirmed: the spec file this diff authored set `status: 'done'` with no `operator_actions` key, directly contradicting the story's own AC ("This story CANNOT reach status: done... set to status: awaiting-operator"). Root cause: the implementation subagent executed the generic workflow's default Finalize step (which writes `status: done`) on its own initiative, never told about this story's explicit override. Action: being corrected directly by the orchestrator at finalization (this pass sets `status: in-review` for now; the terminal `awaiting-operator` status and `operator_actions` list are written after the branch-preserve/delete step, per the dispatching task's own instructions) -- not routed to the implementation subagent.
+  - `[false]` (intent-alignment) confirmed the previously-caught `sprint-status.yaml` churn is already resolved -- the diff carries no hunk for that file (verified via the `diff --git` headers).
+  - `[medium]` `[patch]` (intent-alignment) `_read_ok_field` (new function, real parsing/branching work) has only warning-level logging on its two error branches and no entry/decision/step debug trace on its normal path; `render_markdown`/`write_verdicts` each have only entry+exit debug calls with no distinct decision/step stage -- inconsistent with this same diff's own prior-pass fix of an identical gap in `score_result_file`, and a direct gap against this spec's own explicit "4-point structured logging... on every new method that does real work" constraint. Action: add entry/decision/step/exit `logger.debug` calls to `_read_ok_field`, and a step-level debug call per spike in `render_markdown` and per phase (score/render/write) in `write_verdicts`.
+  - `[medium]` `[patch]` (edge-case-hunter) A failing-step name or human-submitted note containing a literal `|` or a newline is written straight into a Markdown table cell, corrupting the generated `epic-1-verdicts.md` table (the epic's one evidence document) -- confirmed by reading `render_markdown`'s cell-joining code, which does no escaping. Action: escape `|` and collapse newlines when rendering `failing_steps`/note text into table cells.
+  - `[low]` `[patch]` (edge-case-hunter) A `passed`-schema result file where `passed` is present but not a JSON boolean (string/number/null) is scored as an ordinary human-submitted FAIL with a generic note, rather than being named as a malformed-schema failure the way the sibling `steps`-schema check already does for an invalid `steps` value -- confirmed by reading `score_result_file`'s `passed`-branch, which only checks `data.get("passed") is True` with no type validation. Real against this spec's own boundary ("a malformed... result file is reported as a failure with the parsing problem named"). Action: add an `isinstance(..., bool)` check mirroring the `steps`-schema's own guard.
+  - `[low]` `[reject]` `carried` (edge-case-hunter) claimed `cmd_verdict()` has no try/except around `write_verdicts()` so an infra-level failure surfaces as a raw traceback -- same location and claim as the prior pass's own `[low, rejected]` row (Edge Case Hunter E3 there: matches `cmd_start`/`cmd_renew`'s existing "let it propagate" convention). Verdict and route carried unchanged; not re-verified, not re-patched.
+
+#### 2026-09-17 — Second-pass patch fixes, applied and independently re-verified
+
+All six `[patch]`-routed code-level findings above (non-dict JSON root test, non-boolean `passed` field, Markdown table-cell `|`/newline corruption, incomplete 4-point logging on `_read_ok_field`/`render_markdown`/`write_verdicts`, the `--name`/`--port`-rejection test, and the directory-at-expected-path test) were sent to the same implementation subagent and applied. I independently re-verified every one before committing:
+
+- Full suite: `spikes/bridge/tests` -- 235 passed (was 230 before this round).
+- `ruff check` on all three edited files (`verdict.py`, `test_verdict.py`, `test_kit_cli_output.py`) -- clean.
+- `mypy --strict spikes/bridge/bridge_spike/verdict.py` -- zero new errors (all 31 reported errors originate in other pre-existing modules it imports transitively -- `push.py`, `stream.py`, `server.py`).
+- Live repro of the table-corruption bug (a note containing `\|` and a newline): before the fix the row split across two lines and injected an extra cell; after the fix it renders as one line, five cells, with the `|` escaped as `\|` and the newline collapsed to a space.
+- The `deferred-work.md` reformat (`### DW-6:`) was applied directly by me (documentation-only, no code risk), matching the DW-1..DW-5 shape used by every other Bridge Epic-1 story's deferred item in that same file.
+
+The `[medium] [patch]` `status`/`operator_actions`/`spike/bridge-epic-1` branch-preserve-and-delete finding (intent-alignment) is explicitly left to the reviewing session that filed it and its own dispatching task -- outside this build workflow's scope, which is this spec file's own Tasks & Acceptance (never mentions the branch/status AC groups from `docs/agentic-os-dashboard/epics.md`).
+
 ## Design Notes
 
 - **Why four fixed device-class ids instead of discovering arbitrary device classes from disk:** the epic context (`epic-1-context.md:21`) and the operator checklist name exactly four real-device classes the owner is expected to run; an open-ended discovery scheme would let a typo'd or ad hoc `device_class` string silently masquerade as a required row. Any *other* file matching `{spike}-*.json` is still surfaced, just as separate automated/build-host evidence, so nothing on disk is ever hidden from the report.
@@ -115,3 +169,4 @@ deferred: []
 **Commands:**
 - `uv run --with cryptography --with aiohttp --with webauthn --with python-telegram-bot --with pywebpush --with http-ece --with requests --with aioquic python -m pytest spikes/bridge/tests` -- expected: all existing tests plus the new `test_verdict.py` and the extended `test_kit_cli_output.py` pass.
 - `uv run spikes/bridge/kit.py verdict` -- expected: exits 0, prints the output path, and `docs/agentic-os-dashboard/spikes/epic-1-verdicts.md` is generated correctly reflecting the real current `spikes/bridge/results/` contents (this run's output is for verification only in this story -- committing it to `main` for real is an operator action after real-device testing, per the epic's own `operator_actions`).
+- `uv run ruff check spikes/bridge/bridge_spike/verdict.py spikes/bridge/kit.py spikes/bridge/tests/test_verdict.py spikes/bridge/tests/test_kit_cli_output.py` -- expected: clean on every file this story added or edited (a pre-existing `I001` import-sort finding on `kit.py`'s unrelated `bridge_spike` import block already exists on the pre-story baseline -- not a regression, not this story's to fix).

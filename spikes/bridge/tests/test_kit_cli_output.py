@@ -6,6 +6,7 @@ and (Story 1.2) the setup code the owner reads from the terminal.
 from __future__ import annotations
 
 import kit
+import pytest
 
 
 def test_print_trust_steps_includes_fingerprint_and_install_origin(capsys) -> None:  # type: ignore[no-untyped-def]
@@ -35,6 +36,17 @@ def test_build_parser_routes_verdict_to_cmd_verdict() -> None:
     # The verdict subcommand never talks to a server: no --name/--port.
     assert not hasattr(args, "name")
     assert not hasattr(args, "port")
+
+
+def test_build_parser_rejects_name_and_port_on_verdict(capsys) -> None:  # type: ignore[no-untyped-def]
+    """The verdict subparser deliberately takes neither flag (it never
+    talks to a server) -- argparse must reject both, not silently accept
+    and drop them."""
+    parser = kit.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["verdict", "--name", "some-install.local"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["verdict", "--port", "1234"])
 
 
 def test_cmd_verdict_prints_the_path_write_verdicts_returns(monkeypatch, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]

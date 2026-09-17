@@ -185,7 +185,15 @@ def score_result_file(path: Path) -> tuple[str, list[str], bool]:
 
     if "passed" in data:
         logger.debug("bridge_spike.verdict: score_result_file decision -- %s uses the 'passed' schema", path)
-        if data.get("passed") is True:
+        passed_value = data.get("passed")
+        if not isinstance(passed_value, bool):
+            logger.warning(
+                "bridge_spike.verdict: score_result_file -- %s has a non-boolean 'passed' field: %r",
+                path,
+                passed_value,
+            )
+            return "FAIL", [f"malformed result file: 'passed' is not a boolean (got {passed_value!r})"], False
+        if passed_value is True:
             logger.debug("bridge_spike.verdict: score_result_file exit -- %s PASS", path)
             return "PASS", [], True
         note = data.get("note")
@@ -206,16 +214,28 @@ def _read_ok_field(path: Path) -> tuple[bool | None, str | None]:
     unreadable/malformed file logs a warning and reads as (None, reason)
     rather than crashing the whole report; a file with no "ok" field
     (e.g. the human-submitted `passed` schema) reads as (None, None)."""
+    logger.debug("bridge_spike.verdict: _read_ok_field entry -- path=%s", path)
+
     try:
         data = json.loads(path.read_text())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         logger.warning("bridge_spike.verdict: _read_ok_field -- could not read/parse %s: %s", path, exc)
         return None, str(exc)
+
+    logger.debug("bridge_spike.verdict: _read_ok_field step -- %s read and parsed as JSON", path)
+
     if not isinstance(data, dict):
         logger.warning("bridge_spike.verdict: _read_ok_field -- %s root is not a JSON object", path)
         return None, "root is not a JSON object"
+
     ok = data.get("ok")
-    return (ok, None) if isinstance(ok, bool) else (None, None)
+    if isinstance(ok, bool):
+        logger.debug("bridge_spike.verdict: _read_ok_field decision -- %s has a boolean 'ok'=%s", path, ok)
+        logger.debug("bridge_spike.verdict: _read_ok_field exit -- returning ok=%s, read_error=None", ok)
+        return ok, None
+    logger.debug("bridge_spike.verdict: _read_ok_field decision -- %s has no boolean 'ok' field", path)
+    logger.debug("bridge_spike.verdict: _read_ok_field exit -- returning ok=None, read_error=None")
+    return None, None
 
 
 def build_epic_verdicts(results_dir: Path) -> list[SpikeVerdict]:
@@ -290,6 +310,16 @@ def _render_cell(value: str) -> str:
     return value if value else "—"
 
 
+def _escape_table_cell(text: str) -> str:
+    """Escapes one piece of externally-sourced text (a failing-step name,
+    or a human-submitted note embedded in one) for safe embedding in a
+    single Markdown table cell: newlines are collapsed to a space so the
+    row can never split across lines, and a literal `|` is escaped so it
+    can never be read as a column separator and corrupt the table."""
+    collapsed = " ".join(text.splitlines())
+    return collapsed.replace("|", "\\|")
+
+
 def render_markdown(spike_verdicts: list[SpikeVerdict]) -> str:
     """Renders the epic verdicts report. A NOT RUN row never shows PASS."""
     logger.debug("bridge_spike.verdict: render_markdown entry -- %d spike(s)", len(spike_verdicts))
@@ -315,8 +345,13 @@ def render_markdown(spike_verdicts: list[SpikeVerdict]) -> str:
         lines.append("")
         lines.append(f"**Gating ADs:** {', '.join(spec.gates)}")
         if spec.full_picture_ref is not None:
+            logger.debug("bridge_spike.verdict: render_markdown decision -- %s cites full_picture_ref", spec.key)
             lines.append(f"**Reference:** {spec.full_picture_ref}; ARCHITECTURE-SPINE.md spike gates table")
         else:
+            logger.debug(
+                "bridge_spike.verdict: render_markdown decision -- %s has no full-picture.md Section 9 row",
+                spec.key,
+            )
             lines.append(
                 "**Reference:** ARCHITECTURE-SPINE.md spike gates table "
                 "(no full-picture.md Section 9 row for this spike)"
@@ -327,11 +362,16 @@ def render_markdown(spike_verdicts: list[SpikeVerdict]) -> str:
         lines.append("| --- | --- | --- | --- | --- |")
         for row in spike_verdict.rows:
             device_label = f"`{row.device_class}` ({DEVICE_CLASS_LABELS[row.device_class]})"
-            failing_cell = _render_cell("; ".join(row.failing_steps))
+            failing_cell = _render_cell("; ".join(_escape_table_cell(step) for step in row.failing_steps))
             ads_cell = "confirmed" if row.ads_confirmed else "provisional"
             fail_branch_cell = _render_cell(row.fail_branch or "")
             lines.append(f"| {device_label} | {row.verdict} | {failing_cell} | {ads_cell} | {fail_branch_cell} |")
         lines.append("")
+        logger.debug(
+            "bridge_spike.verdict: render_markdown step -- %s table rendered (%d row(s))",
+            spec.key,
+            len(spike_verdict.rows),
+        )
 
         lines.append(
             f"**Automated / build-host evidence for {spec.label}** "
@@ -370,9 +410,19 @@ def write_verdicts(results_dir: Path | None = None, output_path: Path | None = N
         resolved_results_dir,
         resolved_output_path,
     )
+    logger.debug(
+        "bridge_spike.verdict: write_verdicts decision -- results_dir is %s, output_path is %s",
+        "explicit" if results_dir is not None else "the default RESULTS_DIR",
+        "explicit" if output_path is not None else "the default DEFAULT_VERDICTS_PATH",
+    )
 
     spike_verdicts = build_epic_verdicts(resolved_results_dir)
     markdown = render_markdown(spike_verdicts)
+    logger.debug(
+        "bridge_spike.verdict: write_verdicts step -- rendered %d byte(s) of markdown, writing to %s",
+        len(markdown),
+        resolved_output_path,
+    )
 
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_output_path.write_text(markdown)
