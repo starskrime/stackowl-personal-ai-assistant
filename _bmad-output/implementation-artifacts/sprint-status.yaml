@@ -44,8 +44,8 @@ development_status:
   1-6-verdicts-decide-what-gets-built: awaiting-operator
   epic-1-retrospective: optional
 
-  epic-2: backlog
-  2-1-the-journal-records-task-events-in-the-same-transaction-as-t: backlog
+  epic-2: in-progress
+  2-1-the-journal-records-task-events-in-the-same-transaction-as-t: in-progress
   2-2-every-event-reads-as-a-plain-sentence-and-knows-whether-it-n: backlog
   2-3-gateway-and-core-refuse-to-talk-across-versions: backlog
   2-4-only-the-real-core-can-connect-to-the-gateway: backlog
