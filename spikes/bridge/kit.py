@@ -34,6 +34,9 @@ Subcommands:
   check   Run the kit's own automated done-check (Chromium via Playwright)
           and write results/B1-build-host-chromium.json. This is the
           story's own completion bar — real-device runs are Story 1.6's.
+  verdict Score results/ (real-device runs plus the automated/build-host
+          evidence above) against the architecture spine's pass criteria
+          and write docs/agentic-os-dashboard/spikes/epic-1-verdicts.md.
 """
 
 from __future__ import annotations
@@ -55,6 +58,7 @@ from bridge_spike import mdns  # noqa: E402
 from bridge_spike import push as push_module  # noqa: E402
 from bridge_spike import setup_code as setup_code_module  # noqa: E402
 from bridge_spike import telegram_bot  # noqa: E402
+from bridge_spike import verdict  # noqa: E402
 from bridge_spike import webtransport_cert as webtransport_cert_module  # noqa: E402
 from bridge_spike.device_requests import DeviceRequest  # noqa: E402
 from bridge_spike.server import (  # noqa: E402
@@ -321,6 +325,12 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_verdict(args: argparse.Namespace) -> int:
+    output_path = verdict.write_verdicts()
+    print(f"Verdicts written to: {output_path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -342,13 +352,19 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser = subparsers.add_parser("check", parents=[common], help="run the automated Chromium done-check")
     check_parser.set_defaults(func=cmd_check)
 
+    verdict_parser = subparsers.add_parser(
+        "verdict",
+        help="score results/ against the spine's pass criteria and write the epic-1 verdicts report",
+    )
+    verdict_parser.set_defaults(func=cmd_verdict)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.name is None:
+    if getattr(args, "name", None) is None:
         if args.command == "check":
             from bridge_spike import check as check_module  # deferred: only `check` needs playwright
 

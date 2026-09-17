@@ -23,8 +23,9 @@ steps, advertises the install name over mDNS, and serves the kit's PWA at
 Other subcommands:
 
 ```bash
-uv run spikes/bridge/kit.py renew   # new CA + cert, prints the re-trust ceremony
-uv run spikes/bridge/kit.py check   # the kit's own automated done-check (Chromium)
+uv run spikes/bridge/kit.py renew    # new CA + cert, prints the re-trust ceremony
+uv run spikes/bridge/kit.py check    # the kit's own automated done-check (Chromium)
+uv run spikes/bridge/kit.py verdict  # score results/ into the epic-1 verdicts report
 ```
 
 Both accept `--name <install-name>` and `--port <port>` (default `8443`).
@@ -66,7 +67,14 @@ default headless Chromium, the kit's one named Trusted Types policy created
 exactly once and genuinely exercised, zero real `securitypolicyviolation`
 events, and a self-test proving that violation detector isn't vacuous,
 writing `results/B5-desktop-chrome-automated.json`. Real-device browser runs
-across every B1 browser class are Story 1.6's job.
+across every B1 browser class are Story 1.6's job. Story 1.6 itself is done
+when `uv run spikes/bridge/kit.py verdict` runs against the real
+`results/` directory and produces
+`docs/agentic-os-dashboard/spikes/epic-1-verdicts.md` with a verdict for
+every required device class (`NOT RUN` where the owner's real-device runs
+haven't happened yet — see `bridge_spike/verdict.py` above); committing
+that file to `main` for real is an operator action after real-device
+testing.
 
 ## Layout
 
@@ -127,6 +135,24 @@ across every B1 browser class are Story 1.6's job.
   to pull from — see the story's own spec Design Notes.
 - `bridge_spike/check.py` — the automated Chromium check shared by
   `kit.py check` and `tests/test_automated_check.py`.
+- `bridge_spike/verdict.py` — Story 1.6: scores `results/` into
+  `docs/agentic-os-dashboard/spikes/epic-1-verdicts.md`, one row per spike
+  (`B1`, the carrier half of `B2`, `B5`) and required real-device class,
+  against the architecture spine's own pass criteria
+  (`ARCHITECTURE-SPINE.md` rows 740, 741, 744) and `full-picture.md`
+  Section 9. The four required device classes are fixed, not discovered
+  from disk: `iphone-ios26` (stock iPhone, iOS 26.4+, Safari tab and
+  installed app), `iphone-ios27` (stock iPhone, iOS 27, Safari tab and
+  installed app), `android-chrome` (Android, current Chrome stable 148+),
+  `desktop-chrome` (desktop Chrome) — looked up as
+  `results/{B1|B2-carrier|B5}-{device-class-id}.json`. A device class with
+  no matching result file reports **NOT RUN**, never a pass and never
+  silently omitted; any other `{spike}-*.json` file already under
+  `results/` (the automated/build-host check files `check.py` writes) is
+  listed separately, per spike, as automated/build-host evidence — a
+  prerequisite, never counted as satisfying a required device-class row.
+  Run it with `kit.py verdict` (see above). Committing a real run's output
+  to `main` is an operator action, after real-device testing.
 - `frontend/` — a standalone, pinned-stack (Svelte 5.57.0, `three` 0.186.0,
   Vite 8.3.0, TypeScript 6.0.3/svelte-check 4.7.6, Node ≥22.12.0)
   Vite+Svelte+TypeScript project proving the Bridge's real front-end stack

@@ -26,3 +26,35 @@ def test_print_setup_code_prints_the_code_to_the_terminal(capsys) -> None:  # ty
     kit._print_setup_code("AB23CD45")
     printed = capsys.readouterr().out
     assert "AB23CD45" in printed
+
+
+def test_build_parser_routes_verdict_to_cmd_verdict() -> None:
+    parser = kit.build_parser()
+    args = parser.parse_args(["verdict"])
+    assert args.func is kit.cmd_verdict
+    # The verdict subcommand never talks to a server: no --name/--port.
+    assert not hasattr(args, "name")
+    assert not hasattr(args, "port")
+
+
+def test_cmd_verdict_prints_the_path_write_verdicts_returns(monkeypatch, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
+    written_path = tmp_path / "epic-1-verdicts.md"
+    monkeypatch.setattr(kit.verdict, "write_verdicts", lambda: written_path)
+
+    exit_code = kit.main(["verdict"])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 0
+    assert str(written_path) in printed
+
+
+def test_main_does_not_crash_on_verdict_subcommand_with_no_name_attribute(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Regression test: main()'s `args.name is None` check used to assume
+    every subcommand has a --name attribute. The verdict subparser has
+    none, so this must use getattr() rather than crash with AttributeError."""
+    written_path = tmp_path / "epic-1-verdicts.md"
+    monkeypatch.setattr(kit.verdict, "write_verdicts", lambda: written_path)
+
+    exit_code = kit.main(["verdict"])
+
+    assert exit_code == 0
