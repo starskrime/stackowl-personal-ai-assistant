@@ -223,6 +223,20 @@ async def test_health_sweep_aggregator_includes_owl_rating_contributor(
     assert "owl_ratings" in names
 
 
+async def test_health_sweep_aggregator_includes_journal_contributor(
+    tmp_db: DbPool,
+) -> None:
+    """Spec 2.1 — JournalHealthContributor must reach the LIVE aggregator the
+    health sweep collects from, unconditionally (no live-runtime ref needed),
+    same as DbContributor, so a journal.record() failure surfaces there."""
+    components = await _build(tmp_db, browser_runtime=_FakeBrowserRuntime())
+    names = [
+        c.contributor_name
+        for c in components.health_sweep_handler._aggregator._contributors
+    ]
+    assert "journal" in names
+
+
 async def test_health_sweep_wires_embedding_registry_healer_and_contributor(
     tmp_db: DbPool,
 ) -> None:
