@@ -5,7 +5,7 @@ journal event types (Spec 2.3, gateway/core Hello exchange).
 from __future__ import annotations
 
 from stackowl.journal.digest import compute_registry_digest
-from stackowl.journal.enums import AttentionClass, RecordKind
+from stackowl.journal.enums import AttentionClass, Intensity, NeedsYouKind, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 from stackowl.journal.registry import EventRegistry, EventTypeSpec
 
@@ -14,14 +14,25 @@ class _ThrowawayAttrs(JournalAttrsBase):
     pass
 
 
-def _throwaway_spec(type_name: str, schema_version: int = 1) -> EventTypeSpec:
+def _throwaway_spec(
+    type_name: str,
+    schema_version: int = 1,
+    *,
+    needs_you_kind: NeedsYouKind | None = None,
+    resolves: tuple[str, ...] = (),
+) -> EventTypeSpec:
     return EventTypeSpec(
         type=type_name,
         schema_version=schema_version,
         attrs_model=_ThrowawayAttrs,
         emitting_process="test",
         record_kind=RecordKind.TASK,
-        attention_class=AttentionClass.AMBIENT,
+        attention_class=(
+            AttentionClass.NEEDS_YOU if needs_you_kind is not None else AttentionClass.AMBIENT
+        ),
+        intensity=Intensity.NORMAL if needs_you_kind is not None else None,
+        needs_you_kind=needs_you_kind,
+        resolves=resolves,
         narrate=lambda attrs, target: "throwaway",
     )
 
@@ -90,6 +101,48 @@ class TestTheDigestChangesWhenTheRegistrySetChanges:
 
         fresh2 = registry_module.EventRegistry()
         fresh2.register(_throwaway_spec("test.versioned", schema_version=2))
+        monkeypatch.setattr(registry_module, "_registry", fresh2)
+        second = compute_registry_digest()
+
+        assert first != second
+
+    def test_a_changed_needs_you_kind_changes_the_digest(self, monkeypatch) -> None:
+        """Review-pass-1 fix: two specs sharing the SAME (type, schema_version)
+        but differing ``needs_you_kind`` must digest differently -- proves
+        the real ``compute_registry_digest()`` actually folds this field in,
+        not a hand-rolled copy of the formula that could silently drift from
+        the real one."""
+        from stackowl.journal import registry as registry_module
+
+        fresh = registry_module.EventRegistry()
+        fresh.register(
+            _throwaway_spec("test.needs_you_kind_changes", needs_you_kind=NeedsYouKind.INCIDENT)
+        )
+        monkeypatch.setattr(registry_module, "_registry", fresh)
+        first = compute_registry_digest()
+
+        fresh2 = registry_module.EventRegistry()
+        fresh2.register(
+            _throwaway_spec("test.needs_you_kind_changes", needs_you_kind=NeedsYouKind.ALERT)
+        )
+        monkeypatch.setattr(registry_module, "_registry", fresh2)
+        second = compute_registry_digest()
+
+        assert first != second
+
+    def test_a_changed_resolves_changes_the_digest(self, monkeypatch) -> None:
+        """Review-pass-1 fix: two specs sharing the SAME (type, schema_version)
+        but differing ``resolves`` must digest differently -- same reasoning
+        as the ``needs_you_kind`` test above."""
+        from stackowl.journal import registry as registry_module
+
+        fresh = registry_module.EventRegistry()
+        fresh.register(_throwaway_spec("test.resolves_changes", resolves=("a.one",)))
+        monkeypatch.setattr(registry_module, "_registry", fresh)
+        first = compute_registry_digest()
+
+        fresh2 = registry_module.EventRegistry()
+        fresh2.register(_throwaway_spec("test.resolves_changes", resolves=("b.two",)))
         monkeypatch.setattr(registry_module, "_registry", fresh2)
         second = compute_registry_digest()
 

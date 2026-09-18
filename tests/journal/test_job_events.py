@@ -7,6 +7,7 @@ AMBIENT -- and a narration for each.
 from __future__ import annotations
 
 from stackowl.journal import AttentionClass, Intensity, RecordKind, classify
+from stackowl.journal.enums import NeedsYouKind
 from stackowl.journal.job_events import (
     JobFailedAttrs,
     JobFinishedAttrs,
@@ -39,6 +40,20 @@ class TestJobParkedIsTheNamedGiveUpExample:
     def test_the_other_three_are_ambient(self) -> None:
         for type_name in ("job.started", "job.finished", "job.failed"):
             assert classify(type_name) == (AttentionClass.AMBIENT, None)
+
+
+class TestJobParkedOpensAnIncidentItem:
+    """Story 3.1 (AD-28): ``job.parked`` is wired with
+    ``needs_you_kind=INCIDENT``; the other three never declare one."""
+
+    def test_job_parked_declares_needs_you_kind_incident(self) -> None:
+        spec = get_registry().get("job.parked")
+        assert spec.needs_you_kind is NeedsYouKind.INCIDENT
+
+    def test_the_other_three_declare_no_needs_you_kind(self) -> None:
+        for type_name in ("job.started", "job.finished", "job.failed"):
+            spec = get_registry().get(type_name)
+            assert spec.needs_you_kind is None
 
 
 class TestJobEventsNarrate:

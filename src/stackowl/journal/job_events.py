@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
+from stackowl.journal.enums import AttentionClass, Intensity, NeedsYouKind, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 from stackowl.journal.records import (
     ExpiredRecord,
@@ -120,6 +120,8 @@ def _register() -> None:
         # AD-5, verbatim: job.parked is one of the two NAMED needs_you/high
         # examples -- the scheduler gave up on this one-shot for good.
         attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.HIGH,
+        # Story 3.1 (AD-28) -- a give-up opens a durable `incident` item.
+        needs_you_kind=NeedsYouKind.INCIDENT,
         table=_TABLE, narrate=_narrate_parked,
     ))
 

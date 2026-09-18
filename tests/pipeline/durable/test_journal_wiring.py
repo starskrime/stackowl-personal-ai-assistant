@@ -200,6 +200,30 @@ class TestDeadLetteringRecordsTheGiveUp:
         assert attrs["dependency_ids"] == "wire-dep-parent"
         assert attrs["failure_class"] == "dependency_failed"
 
+    async def test_a_permanent_failure_opens_an_incident_needs_you_item(
+        self, tmp_db: DbPool
+    ) -> None:
+        """Story 3.1 (AD-28) -- the SAME real call site that already proves
+        ``task.dead_lettered`` records also proves the give-up opens a
+        durable `incident` item, not just a standalone
+        ``tests/journal/test_recorder.py`` unit."""
+        store = DurableTaskStore(tmp_db)
+        await store.enqueue(DurableTask(task_id="wire-dl-ny-1", goal="g", status="pending"))
+        await store.claim("wire-dl-ny-1", worker="w1")
+
+        await store.fail_and_requeue(
+            "wire-dl-ny-1", error="unauthorized", failure_class="auth",
+        )
+
+        item_rows = await tmp_db.fetch_all(
+            "SELECT * FROM needs_you WHERE dedupe_key = ?",
+            ("incident:owner:wire-dl-ny-1",),
+        )
+        assert len(item_rows) == 1
+        assert item_rows[0]["intensity"] == "high"
+        opened_rows = await _journal_rows(tmp_db, "needs_you.opened", "wire-dl-ny-1")
+        assert len(opened_rows) == 1
+
 
 class TestARealCallSiteRollsBackTheTaskRowWithTheJournalRow:
     async def test_a_failing_journal_record_rolls_back_claims_own_update(

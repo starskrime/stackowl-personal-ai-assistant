@@ -19,26 +19,38 @@ subsystem.
 
 Importing this module imports ``task_events``, ``job_events``, ``heal_events``,
 ``health_events``, ``turn_events``, ``memory_events``, ``consent_events``,
-``delivery_events`` and ``channel_events`` for their side effect (registering
-the task, job, heal, health, turn, memory, consent, delivery/provider and
-channel event types), so any importer of ``journal`` gets a working registry
-with no separate registration step to remember.
+``delivery_events``, ``channel_events``, ``needs_you``, ``budget_events`` and
+``link_events`` for their side effect (registering the task, job, heal,
+health, turn, memory, consent, delivery/provider, channel, Needs-you item,
+budget-warning and gateway/core-link event types), so any importer of
+``journal`` gets a working registry with no separate registration step to
+remember.
 """
 
 from __future__ import annotations
 
+from stackowl.journal import budget_events as _budget_events  # noqa: F401 -- registration side effect
 from stackowl.journal import channel_events as _channel_events  # noqa: F401 -- registration side effect
 from stackowl.journal import consent_events as _consent_events  # noqa: F401 -- registration side effect
 from stackowl.journal import delivery_events as _delivery_events  # noqa: F401 -- registration side effect
 from stackowl.journal import heal_events as _heal_events  # noqa: F401 -- registration side effect
 from stackowl.journal import health_events as _health_events  # noqa: F401 -- registration side effect
 from stackowl.journal import job_events as _job_events  # noqa: F401 -- registration side effect
+from stackowl.journal import link_events as _link_events  # noqa: F401 -- registration side effect
 from stackowl.journal import memory_events as _memory_events  # noqa: F401 -- registration side effect
+from stackowl.journal import needs_you as _needs_you  # noqa: F401 -- registration side effect
 from stackowl.journal import task_events as _task_events  # noqa: F401 -- registration side effect
 from stackowl.journal import turn_events as _turn_events  # noqa: F401 -- registration side effect
 from stackowl.journal.attention import ATTENTION_POLICY_VERSION, classify
 from stackowl.journal.digest import compute_registry_digest
-from stackowl.journal.enums import ActorKind, AttentionClass, Intensity, Outcome, RecordKind
+from stackowl.journal.enums import (
+    ActorKind,
+    AttentionClass,
+    Intensity,
+    NeedsYouKind,
+    Outcome,
+    RecordKind,
+)
 from stackowl.journal.fanout import (
     JournalRow,
     RowFetcher,
@@ -58,6 +70,7 @@ from stackowl.journal.narrator import (
     register_name_resolver,
     reset_name_resolvers_for_tests,
 )
+from stackowl.journal.needs_you import open_items
 from stackowl.journal.recorder import record
 from stackowl.journal.registry import EventRegistry, EventTypeSpec, get_registry
 from stackowl.journal.write_gate import pause_writes, resume_writes, writes_paused
@@ -75,6 +88,7 @@ __all__ = [
     "JournalRow",
     "NameResolver",
     "NarrationResult",
+    "NeedsYouKind",
     "Outcome",
     "RecordKind",
     "RecordRef",
@@ -88,6 +102,7 @@ __all__ = [
     "narrate_public",
     "new_event_id",
     "notify_committed",
+    "open_items",
     "pause_writes",
     "read_since",
     "record",

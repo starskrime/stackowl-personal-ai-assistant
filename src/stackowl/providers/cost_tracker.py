@@ -10,6 +10,9 @@ from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.journal import ActorKind, JournalEvent, Outcome
+from stackowl.journal import record as journal_record
+from stackowl.journal.budget_events import BudgetWarningAttrs
 from stackowl.providers.cost_tracker_helpers import _MAX_TRACKED_TURNS, TurnCostLedger
 from stackowl.providers.pricing.loader import PricingLoader
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
@@ -419,6 +422,34 @@ class CostTracker(OwnedRepository):
                     f"${summary.total_usd:.2f} / ${limit:.2f}"
                 ),
             })
+            # Story 3.1 (AD-28) -- durably journal the give-up-shaped signal
+            # this event already was, so it survives past the moment the
+            # EventBus's fire-once in-memory emit above is gone. Own,
+            # defensive try/except: a journal failure must never touch the
+            # cost recording DEBT-7 already made unconditional (the whole
+            # point of that story is "the budget signal must never block,
+            # gate, throttle or abort a turn" -- a NEW failure mode from
+            # journaling the signal would be exactly that regression).
+            try:
+                async with self._db.transaction() as conn:
+                    await journal_record(conn, JournalEvent(
+                        type="budget.warning", schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS, actor_id="providers.cost_tracker",
+                        target_kind=ActorKind.OWNER, target_id=date,
+                        outcome=Outcome.OK,
+                        attrs=BudgetWarningAttrs(
+                            date=date, current_usd=summary.total_usd,
+                            limit_usd=limit, ratio_pct=int(ratio * 100),
+                        ),
+                    ))
+            except Exception as exc:  # noqa: BLE001 -- a journal failure must never cost the caller its cost recording
+                log.engine.error(
+                    "[cost_tracker] _check_budget: failed to journal "
+                    "budget.warning -- the budget-80pct signal above still "
+                    "fired; only its durable record is missing",
+                    exc_info=exc,
+                    extra={"_fields": {"date": date}},
+                )
 
     async def daily_total(self, date: str | None = None) -> DailySummary:
         """Aggregate cost_records for the given date (default: today UTC)."""

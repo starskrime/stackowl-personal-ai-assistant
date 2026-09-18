@@ -150,3 +150,84 @@ def test_phase_gateway_wires_curated_memory_db_pool_after_db_pool_exists() -> No
         "set_curated_memory_db_pool(db_pool) must be a plain, unconditional "
         "top-level call in _phase_gateway, not nested inside an if/try/etc."
     )
+
+
+def test_phase_gateway_wires_needs_you_db_pool_after_db_pool_exists() -> None:
+    """``set_needs_you_db_pool(db_pool)`` (Story 3.1, AD-28) is wired into
+    ``_phase_gateway``, unconditionally, after ``db_pool`` is bound.
+
+    THE BUG THIS GUARDS AGAINST: if this call is silently removed, reordered
+    above the ``db_pool`` assignment, or wrapped in a conditional,
+    ``needs_you.py``'s retention-hold checker (registered into
+    ``get_retention_hold_registry()`` at import time) stays wired to no pool
+    forever -- it always returns ``frozenset()``, and ``journal_prune`` would
+    then delete an unresolved incident's opening event exactly like an
+    unheld row, with nothing else ever catching the regression (the checker
+    itself never raises on an unwired pool -- see ``needs_you.py``'s own
+    docstring). Same AST-guard rationale as the two tests above.
+    """
+    fn = _phase_gateway_ast()
+
+    call = _find_call_by_name(fn, "set_needs_you_db_pool")
+
+    assert len(call.args) == 1, "set_needs_you_db_pool must take exactly one argument"
+    arg = call.args[0]
+    assert isinstance(arg, ast.Name) and arg.id == "db_pool", (
+        f"set_needs_you_db_pool must be called with the local `db_pool`, "
+        f"got: {ast.dump(arg)}"
+    )
+
+    db_pool_lineno = _find_assignment_lineno(fn, "db_pool")
+    assert call.lineno > db_pool_lineno, (
+        "set_needs_you_db_pool(db_pool) must run AFTER `db_pool` is bound. "
+        f"call at line {call.lineno}, db_pool assigned at line {db_pool_lineno}."
+    )
+
+    is_top_level = any(
+        isinstance(stmt, ast.Expr) and stmt.value is call for stmt in fn.body
+    )
+    assert is_top_level, (
+        "set_needs_you_db_pool(db_pool) must be a plain, unconditional "
+        "top-level call in _phase_gateway, not nested inside an if/try/etc."
+    )
+
+
+def test_phase_gateway_calls_supervise_core_with_db_pool() -> None:
+    """Story 3.1 (AD-28), review-pass amendment -- the one real
+    ``_supervise_core(...)`` call site inside ``_phase_gateway`` passes
+    ``db_pool=db_pool``, so a real Hello-mismatch stand-down can durably
+    journal itself.
+
+    THE BUG THIS GUARDS AGAINST: before this test existed, only the
+    PARAMETER's existence on ``_supervise_core``'s signature and its
+    behavior when explicitly passed were tested
+    (``test_hello_mismatch_supervision.py``) -- nothing guarded that the
+    REAL production call site actually supplies it, unlike every sibling
+    parameter threaded into the same call (``stall_probe``, ``link_secret``,
+    ``gateway_link``, etc.). A silently dropped/reordered/conditional
+    ``db_pool=`` keyword there would make every real stand-down permanently
+    skip journaling with nothing in the suite catching it -- exactly the
+    kind of gap ``_supervise_core`` is called through ``asyncio.create_task``,
+    not as a bare top-level statement, so this does NOT assert "top-level"
+    like the two tests above; it asserts the keyword is present, correctly
+    valued, and ordered after ``db_pool`` exists.
+    """
+    fn = _phase_gateway_ast()
+
+    call = _find_call_by_name(fn, "_supervise_core")
+
+    kwarg = next((kw for kw in call.keywords if kw.arg == "db_pool"), None)
+    assert kwarg is not None, (
+        "_supervise_core must be called with a db_pool= keyword argument"
+    )
+    assert isinstance(kwarg.value, ast.Name) and kwarg.value.id == "db_pool", (
+        f"_supervise_core's db_pool= must be the local `db_pool`, got: "
+        f"{ast.dump(kwarg.value)}"
+    )
+
+    db_pool_lineno = _find_assignment_lineno(fn, "db_pool")
+    assert call.lineno > db_pool_lineno, (
+        "_supervise_core(..., db_pool=db_pool) must run AFTER `db_pool` is "
+        f"bound. call at line {call.lineno}, db_pool assigned at line "
+        f"{db_pool_lineno}."
+    )

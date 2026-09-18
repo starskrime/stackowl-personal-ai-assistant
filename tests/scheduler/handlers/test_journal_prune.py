@@ -24,6 +24,8 @@ import pytest
 from stackowl.config.journal_settings import JournalSettings
 from stackowl.db.pool import DbPool
 from stackowl.journal import ActorKind, JournalEvent, Outcome, record
+from stackowl.journal import needs_you as needs_you_module
+from stackowl.journal.heal_events import HealExhaustedAttrs
 from stackowl.journal.health import JournalHealthContributor
 from stackowl.journal.health import reset_for_tests as _reset_journal_health
 from stackowl.journal.retention_holds import (
@@ -202,6 +204,108 @@ class TestARegisteredHoldSurvivesThePass:
         assert other_old_cursor not in remaining_cursors, (
             "an UNHELD old row must still be pruned"
         )
+
+
+class TestAnUnresolvedNeedsYouItemHoldsItsOpeningEvent:
+    """Story 3.1's own I/O & Edge-Case Matrix row: "journal_prune runs while
+    an incident's opening event is still unresolved -> that event's cursor
+    is excluded from the delete batch". Registers the REAL ``needs_you``
+    checker (not an ad hoc lambda) -- this file's own autouse fixture wipes
+    the registry before every test (see its docstring), so this stands the
+    production wiring back up locally, the same way
+    ``tests/journal/test_retention_holds.py`` restores it for the rest of
+    the suite."""
+
+    async def test_an_open_incidents_triggering_event_survives_the_pass(
+        self, db_with_path: tuple[DbPool, Path]
+    ) -> None:
+        pool, db_path = db_with_path
+        needs_you_module.set_db_pool(pool)
+        get_retention_hold_registry().register_hold_source(
+            "needs_you", needs_you_module._held_cursors
+        )
+        try:
+            async with pool.transaction() as conn:
+                await record(conn, JournalEvent(
+                    type="heal.exhausted", schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS, actor_id="health_sweep",
+                    target_kind=ActorKind.OWNER, target_id="prune-held-subsystem",
+                    outcome=Outcome.FAILED, attrs=HealExhaustedAttrs(attempt_count=1),
+                    occurred_at=_days_ago(40),
+                ))
+            held_rows = await pool.fetch_all(
+                "SELECT cursor FROM journal_events WHERE type = 'heal.exhausted' "
+                "AND target_id = ?",
+                ("prune-held-subsystem",),
+            )
+            held_cursor = int(held_rows[0]["cursor"])
+            other_old_cursor = await _insert_event(pool, _days_ago(40))
+
+            result = await JournalPruneHandler(pool, db_path).execute(_job())
+
+            assert result.success is True
+            remaining = await pool.fetch_all(
+                "SELECT cursor FROM journal_events ORDER BY cursor", ()
+            )
+            remaining_cursors = {int(r["cursor"]) for r in remaining}
+            assert held_cursor in remaining_cursors, (
+                "an unresolved incident's opening event must survive the pass"
+            )
+            assert other_old_cursor not in remaining_cursors, (
+                "an unrelated old row with nothing holding it must still be pruned"
+            )
+            item_rows = await pool.fetch_all(
+                "SELECT * FROM needs_you WHERE dedupe_key = ?",
+                ("incident:owner:prune-held-subsystem",),
+            )
+            assert len(item_rows) == 1, "the needs_you row itself is never pruned"
+        finally:
+            # This module-global pool reference must not outlive `pool`
+            # (closed by the `db_with_path` fixture's own teardown) and leak
+            # into a later, unrelated test file.
+            needs_you_module._DB_POOL = None
+
+    async def test_a_resolved_items_event_is_no_longer_held(
+        self, db_with_path: tuple[DbPool, Path]
+    ) -> None:
+        pool, db_path = db_with_path
+        needs_you_module.set_db_pool(pool)
+        get_retention_hold_registry().register_hold_source(
+            "needs_you", needs_you_module._held_cursors
+        )
+        try:
+            async with pool.transaction() as conn:
+                await record(conn, JournalEvent(
+                    type="heal.exhausted", schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS, actor_id="health_sweep",
+                    target_kind=ActorKind.OWNER, target_id="prune-resolved-subsystem",
+                    outcome=Outcome.FAILED, attrs=HealExhaustedAttrs(attempt_count=1),
+                    occurred_at=_days_ago(40),
+                ))
+            triggering_rows = await pool.fetch_all(
+                "SELECT cursor FROM journal_events WHERE type = 'heal.exhausted' "
+                "AND target_id = ?",
+                ("prune-resolved-subsystem",),
+            )
+            triggering_cursor = int(triggering_rows[0]["cursor"])
+            async with pool.transaction() as conn:
+                await needs_you_module._resolve_open_item(
+                    conn, dedupe_key="incident:owner:prune-resolved-subsystem",
+                    resolved_cursor=999_999_999, resolved_by="system:test",
+                )
+
+            result = await JournalPruneHandler(pool, db_path).execute(_job())
+
+            assert result.success is True
+            remaining = await pool.fetch_all(
+                "SELECT cursor FROM journal_events ORDER BY cursor", ()
+            )
+            remaining_cursors = {int(r["cursor"]) for r in remaining}
+            assert triggering_cursor not in remaining_cursors, (
+                "a RESOLVED item's opening event must prune normally once past retention"
+            )
+        finally:
+            needs_you_module._DB_POOL = None
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,38 @@ class RecordKind(StrEnum):
     #: Story 2.9 — gateway-side channel ingress (``channel.message_received``),
     #: emitted from ``startup.orchestrator``'s gateway-role receive loops.
     CHANNEL = "channel"
+    #: Story 3.1 — the cost tracker's daily-budget-warning signal
+    #: (``budget.warning``), emitted from ``providers.cost_tracker``.
+    COST = "cost"
+    #: Story 3.1 — the gateway↔core link's repeated-Hello-mismatch stand-down
+    #: (``link.hello_mismatch_standdown``), emitted from
+    #: ``startup.orchestrator``.
+    LINK = "link"
+    #: Story 3.1 — durable Needs-you items themselves (``needs_you.opened``,
+    #: ``needs_you.resolved``), emitted from ``journal.recorder.record()``'s
+    #: own generic open/close wiring, never from a subsystem call site.
+    NEEDS_YOU = "needs_you"
+
+
+class NeedsYouKind(StrEnum):
+    """AD-28's closed Needs-you item vocabulary: what KIND of durable item a
+    ``NEEDS_YOU`` event opens. Required on ``EventTypeSpec.needs_you_kind``
+    when ``attention_class`` is ``NEEDS_YOU``, forbidden otherwise -- the same
+    cross-field shape ``intensity`` already has (``registry.py``'s
+    ``__post_init__``).
+
+    ``device`` is declared here (Epic 3 context: "device items are declared
+    as a kind in this epic") even though no event type registers it yet --
+    Telegram delivery for it ships in Epic 5. A closed enum with a currently
+    vacuous member is the same "ships correct, zero real callers" shape
+    ``RetentionHoldRegistry`` (Story 2.11) already established.
+    """
+
+    APPROVAL = "approval"
+    QUESTION = "question"
+    INCIDENT = "incident"
+    ALERT = "alert"
+    DEVICE = "device"
 
 
 class Outcome(StrEnum):

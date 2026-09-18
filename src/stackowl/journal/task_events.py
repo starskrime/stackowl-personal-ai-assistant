@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.infra.observability import log
-from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
+from stackowl.journal.enums import AttentionClass, Intensity, NeedsYouKind, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 from stackowl.journal.records import (
     ExpiredRecord,
@@ -134,6 +134,8 @@ def _register() -> None:
         # needs_you/high examples -- the loop gave up, and that is exactly
         # what must reach the owner rather than dissolve into a log file.
         attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.HIGH,
+        # Story 3.1 (AD-28) -- a give-up opens a durable `incident` item.
+        needs_you_kind=NeedsYouKind.INCIDENT,
         table=_TABLE, narrate=_narrate_dead_lettered,
     ))
 

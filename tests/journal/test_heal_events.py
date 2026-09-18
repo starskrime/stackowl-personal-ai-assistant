@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from stackowl.journal import AttentionClass, Intensity, RecordKind, classify
+from stackowl.journal.enums import NeedsYouKind
 from stackowl.journal.heal_events import (
     HealAttemptedAttrs,
     HealExhaustedAttrs,
@@ -36,6 +37,21 @@ class TestHealExhaustedIsTheNamedGiveUpExample:
     def test_attempted_and_healed_are_ambient(self) -> None:
         for type_name in ("heal.attempted", "heal.healed"):
             assert classify(type_name) == (AttentionClass.AMBIENT, None)
+
+
+class TestHealExhaustedOpensAnIncidentItem:
+    """Story 3.1 (AD-28): ``heal.exhausted`` is wired with
+    ``needs_you_kind=INCIDENT``; ``heal.attempted``/``heal.healed`` never
+    declare one (AMBIENT forbids it)."""
+
+    def test_heal_exhausted_declares_needs_you_kind_incident(self) -> None:
+        spec = get_registry().get("heal.exhausted")
+        assert spec.needs_you_kind is NeedsYouKind.INCIDENT
+
+    def test_attempted_and_healed_declare_no_needs_you_kind(self) -> None:
+        for type_name in ("heal.attempted", "heal.healed"):
+            spec = get_registry().get(type_name)
+            assert spec.needs_you_kind is None
 
 
 class TestHealEventsNarrate:

@@ -256,6 +256,7 @@ async def _supervise_core(
     gateway_link: GatewayLink | None = None,
     *,
     link_secret: str | None = None,
+    db_pool: DbPool | None = None,
 ) -> None:
     """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
 
@@ -287,6 +288,22 @@ async def _supervise_core(
     Spec 2.4 — ``link_secret`` (when passed) is threaded into every respawn's
     env, identically to the initial spawn, so a crash-respawned core presents
     the SAME per-boot secret in its Hello as the core it replaced.
+
+    Story 3.1 (AD-28) — ``db_pool`` (when passed) durably journals the
+    stand-down as ``link.hello_mismatch_standdown`` (an `incident`-kind
+    Needs-you item) right before the critical log + return below, in its own
+    transaction (this decision carries no other state change to piggyback
+    on), with ``bypass_write_gate=True`` -- REQUIRED: the gateway/core
+    write-gate is unconditionally paused at this exact point (every Hello
+    mismatch pauses it, ``runtime/gateway_link.py``'s ``GatewayLink._route``,
+    and nothing resumes it before this stand-down's own 3-consecutive-
+    mismatch threshold fires), so a bare (non-bypassed) call would always
+    raise ``JournalWritesPausedError`` and silently defeat this story's own
+    AC for this trigger. The gateway and core share one SQLite file
+    (`_phase_gateway`'s own documented reason), so the gateway's own
+    `db_pool` — already constructed before this function's one real call site
+    — is exactly what lets this write land even though core has, by
+    definition, already exited.
     """
     from stackowl.runtime import link_auth
     from stackowl.runtime.supervisor import spawn_core
@@ -317,6 +334,45 @@ async def _supervise_core(
             gateway_link is not None
             and gateway_link.consecutive_hello_mismatches >= _MAX_CONSECUTIVE_HELLO_MISMATCHES
         ):
+            if db_pool is not None:
+                # Story 3.1 (AD-28) -- journal the give-up BEFORE the loud
+                # log + return, so it survives past this log line scrolling
+                # away. Its own try/except: a journal failure must never
+                # stop the stand-down itself from completing.
+                # bypass_write_gate=True is REQUIRED here -- see this
+                # function's own docstring and recorder.record()'s.
+                try:
+                    from stackowl.journal import ActorKind, JournalEvent, Outcome
+                    from stackowl.journal import record as journal_record
+                    from stackowl.journal.link_events import (
+                        LinkHelloMismatchStanddownAttrs,
+                    )
+
+                    async with db_pool.transaction() as conn:
+                        await journal_record(
+                            conn,
+                            JournalEvent(
+                                type="link.hello_mismatch_standdown", schema_version=1,
+                                actor_kind=ActorKind.AUTONOMOUS,
+                                actor_id="startup.orchestrator",
+                                target_kind=ActorKind.OWNER,
+                                target_id="gateway_core_link",
+                                outcome=Outcome.OK,
+                                attrs=LinkHelloMismatchStanddownAttrs(
+                                    consecutive_mismatches=(
+                                        gateway_link.consecutive_hello_mismatches
+                                    ),
+                                ),
+                            ),
+                            bypass_write_gate=True,
+                        )
+                except Exception as exc:  # noqa: BLE001 -- the stand-down itself must still complete
+                    log.error(
+                        "[startup] _supervise_core: failed to journal "
+                        "link.hello_mismatch_standdown -- standing down "
+                        "anyway",
+                        exc_info=exc,
+                    )
             log.critical(
                 "★ GATEWAY/CORE HELLO KEEPS MISMATCHING ★ — %d consecutive core "
                 "(re)connections have all failed the Hello compatibility check. "
@@ -1131,6 +1187,16 @@ class StartupOrchestrator:
         from stackowl.memory.curated import set_db_pool as set_curated_memory_db_pool
 
         set_curated_memory_db_pool(db_pool)
+
+        # Story 3.1 (AD-28) -- same seam, for `needs_you.py`'s own
+        # module-global pool: without this, its retention-hold checker
+        # (registered into `get_retention_hold_registry()` at import time)
+        # always returns `frozenset()` and `journal_prune` would never
+        # actually protect an unresolved item's opening event, ships-
+        # correct-but-inert until wired here, mirroring the line above.
+        from stackowl.journal.needs_you import set_db_pool as set_needs_you_db_pool
+
+        set_needs_you_db_pool(db_pool)
 
         # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
         # "everything in md or sqlite. No data duplication."
@@ -5164,6 +5230,9 @@ class StartupOrchestrator:
                     gateway_link=gateway_link,
                     # Spec 2.4 — every respawn presents the SAME per-boot secret.
                     link_secret=link_secret,
+                    # Story 3.1 (AD-28) — so a stand-down can durably journal
+                    # itself (already constructed above, in scope here).
+                    db_pool=db_pool,
                 )
             )
             # AND THE SUPERVISOR THAT WATCHES FOR A SILENT DEATH COULD DIE SILENTLY

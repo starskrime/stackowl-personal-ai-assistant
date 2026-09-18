@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from stackowl.infra.observability import log
-from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
+from stackowl.journal.enums import AttentionClass, Intensity, NeedsYouKind, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 
 
@@ -69,6 +69,20 @@ class EventTypeSpec:
     #: (`memory.written` -- `md`-backed, AD-4: "md- and graph-backed targets
     #: never gain mirror tables").
     table: str | None = None
+    #: Story 3.1 (AD-28) -- what KIND of Needs-you item this type opens.
+    #: Required when `attention_class` is `NEEDS_YOU`, forbidden otherwise --
+    #: validated in `__post_init__` alongside `intensity`'s identical
+    #: cross-field rule, since the two are only ever meaningful together (a
+    #: type that needs the owner's attention always opens a typed item).
+    needs_you_kind: NeedsYouKind | None = None
+    #: Story 3.1 (AD-28) -- the OTHER registered type names this type closes
+    #: when recorded (e.g. a future "job resumed" declaring
+    #: `resolves=("job.parked",)`). Never validated against the registry at
+    #: registration time -- import order across `*_events.py` modules is not
+    #: guaranteed, so `record()` looks each name up LIVE and raises the
+    #: existing `JournalEventTypeUnregisteredError` on a bad one, the same
+    #: failure mode a bad name in any other live lookup already produces.
+    resolves: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # 1. ENTRY
@@ -105,6 +119,28 @@ class EventTypeSpec:
             raise ValueError(
                 f"journal event type {self.type!r} is attention_class=AMBIENT "
                 "and must NOT declare an intensity (AD-5)"
+            )
+        # 3b. STEP -- needs_you_kind/attention_class must agree, the same
+        # cross-field shape as intensity above (AD-28).
+        if self.attention_class is AttentionClass.NEEDS_YOU and self.needs_you_kind is None:
+            log.journal.error(
+                "[journal] EventTypeSpec.__post_init__: refused -- "
+                "NEEDS_YOU with no needs_you_kind",
+                extra={"_fields": {"type": self.type}},
+            )
+            raise ValueError(
+                f"journal event type {self.type!r} is attention_class="
+                "NEEDS_YOU and must declare a needs_you_kind (AD-28)"
+            )
+        if self.attention_class is AttentionClass.AMBIENT and self.needs_you_kind is not None:
+            log.journal.error(
+                "[journal] EventTypeSpec.__post_init__: refused -- "
+                "AMBIENT with a needs_you_kind",
+                extra={"_fields": {"type": self.type}},
+            )
+            raise ValueError(
+                f"journal event type {self.type!r} is attention_class=AMBIENT "
+                "and must NOT declare a needs_you_kind (AD-28)"
             )
         # 4. EXIT
         log.journal.debug(

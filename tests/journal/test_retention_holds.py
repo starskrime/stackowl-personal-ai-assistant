@@ -4,12 +4,23 @@ union (sync and async checkers)/``reset_for_tests`` (Story 2.11, AD-6).
 Mirrors ``tests/journal/test_record_readers.py``'s shape for
 ``RecordReaderRegistry``, the sibling registry this one copies its class
 shape from.
+
+Story 3.1 -- ``stackowl.journal.needs_you`` registers a REAL, permanent
+``"needs_you"`` hold source into the process singleton at import time
+(``get_retention_hold_registry()``). ``reset_retention_holds_for_tests()``
+clears the WHOLE singleton, real registrations included -- left alone, this
+file's own autouse reset would permanently strip that production wiring for
+the rest of the test session the first time this file runs (nothing
+re-imports ``needs_you.py``'s module-level registration a second time).
+``_reset`` therefore re-registers it after every clear -- "reset" here means
+"back to what the live process actually looks like", not "back to empty".
 """
 
 from __future__ import annotations
 
 import pytest
 
+from stackowl.journal import needs_you
 from stackowl.journal.retention_holds import (
     RetentionHoldRegistry,
     get_retention_hold_registry,
@@ -19,11 +30,19 @@ from stackowl.journal.retention_holds import (
 pytestmark = pytest.mark.asyncio
 
 
+def _restore_real_hold_sources() -> None:
+    """Re-register every hold source a real boot registers at import time --
+    today, just ``needs_you``. See module docstring."""
+    get_retention_hold_registry().register_hold_source("needs_you", needs_you._held_cursors)
+
+
 @pytest.fixture(autouse=True)
 def _reset() -> None:
     reset_retention_holds_for_tests()
+    _restore_real_hold_sources()
     yield
     reset_retention_holds_for_tests()
+    _restore_real_hold_sources()
 
 
 class TestRegistration:

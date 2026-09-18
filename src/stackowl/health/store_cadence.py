@@ -346,6 +346,29 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     # cadence, in the same transaction as `journal_events` itself.
     _hot("delivery_records", "occurred_at"),
     _hot("channel_ingress_records", "occurred_at"),
+    # Story 3.1 (AD-28) -- `needs_you` (migration 0150) has no calendar
+    # cadence of its own: it holds durable give-up/approval/alert items,
+    # written only when the attention policy classifies an event
+    # NEEDS_YOU -- a platform that stays healthy correctly writes none, same
+    # shape as `heal_attempts`/`webhook_events_log` above. ON_DEMAND, NOT
+    # UNMEASURABLE: `expires_at` genuinely IS an `_at` column in this table
+    # (`test_the_unmeasurable_hatch_told_the_truth.py`'s own rule -- an
+    # UNMEASURABLE declaration must have NO `_at` column at all), so the
+    # honest declaration names it as the clock rather than claiming none
+    # exists. It stays NULL until Story 3.2 populates it (this story's
+    # minimal internal resolver never sets it), so MAX(expires_at) reads
+    # EMPTY, never silent -- correct, since `opened_cursor`/`resolved_cursor`
+    # (the columns this story actually writes) are `journal_events.cursor`
+    # REFERENCES, not clock values a `_at`-suffix column check would ever
+    # find. ON_DEMAND's own `max_silence_days=None` means this declaration
+    # never alarms regardless -- the SAME inertness `_on_demand("owls", ...)`
+    # already has above.
+    _on_demand(
+        "needs_you", "expires_at",
+        "written only when a NEEDS_YOU event opens an item; expires_at is "
+        "Story 3.2's own waiter-expiry field and stays NULL until that "
+        "story populates it",
+    ),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}
