@@ -975,6 +975,7 @@ class StartupOrchestrator:
         from stackowl.ipc.server import IpcServer
         from stackowl.ipc.stream_bridge import SocketStreamRegistry
         from stackowl.journal import fanout as journal_fanout
+        from stackowl.journal.channel_events import record_channel_message_received
         from stackowl.owls.registry import OwlRegistry
         from stackowl.parliament.convergence import ConvergenceDetector
         from stackowl.parliament.orchestrator import ParliamentOrchestrator
@@ -3606,6 +3607,10 @@ class StartupOrchestrator:
                             "[startup] gateway: message received",
                             extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                         )
+                        await record_channel_message_received(
+                            db_pool, channel=msg.channel, session_key=msg.session_key,
+                            trace_id=msg.trace_id,
+                        )
                         await turn_client.submit(msg)
                     except asyncio.CancelledError:
                         raise
@@ -4116,6 +4121,10 @@ class StartupOrchestrator:
                                     "[startup] gateway: telegram message received",
                                     extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
+                                await record_channel_message_received(
+                                    db_pool, channel=msg.channel, session_key=msg.session_key,
+                                    trace_id=msg.trace_id,
+                                )
                                 await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
@@ -4439,6 +4448,10 @@ class StartupOrchestrator:
                                     "[startup] gateway: slack message received",
                                     extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
+                                await record_channel_message_received(
+                                    db_pool, channel=msg.channel, session_key=msg.session_key,
+                                    trace_id=msg.trace_id,
+                                )
                                 await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
@@ -4545,6 +4558,10 @@ class StartupOrchestrator:
                                     "[startup] gateway: discord message received",
                                     extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
+                                await record_channel_message_received(
+                                    db_pool, channel=msg.channel, session_key=msg.session_key,
+                                    trace_id=msg.trace_id,
+                                )
                                 await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
@@ -4618,6 +4635,10 @@ class StartupOrchestrator:
                                 log.info(
                                     "[startup] gateway: whatsapp message received",
                                     extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
+                                )
+                                await record_channel_message_received(
+                                    db_pool, channel=msg.channel, session_key=msg.session_key,
+                                    trace_id=msg.trace_id,
                                 )
                                 decision = scanner.scan(msg)
                                 input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
