@@ -14,16 +14,12 @@ from stackowl.ipc.frames import (
     HelloFrame,
     IngressFrame,
     ProgressEventFrame,
-    QueryRunningFrame,
     RestartNoticeFrame,
-    RunningStateFrame,
     SendTextFrame,
-    SteerFrame,
-    StopFrame,
 )
 
 ALL_FRAMES = [
-    HelloFrame(core_pid=1234),
+    HelloFrame(sender_pid=1234, highest_migration=1, registry_digest="x"),
     GoodbyeFrame(reason="shutdown"),
     RestartNoticeFrame(reason="code change", grace_seconds=120.0),
     IngressFrame(text="hi", session_key="s1", channel="cli", trace_id="t1"),
@@ -37,10 +33,6 @@ ALL_FRAMES = [
         content="status", is_final=False, chunk_index=1, trace_id="t1",
         owl_name="owl", kind="progress", target="chan:thread", is_floor=False,
     ),
-    SteerFrame(request_id="t1", text="also do X"),
-    StopFrame(request_id="t1"),
-    QueryRunningFrame(session_key="s1", query_id="q1"),
-    RunningStateFrame(query_id="q1", running=True, request_id="t1"),
     SendTextFrame(channel="telegram", text="ping", target=42),
     ProgressEventFrame(event="pipeline_step_changed", payload={"step_index": 2}),
     ClarifyAskFrame(clarify_id="c1", session_key="s1", question="which one?", trace_id="t1"),
@@ -77,6 +69,14 @@ def test_decode_rejects_unknown_type() -> None:
         decode_frame(b'{"type": "no_such_frame"}\n')
 
 
+def test_decode_error_names_the_unknown_type_best_effort() -> None:
+    """Spec 2.3 — the reader can log WHICH type it couldn't decode instead of
+    a silent skip; a best-effort JSON extraction backs it, not a full parse."""
+    with pytest.raises(FrameDecodeError) as exc_info:
+        decode_frame(b'{"type":"no_such_frame"}\n')
+    assert exc_info.value.frame_type == "no_such_frame"
+
+
 def test_decode_rejects_malformed_json() -> None:
     with pytest.raises(FrameDecodeError):
         decode_frame(b"not json at all\n")
@@ -88,6 +88,6 @@ def test_decode_rejects_empty_line() -> None:
 
 
 def test_decode_tolerates_missing_trailing_newline() -> None:
-    frame = StopFrame(request_id="t9")
+    frame = AckFrame(ref="t9")
     wire_no_nl = encode_frame(frame).rstrip(b"\n")
     assert decode_frame(wire_no_nl) == frame

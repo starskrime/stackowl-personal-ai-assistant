@@ -15,6 +15,7 @@ import pytest
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.ipc.client import IpcClient
 from stackowl.ipc.connection import FrameConnection
+from stackowl.ipc.frames import HelloFrame
 from stackowl.ipc.server import IpcServer
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.runtime.core_link import _TURN_FAILURE_NOTICE, CoreLink, CoreSink
@@ -63,7 +64,10 @@ async def _run_split(socket_path, dispatch, adapter):
     holder["link"] = link
 
     async def gateway_accept(conn: FrameConnection) -> None:
-        link.set_connection(conn)
+        link.set_connection(
+            conn,
+            local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="x"),
+        )
         link_ready.set()
         try:
             await link.run(conn)

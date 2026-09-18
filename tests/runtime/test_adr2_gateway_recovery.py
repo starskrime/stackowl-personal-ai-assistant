@@ -50,6 +50,10 @@ def _msg(text: str) -> IngressMessage:
     )
 
 
+def _hello(pid: int = 1) -> HelloFrame:
+    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+
+
 async def test_replay_decision_routes_through_actuator_when_unify_on(monkeypatch) -> None:  # noqa: ANN001
     from stackowl.pipeline.recovery_actuator import Failure
 
@@ -59,8 +63,8 @@ async def test_replay_decision_routes_through_actuator_when_unify_on(monkeypatch
     link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
 
     await link.submit(_msg("x"))            # buffers (no conn)
-    link.set_connection(_FailingConn())     # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=1))  # replay fails → retry decision
+    link.set_connection(_FailingConn(), local_hello=_hello())     # type: ignore[arg-type]
+    await link._route(_hello())  # replay fails → retry decision
 
     assert len(spy.calls) == 1
     failure = spy.calls[0]
@@ -79,8 +83,8 @@ async def test_replay_decision_inline_when_unify_off(monkeypatch) -> None:  # no
     link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
 
     await link.submit(_msg("x"))
-    link.set_connection(_FailingConn())  # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=1))
+    link.set_connection(_FailingConn(), local_hello=_hello())  # type: ignore[arg-type]
+    await link._route(_hello())
 
     assert spy.calls == []  # inline path — authority not consulted
     assert [m.text for m in link._pending] == ["x"]  # same byte-identical re-queue

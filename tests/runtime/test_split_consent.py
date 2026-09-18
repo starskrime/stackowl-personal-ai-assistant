@@ -15,7 +15,7 @@ import pytest
 
 from stackowl.ipc.client import IpcClient
 from stackowl.ipc.connection import FrameConnection
-from stackowl.ipc.frames import ConsentResponseFrame
+from stackowl.ipc.frames import ConsentResponseFrame, HelloFrame
 from stackowl.ipc.server import IpcServer
 from stackowl.runtime.gateway_link import GatewayLink
 from stackowl.runtime.socket_consent import SocketConsentPrompter
@@ -41,7 +41,10 @@ async def _wire(socket_path, router):
     link = GatewayLink({"telegram": _NullAdapter()}, consent_router=router)
 
     async def gw_accept(conn: FrameConnection) -> None:
-        link.set_connection(conn)
+        link.set_connection(
+            conn,
+            local_hello=HelloFrame(sender_pid=1, highest_migration=1, registry_digest="x"),
+        )
         await link.run(conn)
 
     server = IpcServer(socket_path)

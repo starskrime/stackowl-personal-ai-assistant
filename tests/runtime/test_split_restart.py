@@ -12,6 +12,8 @@ import asyncio
 
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.ipc.frames import ChunkFrame, HelloFrame, IngressFrame, RestartNoticeFrame
+from stackowl.journal.write_gate import writes_paused
+from stackowl.runtime import link_health
 from stackowl.runtime.drain import quiesce
 from stackowl.runtime.gateway_link import GatewayLink
 
@@ -83,6 +85,10 @@ def _msg(text: str = "hi") -> IngressMessage:
     )
 
 
+def _hello(pid: int = 1) -> HelloFrame:
+    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+
+
 async def test_submit_buffers_when_no_connection() -> None:
     link = GatewayLink({"cli": _FakeAdapter()})
     # No connection bound yet -> the message is held, nothing is sent.
@@ -98,8 +104,8 @@ async def test_hello_flushes_buffered_messages() -> None:
     # Buffer while disconnected, then connect + receive a Hello -> flush.
     await link.submit(_msg("a"))
     await link.submit(_msg("b"))
-    link.set_connection(conn)  # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=1))
+    link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
+    await link._route(_hello())
     await asyncio.sleep(0.01)  # let the spawned adapter.send tasks run
 
     assert not link._pending
@@ -113,7 +119,7 @@ async def test_restart_notice_starts_buffering() -> None:
     adapter = _FakeAdapter()
     link = GatewayLink({"cli": adapter})
     conn = _FakeConn()
-    link.set_connection(conn)  # type: ignore[arg-type]
+    link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
     # A restart notice means the core is tearing down: subsequent submits buffer.
     await link._route(RestartNoticeFrame(reason="code-change"))
@@ -126,7 +132,7 @@ async def test_finalize_ends_cut_turn_readers() -> None:
     adapter = _FakeAdapter()
     link = GatewayLink({"cli": adapter})
     conn = _FakeConn()
-    link.set_connection(conn)  # type: ignore[arg-type]
+    link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
     # Submit opens a demux reader the adapter consumes; the chunk never closes.
     await link.submit(_msg("open"))
@@ -150,7 +156,7 @@ async def test_chunk_routes_to_demux_after_submit() -> None:
     adapter = _FakeAdapter()
     link = GatewayLink({"cli": adapter})
     conn = _FakeConn()
-    link.set_connection(conn)  # type: ignore[arg-type]
+    link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
     await link.submit(_msg("x"))
     # A chunk for the registered turn is accepted (no "unknown request" drop path).
     await link._route(
@@ -158,3 +164,80 @@ async def test_chunk_routes_to_demux_after_submit() -> None:
     )
     # is_final cleaned the turn out of the demux.
     assert "t-x" not in link._demux._registry._writers
+
+
+# --- Spec 2.3 — Hello compatibility at the GatewayLink seam ---------------
+
+
+async def test_a_mismatched_hello_keeps_buffering_and_does_not_flush() -> None:
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter})
+    conn = _FakeConn()
+
+    await link.submit(_msg("a"))
+    link.set_connection(
+        conn,
+        local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="gateway-digest"),
+    )
+    await link._route(
+        HelloFrame(sender_pid=9, highest_migration=1, registry_digest="core-digest")
+    )
+
+    # The link never activated: nothing was flushed, buffering still applies.
+    assert link._pending and link._pending[0].text == "a"
+    assert not [f for f in conn.sent if isinstance(f, IngressFrame)]
+    assert link.consecutive_hello_mismatches == 1
+
+
+async def test_a_matching_hello_resumes_writes_and_flushes() -> None:
+    from stackowl.journal import write_gate
+
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter})
+    conn = _FakeConn()
+
+    write_gate.pause_writes("test setup")
+    await link.submit(_msg("a"))
+    matching = HelloFrame(sender_pid=0, highest_migration=1, registry_digest="same")
+    link.set_connection(conn, local_hello=matching)
+    await link._route(HelloFrame(sender_pid=9, highest_migration=1, registry_digest="same"))
+    await asyncio.sleep(0.01)
+
+    assert not link._pending
+    assert [f for f in conn.sent if isinstance(f, IngressFrame)]
+    assert writes_paused() is False
+    assert link.consecutive_hello_mismatches == 0
+
+
+async def test_drop_connection_pauses_the_write_gate() -> None:
+    from stackowl.journal import write_gate
+
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter})
+    conn = _FakeConn()
+    link.set_connection(
+        conn,
+        local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="x"),
+    )
+    write_gate.resume_writes()  # simulate an already-active, compatible link
+
+    link.drop_connection()
+
+    assert writes_paused() is True
+
+
+async def test_the_health_contributor_and_the_link_property_share_one_counter() -> None:
+    """`GatewayLink.consecutive_hello_mismatches` and
+    `link_health.mismatch_count()` must never disagree — both read the SAME
+    module-global state."""
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter})
+    conn = _FakeConn()
+    link.set_connection(
+        conn,
+        local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="gw"),
+    )
+    await link._route(HelloFrame(sender_pid=9, highest_migration=1, registry_digest="core"))
+
+    assert link.consecutive_hello_mismatches == link_health.mismatch_count()
+    assert link.consecutive_hello_mismatches == 1

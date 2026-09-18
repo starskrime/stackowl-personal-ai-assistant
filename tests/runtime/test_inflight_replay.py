@@ -49,11 +49,15 @@ def _msg(text: str) -> IngressMessage:
     )
 
 
+def _hello(pid: int = 1) -> HelloFrame:
+    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+
+
 async def test_unfinished_turn_is_requeued_on_crash_and_replayed() -> None:
     adapter = _FakeAdapter()
     link = GatewayLink({"cli": adapter})
     conn = _FakeConn()
-    link.set_connection(conn)  # type: ignore[arg-type]
+    link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
     # A turn forwarded to a live core (the common case). No is_final arrives ->
     # the core crashes mid-turn.
@@ -71,8 +75,8 @@ async def test_unfinished_turn_is_requeued_on_crash_and_replayed() -> None:
     # A fresh core reconnects + says Hello -> the goal is replayed with the SAME
     # trace_id (idempotent re-execute), so it is not silently forgotten.
     conn2 = _FakeConn()
-    link.set_connection(conn2)  # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=2))
+    link.set_connection(conn2, local_hello=_hello())  # type: ignore[arg-type]
+    await link._route(_hello(2))
     await asyncio.sleep(0.01)
 
     replayed = [f for f in conn2.sent if isinstance(f, IngressFrame)]
@@ -85,7 +89,7 @@ async def test_finished_turn_is_not_replayed_after_a_later_crash() -> None:
     adapter = _FakeAdapter()
     link = GatewayLink({"cli": adapter})
     conn = _FakeConn()
-    link.set_connection(conn)  # type: ignore[arg-type]
+    link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
     await link.submit(_msg("done"))
     # The turn's stream closes normally (is_final) BEFORE any crash.

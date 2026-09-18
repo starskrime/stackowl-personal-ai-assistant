@@ -54,6 +54,10 @@ def _msg(text: str) -> IngressMessage:
     )
 
 
+def _hello(pid: int = 1) -> HelloFrame:
+    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+
+
 async def test_transient_replay_failure_is_requeued_not_dropped() -> None:
     adapter = _FakeAdapter()
     link = GatewayLink({"cli": adapter})
@@ -63,8 +67,8 @@ async def test_transient_replay_failure_is_requeued_not_dropped() -> None:
     assert [m.text for m in link._pending] == ["x"]
 
     # A fresh core whose send faults the moment we replay.
-    link.set_connection(_FailingConn())  # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=1))
+    link.set_connection(_FailingConn(), local_hello=_hello())  # type: ignore[arg-type]
+    await link._route(_hello())
 
     # Re-queued for retry, NOT silently dropped, and the user is not yet bothered.
     assert [m.text for m in link._pending] == ["x"]
@@ -77,14 +81,14 @@ async def test_replay_recovers_when_a_later_core_accepts() -> None:
     await link.submit(_msg("x"))
 
     # First fresh core faults -> re-queued.
-    link.set_connection(_FailingConn())  # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=1))
+    link.set_connection(_FailingConn(), local_hello=_hello())  # type: ignore[arg-type]
+    await link._route(_hello())
     assert [m.text for m in link._pending] == ["x"]
 
     # A healthy core then accepts -> the buffered turn is delivered, no notice.
     ok = _OkConn()
-    link.set_connection(ok)  # type: ignore[arg-type]
-    await link._route(HelloFrame(core_pid=2))
+    link.set_connection(ok, local_hello=_hello())  # type: ignore[arg-type]
+    await link._route(_hello(2))
 
     forwarded = [f for f in ok.sent if isinstance(f, IngressFrame)]
     assert [f.text for f in forwarded] == ["x"]
@@ -102,8 +106,8 @@ async def test_exhausted_replay_notifies_originating_adapter() -> None:
     # bounded number of attempts the turn is surfaced, not suppressed.
     bad = _FailingConn()
     for _ in range(GatewayLink._MAX_REPLAY_ATTEMPTS):
-        link.set_connection(bad)  # type: ignore[arg-type]
-        await link._route(HelloFrame(core_pid=1))
+        link.set_connection(bad, local_hello=_hello())  # type: ignore[arg-type]
+        await link._route(_hello())
 
     assert link._pending == []
     assert adapter.texts == [_REPLAY_FAILURE_NOTICE]

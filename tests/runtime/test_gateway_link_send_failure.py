@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 
 from stackowl.gateway.scanner import IngressMessage
+from stackowl.ipc.frames import HelloFrame
 from stackowl.pipeline.recovery_actuator import Failure
 from stackowl.runtime.gateway_link import GatewayLink
 
@@ -22,6 +23,10 @@ from stackowl.runtime.gateway_link import GatewayLink
 class _WorkingConn:
     async def send(self, frame: object) -> None:
         return None
+
+
+def _hello(pid: int = 1) -> HelloFrame:
+    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
 
 
 class _RaisingAdapter:
@@ -56,7 +61,7 @@ async def test_send_task_failure_is_logged_and_routed_to_recovery() -> None:
     adapter = _RaisingAdapter()
     spy = _SpyActuator()
     link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
-    link.set_connection(_WorkingConn())  # type: ignore[arg-type]
+    link.set_connection(_WorkingConn(), local_hello=_hello())  # type: ignore[arg-type]
 
     await link.submit(_msg())
     # Let the send task fail, its done-callback fire, and the recovery task
@@ -85,7 +90,7 @@ async def test_send_task_success_never_touches_recovery() -> None:
     adapter = _OkAdapter()
     spy = _SpyActuator()
     link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
-    link.set_connection(_WorkingConn())  # type: ignore[arg-type]
+    link.set_connection(_WorkingConn(), local_hello=_hello())  # type: ignore[arg-type]
 
     await link.submit(_msg())
     await asyncio.sleep(0)

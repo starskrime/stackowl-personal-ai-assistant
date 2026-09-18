@@ -81,6 +81,33 @@ def _restore_test_mode_guard() -> Generator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_journal_write_gate_and_link_health() -> Generator[None]:
+    """Prevent Spec 2.3's two new process-global states from leaking across
+    tests, same rationale as ``_restore_test_mode_guard`` above.
+
+    ``GatewayLink.drop_connection()`` now calls
+    ``journal.write_gate.pause_writes(...)`` unconditionally — any
+    ``tests/runtime/`` test that constructs a `GatewayLink` and drops its
+    connection (most of them do, via `finally: await stop()`-style teardown)
+    would otherwise leave the journal write-gate PAUSED for every later test
+    in the same process, including unrelated `tests/journal/` and pipeline
+    tests that expect `journal.record()` to succeed. `runtime.link_health`'s
+    consecutive-mismatch counter is the same shape (module-global, written
+    from `GatewayLink._route`'s HelloFrame branch) and gets the same treatment.
+    """
+    from stackowl.journal import write_gate
+    from stackowl.runtime import link_health
+
+    write_gate.reset_for_tests()
+    link_health.reset_for_tests()
+    try:
+        yield
+    finally:
+        write_gate.reset_for_tests()
+        link_health.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _reset_hydrated_tools() -> Generator[None]:
     """Prevent the process-global HydratedToolStore (FX-07) from leaking a
     session's hydrated tool names across tests — same rationale as

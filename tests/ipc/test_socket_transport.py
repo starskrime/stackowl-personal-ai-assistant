@@ -60,7 +60,7 @@ async def test_duplex_round_trip(socket_path) -> None:
 
 async def test_recv_returns_none_on_peer_close(socket_path) -> None:
     async def handler(conn: FrameConnection) -> None:
-        await conn.send(HelloFrame(core_pid=1))
+        await conn.send(HelloFrame(sender_pid=1, highest_migration=1, registry_digest="x"))
         # then hang up
 
     server = IpcServer(socket_path)
@@ -107,7 +107,7 @@ async def test_core_restart_reattaches_to_durable_listener(socket_path) -> None:
     async def handler(conn: FrameConnection) -> None:
         frame = await conn.recv()
         if isinstance(frame, HelloFrame):
-            hellos.append(frame.core_pid)
+            hellos.append(frame.sender_pid)
         await conn.send(AckFrame(ref="hello", status="ok"))
 
     server = IpcServer(socket_path)
@@ -115,13 +115,13 @@ async def test_core_restart_reattaches_to_durable_listener(socket_path) -> None:
     try:
         # First "core"
         c1 = await IpcClient(socket_path).connect(timeout_s=5)
-        await c1.send(HelloFrame(core_pid=111))
+        await c1.send(HelloFrame(sender_pid=111, highest_migration=1, registry_digest="x"))
         assert isinstance(await c1.recv(), AckFrame)
         await c1.aclose()
 
         # Second "core" (post-restart) attaches to the SAME listener
         c2 = await IpcClient(socket_path).connect(timeout_s=5)
-        await c2.send(HelloFrame(core_pid=222))
+        await c2.send(HelloFrame(sender_pid=222, highest_migration=1, registry_digest="x"))
         assert isinstance(await c2.recv(), AckFrame)
         await c2.aclose()
     finally:
