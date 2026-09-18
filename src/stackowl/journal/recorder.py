@@ -14,7 +14,11 @@ import json
 
 import aiosqlite
 
-from stackowl.exceptions import JournalAttentionSetByEmitterError, JournalInvalidAttrsError
+from stackowl.exceptions import (
+    JournalAttentionSetByEmitterError,
+    JournalInvalidAttrsError,
+    JournalWritesPausedError,
+)
 from stackowl.health.status import remedy_for
 from stackowl.infra.observability import log, redact_secret_shapes
 from stackowl.journal.health import note_failure, note_success
@@ -22,6 +26,7 @@ from stackowl.journal.ids import new_event_id
 from stackowl.journal.leak_guard import scan_attrs
 from stackowl.journal.models import JournalEvent, RecordRef
 from stackowl.journal.registry import get_registry
+from stackowl.journal.write_gate import writes_paused
 
 _INSERT_SQL = (
     "INSERT INTO journal_events ("
@@ -82,7 +87,12 @@ async def record(conn: aiosqlite.Connection, event: JournalEvent) -> str:
     )
     event_id = new_event_id()
     try:
-        # 2. DECISION -- the type must be declared, and attrs must match it.
+        # 2. DECISION -- Spec 2.3: refused BEFORE the registry lookup, so a
+        # paused write-gate (a gateway/core Hello mismatch or a lost link)
+        # never even resolves the type.
+        if writes_paused():
+            raise JournalWritesPausedError(event.type)
+        # the type must be declared, and attrs must match it.
         spec = get_registry().get(event.type)
         if not isinstance(event.attrs, spec.attrs_model):
             raise JournalInvalidAttrsError(

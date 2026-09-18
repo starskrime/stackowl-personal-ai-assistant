@@ -647,6 +647,32 @@ class JournalEventTypeUnregisteredError(DomainError):
         super().__init__(f"journal event type not registered: {type_name!r}")
 
 
+class JournalWritesPausedError(DomainError):
+    """Raised when ``journal.record`` is called while the write-gate is paused.
+
+    Spec 2.3: the gateway pauses its own journal write-gate on every
+    ``GatewayLink.drop_connection()`` (a lost core link) and every incompatible
+    Hello, and resumes it only on a confirmed-compatible one. A caller that
+    hits this while the gate is paused cannot prove its schema/registry match
+    what the other side of the split is running, so the write is refused
+    rather than silently accepted against a possibly-stale schema.
+    """
+
+    def __init__(self, type_name: str) -> None:
+        self.type_name = type_name
+        # `health/status.py::remedy_for()` checks `getattr(exc, "remedy", None)`
+        # FIRST — this is the operator advice a degraded
+        # `JournalHealthContributor` surfaces while the gate stays paused.
+        self.remedy = (
+            "the journal write-gate is paused after a gateway/core Hello "
+            "mismatch or link loss -- wait for a compatible reconnect, or "
+            "restart the process the health sweep names"
+        )
+        super().__init__(
+            f"journal write-gate is paused -- refused to record {type_name!r}"
+        )
+
+
 class JournalAttentionSetByEmitterError(DomainError):
     """Raised when an emitter pre-sets ``attention``/``intensity`` on a
     :class:`~stackowl.journal.models.JournalEvent` handed to ``journal.record()``.

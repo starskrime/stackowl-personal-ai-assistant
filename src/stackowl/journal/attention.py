@@ -13,6 +13,13 @@ from stackowl.infra.observability import log
 from stackowl.journal.enums import AttentionClass, Intensity
 from stackowl.journal.registry import get_registry
 
+#: Spec 2.3 — folded into ``journal.digest.compute_registry_digest()`` alongside
+#: every registered ``(type, schema_version)`` pair, so a gateway/core split
+#: whose CODE for this classification logic disagrees (not just their declared
+#: types) is still caught by the Hello exchange. Bump this BY HAND whenever
+#: ``classify()``'s logic changes, even if no ``EventTypeSpec`` changes.
+ATTENTION_POLICY_VERSION = 1
+
 
 def classify(type_name: str) -> tuple[AttentionClass, Intensity | None]:
     """Return the registered ``(attention_class, intensity)`` for ``type_name``.
