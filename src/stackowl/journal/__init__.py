@@ -25,9 +25,19 @@ working registry with no separate registration step to remember.
 from __future__ import annotations
 
 from stackowl.journal import task_events as _task_events  # noqa: F401 -- registration side effect
-from stackowl.journal.enums import ActorKind, AttentionClass, Outcome, RecordKind
+from stackowl.journal.attention import classify
+from stackowl.journal.enums import ActorKind, AttentionClass, Intensity, Outcome, RecordKind
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
+from stackowl.journal.narrator import (
+    NameResolver,
+    NarrationResult,
+    narrate,
+    narrate_full,
+    narrate_public,
+    register_name_resolver,
+    reset_name_resolvers_for_tests,
+)
 from stackowl.journal.recorder import record
 from stackowl.journal.registry import EventRegistry, EventTypeSpec, get_registry
 
@@ -36,12 +46,21 @@ __all__ = [
     "AttentionClass",
     "EventRegistry",
     "EventTypeSpec",
+    "Intensity",
     "JournalAttrsBase",
     "JournalEvent",
+    "NameResolver",
+    "NarrationResult",
     "Outcome",
     "RecordKind",
     "RecordRef",
+    "classify",
     "get_registry",
+    "narrate",
+    "narrate_full",
+    "narrate_public",
     "new_event_id",
     "record",
+    "register_name_resolver",
+    "reset_name_resolvers_for_tests",
 ]

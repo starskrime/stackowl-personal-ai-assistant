@@ -1019,10 +1019,17 @@ class StartupOrchestrator:
                 "[startup] gateway: owl wiring audit failed — starting anyway",
                 exc_info=exc,
             )
+        from stackowl.pipeline.durable.journal_names import register_task_name_resolver
         from stackowl.pipeline.durable.store import DurableTaskStore
 
         db_pool = DbPool(default_db_path())
         await db_pool.open()
+
+        # AD-30 -- the ONE NameResolver for RecordKind.TASK, so
+        # journal.narrate() can name a live task by its goal instead of
+        # falling back to its tombstone text. Registered once, here, so the
+        # live process has a working resolver before anything narrates.
+        register_task_name_resolver(db_pool)
 
         # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
         # "everything in md or sqlite. No data duplication."
