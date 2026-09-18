@@ -70,3 +70,12 @@ class AttentionClass(StrEnum):
 
     AMBIENT = "ambient"
     NEEDS_YOU = "needs_you"
+
+
+class Intensity(StrEnum):
+    """AD-5's closed intensity vocabulary -- required when ``attention_class``
+    is ``NEEDS_YOU``, forbidden (``None``) when ``AMBIENT``.
+    """
+
+    NORMAL = "normal"
+    HIGH = "high"

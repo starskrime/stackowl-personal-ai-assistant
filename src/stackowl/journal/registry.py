@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import builtins
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from stackowl.journal.enums import AttentionClass, RecordKind
+from stackowl.infra.observability import log
+from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 
 
@@ -35,6 +37,56 @@ class EventTypeSpec:
     emitting_process: str
     record_kind: RecordKind
     attention_class: AttentionClass
+    #: Renders this type's `full` plain-English sentence (Story 2.2, AD-30).
+    #: Required -- no default -- so "no narration" is refused at registration,
+    #: the same kind of refusal as "no attention class".
+    narrate: Callable[[JournalAttrsBase, str], str]
+    #: Required when `attention_class` is `NEEDS_YOU`, forbidden otherwise --
+    #: validated in `__post_init__` since dataclasses don't enforce this
+    #: cross-field rule at construction time on their own.
+    intensity: Intensity | None = None
+
+    def __post_init__(self) -> None:
+        # 1. ENTRY
+        log.journal.debug(
+            "[journal] EventTypeSpec.__post_init__: entry",
+            extra={"_fields": {"type": self.type}},
+        )
+        # 2. DECISION -- narrate must be a declared, callable rendering.
+        if not callable(self.narrate):
+            log.journal.error(
+                "[journal] EventTypeSpec.__post_init__: refused -- no narrate= callable",
+                extra={"_fields": {"type": self.type}},
+            )
+            raise ValueError(
+                f"journal event type {self.type!r} must declare a narrate="
+                "callable -- every registered type needs a plain-English "
+                "rendering (AD-30)"
+            )
+        # 3. STEP -- attention_class/intensity must agree (AD-5's cross-field rule).
+        if self.attention_class is AttentionClass.NEEDS_YOU and self.intensity is None:
+            log.journal.error(
+                "[journal] EventTypeSpec.__post_init__: refused -- NEEDS_YOU with no intensity",
+                extra={"_fields": {"type": self.type}},
+            )
+            raise ValueError(
+                f"journal event type {self.type!r} is attention_class="
+                "NEEDS_YOU and must declare an intensity (AD-5)"
+            )
+        if self.attention_class is AttentionClass.AMBIENT and self.intensity is not None:
+            log.journal.error(
+                "[journal] EventTypeSpec.__post_init__: refused -- AMBIENT with an intensity",
+                extra={"_fields": {"type": self.type}},
+            )
+            raise ValueError(
+                f"journal event type {self.type!r} is attention_class=AMBIENT "
+                "and must NOT declare an intensity (AD-5)"
+            )
+        # 4. EXIT
+        log.journal.debug(
+            "[journal] EventTypeSpec.__post_init__: exit -- valid",
+            extra={"_fields": {"type": self.type}},
+        )
 
 
 class EventRegistry:

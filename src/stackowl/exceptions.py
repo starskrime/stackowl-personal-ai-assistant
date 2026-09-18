@@ -647,6 +647,29 @@ class JournalEventTypeUnregisteredError(DomainError):
         super().__init__(f"journal event type not registered: {type_name!r}")
 
 
+class JournalAttentionSetByEmitterError(DomainError):
+    """Raised when an emitter pre-sets ``attention``/``intensity`` on a
+    :class:`~stackowl.journal.models.JournalEvent` handed to ``journal.record()``.
+
+    AD-5: attention/intensity are computed by ``journal.record()`` itself, from
+    the registered :class:`~stackowl.journal.registry.EventTypeSpec` -- an
+    emitter that sets either field is making its own ambient/needs-you
+    judgment, which is exactly the disagreement-across-surfaces this story
+    exists to prevent. Fails loud, before any SQL runs.
+    """
+
+    def __init__(self, type_name: str) -> None:
+        self.type_name = type_name
+        self.remedy = (
+            "stop passing attention/intensity when constructing this event -- "
+            "journal.record() computes them from the registry (AD-5)"
+        )
+        super().__init__(
+            f"journal event {type_name!r} arrived with attention/intensity "
+            "already set -- emitters never classify"
+        )
+
+
 class JournalInvalidAttrsError(DomainError):
     """Raised when a journal event's ``attrs`` does not match its registered model.
 

@@ -11,11 +11,11 @@ remember.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import Field
 
-from stackowl.journal.enums import AttentionClass, RecordKind
+from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 from stackowl.journal.registry import EventTypeSpec, get_registry
 
@@ -75,22 +75,42 @@ class TaskDeadLetteredAttrs(JournalAttrsBase):
     dependency_ids: str | None = None
 
 
+def _narrate_enqueued(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Task {name} was queued."
+
+
+def _narrate_claimed(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Task {name} was claimed."
+
+
+def _narrate_finished(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Task {name} finished."
+
+
+def _narrate_dead_lettered(attrs: JournalAttrsBase, name: str) -> str:
+    dead_lettered = cast(TaskDeadLetteredAttrs, attrs)
+    return f"Task {name} gave up after {dead_lettered.attempt_count} attempts."
+
+
 def _register() -> None:
     registry = get_registry()
     registry.register(EventTypeSpec(
         type="task.enqueued", schema_version=1, attrs_model=TaskEnqueuedAttrs,
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.TASK,
-        attention_class=AttentionClass.AMBIENT,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        narrate=_narrate_enqueued,
     ))
     registry.register(EventTypeSpec(
         type="task.claimed", schema_version=1, attrs_model=TaskClaimedAttrs,
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.TASK,
-        attention_class=AttentionClass.AMBIENT,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        narrate=_narrate_claimed,
     ))
     registry.register(EventTypeSpec(
         type="task.finished", schema_version=1, attrs_model=TaskFinishedAttrs,
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.TASK,
-        attention_class=AttentionClass.AMBIENT,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        narrate=_narrate_finished,
     ))
     registry.register(EventTypeSpec(
         type="task.dead_lettered", schema_version=1, attrs_model=TaskDeadLetteredAttrs,
@@ -98,7 +118,8 @@ def _register() -> None:
         # AD-5, verbatim: task.dead_lettered is one of the two NAMED
         # needs_you/high examples -- the loop gave up, and that is exactly
         # what must reach the owner rather than dissolve into a log file.
-        attention_class=AttentionClass.NEEDS_YOU,
+        attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.HIGH,
+        narrate=_narrate_dead_lettered,
     ))
 
 
