@@ -65,6 +65,15 @@ class RecordKind(StrEnum):
     #: Story 2.8 — the consequential-action consent gate's decisions
     #: (``consent.decided``).
     CONSENT = "consent"
+    #: Story 2.9 — outbound proactive/scheduled deliveries
+    #: (``delivery.attempted``), emitted from ``notifications.deliverer``.
+    DELIVERY = "delivery"
+    #: Story 2.9 — a genuine fallback-channel reroute (``provider.rerouted``),
+    #: emitted from ``notifications.deliverer._maybe_reroute``.
+    PROVIDER = "provider"
+    #: Story 2.9 — gateway-side channel ingress (``channel.message_received``),
+    #: emitted from ``startup.orchestrator``'s gateway-role receive loops.
+    CHANNEL = "channel"
 
 
 class Outcome(StrEnum):

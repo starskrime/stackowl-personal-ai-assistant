@@ -338,6 +338,14 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     # `memory.reflection_recorded`'s table; curated md has no new table
     # (AD-4: "md- and graph-backed targets never gain mirror tables").
     _hot("consent_decision_records", "occurred_at"),
+    # Story 2.9 -- `delivery_records`/`channel_ingress_records` back
+    # `delivery.attempted`/`provider.rerouted`/`channel.message_received`'s
+    # `record_ref` (migration 0148), same shape as `turn_action_records`/
+    # `consent_decision_records` above: written on every proactive delivery,
+    # digest flush and real inbound message of ordinary traffic -- HOT
+    # cadence, in the same transaction as `journal_events` itself.
+    _hot("delivery_records", "occurred_at"),
+    _hot("channel_ingress_records", "occurred_at"),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}
