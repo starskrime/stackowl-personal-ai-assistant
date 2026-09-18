@@ -8,11 +8,13 @@ restated as a copy (mirrors
 constant this test reasons about is the one the production code actually
 holds, not a hand-typed number that could drift from it).
 
-This story's own ``PROVISIONAL_JOURNAL_RETENTION_DAYS`` is set to the
-TIGHTEST of those real windows specifically so this check is honest today
-(see ``journal/retention.py``'s docstring) -- it is not tautologically true.
-``test_a_shorter_fake_window_fails_the_tripwire`` is the control that proves
-that: a fake window regressed below the constant must actually raise.
+Story 2.11 raised ``JOURNAL_RETENTION_DAYS`` to AD-6's real 30-day default
+(derived from ``JournalSettings()``, see ``journal/retention.py``'s
+docstring) and raised both real subsystem windows this test checks to 30 in
+the same change (DW-17), so this check stays honest today rather than
+tautological. ``test_a_shorter_fake_window_fails_the_tripwire`` is the
+control that proves that: a fake window regressed below the constant must
+actually raise.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.config.task_loop_settings import TaskLoopSettings
-from stackowl.journal.retention import PROVISIONAL_JOURNAL_RETENTION_DAYS
+from stackowl.journal.retention import JOURNAL_RETENTION_DAYS
 from stackowl.scheduler.handlers.db_reclaim import _RUN_HISTORY_RETENTION_DAYS
 
 
@@ -30,12 +32,11 @@ def _assert_window_not_shorter_than_retention(name: str, window_days: float) -> 
     record kind whose prune window is shorter." The one assertion every
     checked window runs through, so there is exactly one way to fail it.
     """
-    assert window_days >= PROVISIONAL_JOURNAL_RETENTION_DAYS, (
+    assert window_days >= JOURNAL_RETENTION_DAYS, (
         f"{name}'s prune window ({window_days} day(s)) is SHORTER than the "
-        f"journal's own provisional retention "
-        f"({PROVISIONAL_JOURNAL_RETENTION_DAYS} day(s)) -- a job/task row a "
-        "journal event references could be pruned before the event that "
-        "references it is (AD-4)"
+        f"journal's own retention ({JOURNAL_RETENTION_DAYS} day(s)) -- a "
+        "job/task row a journal event references could be pruned before the "
+        "event that references it is (AD-4)"
     )
 
 
@@ -57,12 +58,12 @@ class TestTodaysRealPruneWindowsPassTheTripwire:
 
 @pytest.mark.tripwire
 def test_a_shorter_fake_window_fails_the_tripwire() -> None:
-    """THE CONTROL. A fake window constructed strictly below the provisional
+    """THE CONTROL. A fake window constructed strictly below the current
     constant must actually FAIL -- proves the assertion above is a real
     comparison against the constant's CURRENT value, not a tautology that
-    would pass no matter what ``PROVISIONAL_JOURNAL_RETENTION_DAYS`` held."""
+    would pass no matter what ``JOURNAL_RETENTION_DAYS`` held."""
     with pytest.raises(AssertionError):
         _assert_window_not_shorter_than_retention(
             "a hypothetical regressed prune window",
-            PROVISIONAL_JOURNAL_RETENTION_DAYS - 1,
+            JOURNAL_RETENTION_DAYS - 1,
         )

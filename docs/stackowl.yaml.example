@@ -236,8 +236,8 @@ task_loop:
   default_max_attempts: 30
   # How long a claim is good for. Long enough that a slow but live task is not stolen mid-flight; short enough that a crashed worker's row returns quickly. Exceeding it counts an attempt, so a task that reliably kills its worker still reaches the ceiling.
   lease_seconds: 900
-  # Bakir: 'delete completed jobs older than one day.' DELIVERED rows only — a dead_letter is never pruned, because it is the one record of work that failed for good and is precisely what an operator needs to see. The learning corpus lives in task_outcomes and is untouched.
-  prune_completed_after_days: 1
+  # How long a completed (DELIVERED) task row survives before the task loop prunes it. Raised from Bakir's original one-day value to 30 (Story 2.11, DW-17/AD-4): journal events reference task rows, and a prune window shorter than the journal's own 30-day retention could delete a task a still-retained journal event points at. A dead_letter is never pruned regardless of this setting, because it is the one record of work that failed for good and is precisely what an operator needs to see. The learning corpus lives in task_outcomes and is untouched.
+  prune_completed_after_days: 30
   # Failure classes that stop a task IMMEDIATELY instead of spending its whole attempt budget. A missing API key fails identically every time, so thirty attempts is thirty guaranteed-wasted model calls — seconds of latency each on this hardware. Configurable because which failures are truly permanent is deployment-specific: what is unrecoverable behind one gateway may be a transient blip behind another.
   permanent_failure_classes: [permanent, auth, not_found, refused]
   # The LOOP produces the chat reply, not merely recovers one — Bakir's design in full: 'the loop should go understand, find the answer, return back answer to the Telegram.'
@@ -248,6 +248,12 @@ task_loop:
   produce_replies: false
   # Tell the operator when a task stops for good. ON by default because a loop that abandons work silently is worse than one that fails loudly — the whole point of a durable queue is that nothing vanishes unnoticed.
   escalate_dead_letters: true
+
+journal:
+  # How long a journal event survives before the seeded journal_prune job deletes it (AD-6, NFR44). The 30-day architecture default -- provisional until Story 2.12's benchmark reports real measurements from the platform's own hardware.
+  retention_days: 30
+  # The journal's WAL file size the health contributor tolerates before degrading (64 MiB). PROVISIONAL pending Story 2.12's benchmark, mirrors turn_budget.py's PROVISIONAL_* precedent: a round, deliberately generous ceiling rather than a measured number.
+  wal_size_budget_bytes: 67108864
 
 owl_limits:
   # How many agent-created owls are allowed. 0 (the default) means UNLIMITED — Bakir's call, 2026-08-18, and the measurement supports it: the only real cost of another owl is the ground-truth roster in the system prompt (name + one-line role, every call), which runs 69 chars per owl on the live registry. Fifty owls would be ~862 tokens, 0.33% of a 262,144 window. The previous cap of five was not protecting the waist.

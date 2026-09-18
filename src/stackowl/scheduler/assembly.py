@@ -205,6 +205,9 @@ class SchedulerAssembly:
         )
         from stackowl.scheduler.handlers.evolution import register_evolution_handler
         from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
+        from stackowl.scheduler.handlers.journal_prune import (
+            register_journal_prune_handler,
+        )
         from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
         from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
         from stackowl.scheduler.handlers.tool_pruning import ToolPruningHandler
@@ -311,6 +314,13 @@ class SchedulerAssembly:
         # a 922 MB file on a disk at 99%, which surfaced as `database is locked`
         # and a task loop failing every tick.
         register_db_reclaim_handler(db)
+        # The journal needs the same decay leg -- journal_events had no
+        # retention/prune mechanism at all (AD-6, Story 2.11). db_path passed
+        # explicitly so the handler can stat the "-wal" sidecar file for the
+        # WAL-budget health signal; the pool itself exposes no public path.
+        from stackowl.db.pool import default_db_path as _journal_db_path
+
+        register_journal_prune_handler(db, _journal_db_path())
         # Stray virtualenvs need the same decay leg. Measured 2026-08-22: FOUR envs
         # in the workspace totalling 707 MB, two of them byte-identical, none
         # referenced anywhere in src/ — built ad hoc through `shell` because the
@@ -997,6 +1007,14 @@ class SchedulerAssembly:
         # combined churn rather than run alongside them.
         await _seed_minutes_schedule(
             db, handler_name="db_reclaim", schedule="every 1h",
+            interval_minutes=60,
+        )
+        # Journal prune — delete journal_events rows past retention (AD-6,
+        # Story 2.11) and checkpoint the WAL. Hourly, same cadence as
+        # db_reclaim above: bounded batches keep it from becoming the writer
+        # everything else queues behind.
+        await _seed_minutes_schedule(
+            db, handler_name="journal_prune", schedule="every 1h",
             interval_minutes=60,
         )
         # Workspace env janitor — reclaim stray per-tool virtualenvs. Daily rather

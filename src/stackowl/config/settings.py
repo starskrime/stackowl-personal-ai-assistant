@@ -22,6 +22,7 @@ from stackowl.config.control_plane_password_migration import (
     migrate_legacy_control_plane_password,
 )
 from stackowl.config.control_plane_settings import ControlPlaneSettings
+from stackowl.config.journal_settings import JournalSettings
 from stackowl.config.notification_settings import (
     NotificationSettings,
     QuietHoursSettings,
@@ -1112,6 +1113,9 @@ class Settings(BaseSettings):
     #: The ONE durable task loop (Bakir's architecture, 2026-08-17). Its own file
     #: because this module is already ~1,000 lines; same shape as notifications/ui.
     task_loop: TaskLoopSettings = Field(default_factory=TaskLoopSettings)
+    #: The journal's retention window and WAL size budget (AD-6, NFR44, Story
+    #: 2.11). Its own file, same shape as task_loop above.
+    journal: JournalSettings = Field(default_factory=JournalSettings)
     #: Owl limits. max_agent_owls defaults to 0 = unlimited (Bakir, 2026-08-18).
     #: NOT aliased to "owls" — that key is already the owl MANIFEST list, and two
     #: meanings for one config key is a trap for whoever edits stackowl.yaml next.

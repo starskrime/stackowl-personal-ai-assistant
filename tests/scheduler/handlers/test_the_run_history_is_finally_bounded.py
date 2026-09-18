@@ -84,10 +84,19 @@ def test_the_window_is_the_one_the_operator_chose() -> None:
     """It shipped at 100 days first — deleting NOTHING, because "any data
     deletion" is a stop-and-brief item in this loop's rules and he had not decided
     it. He then chose 7 with the numbers in front of him: 223,266 of 255,363 rows
-    (87%) are older than a week, worth about 56 MB of a 342 MB database.
+    (87%) were older than a week, worth about 56 MB of a 342 MB database.
+
+    RAISED AGAIN, 7 to 30, by DW-17 (Story 2.11) -- NOT because a journal
+    event references a `job_runs` row (it does not; `journal/coverage.py`
+    excuses this table as unjournaled). The real reason: the pre-existing
+    `tests/journal/test_retention_tripwire.py` (Story 2.6) already checked
+    this constant against journal retention, and DW-17 assigned this story
+    to reconcile every window that tripwire checks. The full argument is
+    stated once, on `_RUN_HISTORY_RETENTION_DAYS` in `db_reclaim.py`; read
+    it there rather than here.
 
     Pinned so a later reader does not drift it back without a decision."""
-    assert _RUN_HISTORY_RETENTION_DAYS == 7
+    assert _RUN_HISTORY_RETENTION_DAYS == 30
 
 
 def test_a_huge_backlog_is_deleted_in_BATCHES() -> None:

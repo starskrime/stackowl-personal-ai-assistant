@@ -9,7 +9,7 @@ import pytest
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import JournalEventTypeUnregisteredError
 from stackowl.journal import ActorKind, JournalEvent, Outcome, record
-from stackowl.journal.health import JournalHealthContributor
+from stackowl.journal.health import JournalHealthContributor, note_wal_size
 from stackowl.journal.task_events import TaskEnqueuedAttrs
 
 pytestmark = pytest.mark.asyncio
@@ -72,3 +72,60 @@ class TestARecordFailureDegradesTheHealthContributor:
 
         status = await JournalHealthContributor().health_check()
         assert status.status == "ok"
+
+
+class TestTheWalBudgetStreakDegradesTheHealthContributor:
+    """AD-6, Story 2.11: the WAL file staying over its size budget across
+    CONSECUTIVE ``journal_prune`` passes degrades health with a remedy. A
+    single over-budget pass must not fire it -- only three in a row."""
+
+    async def test_one_over_budget_pass_does_not_degrade(self) -> None:
+        note_wal_size(200, 100)
+        status = await JournalHealthContributor().health_check()
+        assert status.status == "ok"
+
+    async def test_two_over_budget_passes_do_not_degrade(self) -> None:
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+        status = await JournalHealthContributor().health_check()
+        assert status.status == "ok"
+
+    async def test_three_consecutive_over_budget_passes_degrade_with_a_remedy(
+        self,
+    ) -> None:
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+        status = await JournalHealthContributor().health_check()
+        assert status.status == "degraded"
+        assert status.remedy is not None
+        assert status.message is not None
+
+    async def test_a_pass_back_under_budget_resets_the_streak(self) -> None:
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+        assert (await JournalHealthContributor().health_check()).status == "degraded"
+
+        # Back under budget -- the streak resets and health clears, unlike
+        # the LIFETIME budget-exceeded count, which never clears.
+        note_wal_size(50, 100)
+        status = await JournalHealthContributor().health_check()
+        assert status.status == "ok"
+
+    async def test_the_streak_is_not_confused_with_a_record_failure(
+        self, tmp_db: DbPool
+    ) -> None:
+        """The two signals are independent -- a WAL-budget degrade must not
+        be masked by, or mask, a `record()` failure streak."""
+        with pytest.raises(JournalEventTypeUnregisteredError):
+            async with tmp_db.transaction() as conn:
+                await record(conn, _bad_event())
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+        note_wal_size(200, 100)
+
+        status = await JournalHealthContributor().health_check()
+        # The consecutive-failure streak takes priority when both are set.
+        assert status.status == "degraded"
+        assert "record" in (status.message or "").lower()

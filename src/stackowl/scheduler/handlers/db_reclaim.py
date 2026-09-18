@@ -171,14 +171,31 @@ async def needs_one_time_vacuum(pool: DbPool) -> bool:
 
 #: How long a completed run stays in ``job_runs``.
 #:
-#: 7 DAYS, chosen by Bakir on 2026-09-02 when the numbers were put to him: the
-#: table held 255,363 completed rows — 45.1 MB plus a 19.1 MB idempotency index,
-#: 19% of a 342 MB database — and 223,266 of them (87%) are older than a week.
+#: RAISED FROM 7 TO 30 (Story 2.11, DW-17). NOT because any journal event
+#: references a ``job_runs`` row -- it does not: ``journal/coverage.py``
+#: explicitly excuses ``job_runs`` as unjournaled (``_REASON_PRE_EPOCH``,
+#: "no journal event type covers it yet"), and ``job.*`` events'
+#: ``record_ref`` points at the ``jobs`` table (singular, ``job_events.py``'s
+#: ``_TABLE``), a different table entirely. The real reason: Story 2.6's
+#: pre-existing ``tests/journal/test_retention_tripwire.py`` already checked
+#: this constant against journal retention (AD-4's tripwire, applied
+#: conservatively to every subsystem prune window it enumerates, not proven
+#: per-table), and DW-17 assigned Story 2.11 to reconcile every window that
+#: tripwire checks so none is shorter than the new 30-day journal default.
+#: 30 is the MINIMUM change that satisfies "none is shorter than the new
+#: value"; it was not raised further, to avoid growing this table's disk
+#: footprint beyond what that tripwire actually requires on a Jetson-class
+#: host. A future story could narrow the tripwire's scope to tables AD-4
+#: actually reaches and let this revert to 7 if the owner wants that disk
+#: space back (see deferred-work.md).
 #:
-#: IT SHIPPED AT 100 FIRST, deliberately: 100 days deleted NOTHING (the oldest row
-#: was 92 days old) so the unbounded append was capped without this loop deleting
-#: his data unasked, which its own rules make a stop-and-brief. This is that
-#: authorisation arriving.
+#: THE PRIOR VALUE, 7, WAS ITSELF CHOSEN BY BAKIR on 2026-09-02 when the
+#: numbers were put to him: the table held 255,363 completed rows — 45.1 MB
+#: plus a 19.1 MB idempotency index, 19% of a 342 MB database — and 223,266
+#: of them (87%) were older than a week. IT SHIPPED AT 100 FIRST,
+#: deliberately: 100 days deleted NOTHING (the oldest row was 92 days old)
+#: so the unbounded append was capped without this loop deleting his data
+#: unasked, which its own rules make a stop-and-brief.
 #:
 #: SAFE BY CONSTRUCTION, not by judgement. ``job_runs`` has exactly ONE reader —
 #: the exactly-once guard in ``scheduler._dispatch`` — and it looks up
@@ -186,7 +203,7 @@ async def needs_one_time_vacuum(pool: DbPool) -> bool:
 #: the scheduled instant and every one of the 255,363 in the live table is
 #: distinct, so once an instant has passed its key can never be queried again.
 #: There is no time window in the guard for this to shorten.
-_RUN_HISTORY_RETENTION_DAYS = 7
+_RUN_HISTORY_RETENTION_DAYS = 30
 
 #: THE SECOND TABLE NOTHING HAD EVER BOUNDED, and the window is MEASURED rather
 #: than chosen (DEBT-292).

@@ -69,13 +69,18 @@ class TaskLoopSettings(BaseModel):
         ),
     )
     prune_completed_after_days: int = Field(
-        default=1,
+        default=30,
         ge=1,
         description=(
-            "Bakir: 'delete completed jobs older than one day.' DELIVERED rows "
-            "only — a dead_letter is never pruned, because it is the one record "
-            "of work that failed for good and is precisely what an operator needs "
-            "to see. The learning corpus lives in task_outcomes and is untouched."
+            "How long a completed (DELIVERED) task row survives before the "
+            "task loop prunes it. Raised from Bakir's original one-day value "
+            "to 30 (Story 2.11, DW-17/AD-4): journal events reference task "
+            "rows, and a prune window shorter than the journal's own 30-day "
+            "retention could delete a task a still-retained journal event "
+            "points at. A dead_letter is never pruned regardless of this "
+            "setting, because it is the one record of work that failed for "
+            "good and is precisely what an operator needs to see. The "
+            "learning corpus lives in task_outcomes and is untouched."
         ),
     )
     permanent_failure_classes: tuple[str, ...] = Field(

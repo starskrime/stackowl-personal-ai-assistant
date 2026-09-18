@@ -186,15 +186,32 @@ async def test_a_failure_never_fails_the_tick(tmp_path: Path) -> None:
 
 @pytest.mark.tripwire
 def test_the_window_is_the_one_the_measurement_supports() -> None:
-    """THE CONTROL. Seven days is ~2,800x the longest tap ever observed (3m32s), and
-    it matches the `job_runs` window beside it so this codebase has ONE retention
-    number rather than two. If a later change moves it, this fails and whoever moves
-    it has to say what evidence they used — the same posture DEBT-290 took for the
-    per-owl evolution timeout."""
+    """THE CONTROL. Seven days is ~2,800x the longest tap ever observed (3m32s),
+    unchanged since MEASURED 2026-09-10 -- pinned directly rather than against a
+    neighbour, for the reason below.
+
+    IT USED TO MATCH `job_runs`'s WINDOW BESIDE IT, so this codebase carried ONE
+    retention number rather than two -- and this test originally enforced that
+    equality, with the instruction that whoever moved either value had to say
+    what evidence they used.
+
+    STORY 2.11 (DW-17) IS THAT STATED REASON -- but NOT via AD-4 reaching
+    `job_runs` directly: it does not. No journal event references a
+    `job_runs` row (`journal/coverage.py` marks it `_REASON_PRE_EPOCH`,
+    unjournaled -- the same excuse `approach_rating_pending` carries), and
+    `job.*` events' `record_ref` points at the DIFFERENT `jobs` table
+    (`journal/job_events.py`'s `_TABLE`), not `job_runs`. The real reason:
+    the pre-existing `tests/journal/test_retention_tripwire.py` (Story 2.6)
+    already checked `_RUN_HISTORY_RETENTION_DAYS` against journal retention,
+    and DW-17 assigned Story 2.11 to reconcile every window that tripwire
+    checks -- raised 7 -> 30 in the same change that raised
+    `JournalSettings.retention_days` to 30. `approach_rating_pending` is not
+    named by that tripwire at all, so it was not touched: raising it anyway
+    would grow a table nothing requires grown for no measured reason --
+    exactly the kind of change this programme's own rules treat as a
+    stop-and-brief. Pinned separately now so a later, UNEXPLAINED drift of
+    either value still fails loudly."""
     from stackowl.scheduler.handlers import db_reclaim
 
     assert _RATING_PENDING_RETENTION_DAYS == 7
-    assert (
-        db_reclaim._RUN_HISTORY_RETENTION_DAYS  # noqa: SLF001
-        == _RATING_PENDING_RETENTION_DAYS
-    ), "the two retention windows diverged — one number, or a stated reason for two"
+    assert db_reclaim._RUN_HISTORY_RETENTION_DAYS == 30  # noqa: SLF001
