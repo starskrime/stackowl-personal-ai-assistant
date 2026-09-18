@@ -51,7 +51,7 @@ development_status:
   2-4-only-the-real-core-can-connect-to-the-gateway: done
   2-5-split-mode-tui-progress-comes-back-from-the-journal: done
   2-6-jobs-heals-and-health-have-a-history: done
-  2-7-every-turn-s-model-calls-tool-calls-and-delegation-hops-are: backlog
+  2-7-every-turn-s-model-calls-tool-calls-and-delegation-hops-are: done
   2-8-memory-writes-and-consent-decisions-are-recorded: backlog
   2-9-deliveries-channels-and-providers-are-recorded: backlog
   2-10-nothing-escapes-the-journal: backlog
