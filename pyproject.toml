@@ -55,6 +55,11 @@ dependencies = [
     # against an unreviewed major. Pure-Python, lightweight on ARM64 (no Pillow/
     # pdfminer drag, unlike pdfplumber).
     "pypdf>=5.4,<7,<7",
+    # UUIDv7 event ids for the journal (journal/ids.py, Story 2.1) -- time-
+    # ordered so event_id sorts the same way the row's own cursor does.
+    # Already resolved transitively in uv.lock; this makes it a real,
+    # declared dependency instead of an unused indirect one.
+    "uuid-utils>=0.16.0,<1",
 ]
 
 [project.scripts]

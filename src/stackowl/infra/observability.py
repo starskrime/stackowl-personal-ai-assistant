@@ -134,6 +134,22 @@ def _redact_string(value: str) -> str:
     return redacted
 
 
+def redact_secret_shapes(value: str) -> tuple[str, bool]:
+    """Public entry point into the secret-shape redactor (FX-04) for callers
+    outside this module.
+
+    ``journal/leak_guard.py`` (AD-4) needs the same detector this module's log
+    filter already runs, but must not reach into ``_redact_string``'s
+    underscore-prefixed internals -- that name is private to this module's own
+    logging filter. Returns the (possibly redacted) string and whether
+    anything changed, so a caller that must RECORD that a redaction happened
+    (rather than just apply it silently, as the log filter does) can tell the
+    two cases apart without a string diff.
+    """
+    redacted = _redact_string(value)
+    return redacted, redacted != value
+
+
 def _clean_value(key: object, value: Any) -> Any:
     if _is_sensitive(key):
         return "***"
@@ -442,6 +458,7 @@ class _Loggers:
     tenancy = logging.getLogger("stackowl.tenancy")
     tasks = logging.getLogger("stackowl.tasks")
     owls = logging.getLogger("stackowl.owls")
+    journal = logging.getLogger("stackowl.journal")
 
 
 log = _Loggers()

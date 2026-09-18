@@ -626,6 +626,50 @@ class ResumeTranscriptError(DomainError):
         super().__init__(f"Invalid resume transcript: {reason}{detail}")
 
 
+class JournalEventTypeUnregisteredError(DomainError):
+    """Raised when ``journal.record`` is asked to record an unregistered type.
+
+    Every event type must be declared once in ``journal/registry.py`` before
+    anything can emit it (AD-3) -- a caller that names a type the registry has
+    never seen is a programming error, not a data problem, and must fail loud
+    rather than silently dropping the event.
+    """
+
+    def __init__(self, type_name: str) -> None:
+        self.type_name = type_name
+        # `health/status.py::remedy_for()` checks `getattr(exc, "remedy", None)`
+        # FIRST, before any generic classification — this is the operator
+        # advice `JournalHealthContributor` surfaces on a degrade.
+        self.remedy = (
+            f"register {type_name!r} in journal/registry.py (via an "
+            "EventTypeSpec) before anything emits it"
+        )
+        super().__init__(f"journal event type not registered: {type_name!r}")
+
+
+class JournalInvalidAttrsError(DomainError):
+    """Raised when a journal event's ``attrs`` does not match its registered model.
+
+    AD-3: "Every event type is declared once in the registry ... with its typed
+    metadata-only ``attrs`` model" -- one type, one model. An ``attrs`` instance
+    of the wrong class (or a subtly different model with the same shape) means
+    the emitter and the registry disagree about what this event type carries,
+    and that must be caught before any SQL executes.
+    """
+
+    def __init__(self, type_name: str, actual: str, expected: str) -> None:
+        self.type_name = type_name
+        self.actual = actual
+        self.expected = expected
+        self.remedy = (
+            f"construct attrs for {type_name!r} using its registered "
+            f"attrs_model class ({expected}), not {actual}"
+        )
+        super().__init__(
+            f"journal event {type_name!r}: attrs is {actual!r}, expected {expected!r}"
+        )
+
+
 class PidFileExistsError(StackOwlError):
     """Raised when a PID file already exists and the recorded process is still alive."""
 

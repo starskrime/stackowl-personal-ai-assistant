@@ -301,6 +301,11 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _on_demand("command_sequence_last", "updated_at", "written when a person runs commands"),
     _periodic("notification_queue", "created_at", "written by the proactive delivery path"),
     _periodic("cache_breakpoint_probes", "last_confirmed_at", "written by the cache probe"),
+    # Spec 2.1 (AD-2) — append-only, never UPDATEd, so `occurred_at` is set once
+    # at INSERT and stays exact for every row; no upsert exists to strip it from
+    # a SET clause. Story 2.1 wires only the four task-lifecycle events, and the
+    # durable loop writes tasks on ordinary traffic — same HOT cadence as `tasks`.
+    _hot("journal_events", "occurred_at"),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}

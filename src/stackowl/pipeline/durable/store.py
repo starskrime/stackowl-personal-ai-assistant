@@ -21,6 +21,19 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
 from stackowl.infra.resilience import jittered
+from stackowl.journal import (
+    ActorKind,
+    JournalEvent,
+    Outcome,
+    RecordRef,
+)
+from stackowl.journal import record as journal_record
+from stackowl.journal.task_events import (
+    TaskClaimedAttrs,
+    TaskDeadLetteredAttrs,
+    TaskEnqueuedAttrs,
+    TaskFinishedAttrs,
+)
 from stackowl.pipeline.durable.addressing import address_of
 from stackowl.pipeline.durable.failure_class import (
     _RESHAPING_CLASSES,
@@ -250,6 +263,23 @@ def _status_or_dead_letter(on_survive: str) -> str:
     )
 
 
+def _insert_stmt(table: str, columns: dict[str, Any]) -> tuple[str, tuple[Any, ...]]:
+    """Build a plain positional ``INSERT`` for a transaction-bound ``conn``.
+
+    Used only where the write must run on a caller-supplied
+    ``aiosqlite.Connection`` inside an open ``DbPool.transaction()`` block —
+    ``OwnedRepository._insert_owned`` cannot be reused there, since it calls
+    ``self._db.execute()``, which would try to re-acquire the pool's
+    ``_write_lock`` the transaction already holds and deadlock. Column names
+    here are always literal dict keys from this module, never external input.
+    """
+    cols = list(columns.keys())
+    placeholders = ", ".join("?" for _ in cols)
+    col_sql = ", ".join(cols)
+    sql = f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders})"  # noqa: S608
+    return sql, tuple(columns[c] for c in cols)
+
+
 class DurableTaskStore(OwnedRepository):
     """Owner-scoped persistence for :class:`DurableTask` rows."""
 
@@ -280,21 +310,18 @@ class DurableTaskStore(OwnedRepository):
             )
             raise DurableTaskNotFoundError(task_id)
 
-    async def create(self, task: DurableTask) -> None:
-        """Insert a new task. ``owner_id`` is stamped from the bound owner.
+    @staticmethod
+    def _task_insert_columns(task: DurableTask) -> dict[str, Any]:
+        """The column dict for inserting one task row.
 
-        Raises if ``task.owner_id`` disagrees with the bound owner (the
-        OwnedRepository insert helper rejects cross-owner writes loudly).
+        Shared by :meth:`create` (via ``_insert_owned``, which stamps and
+        validates ``owner_id``) and :meth:`enqueue` (issued directly on the
+        caller's own open transaction connection, where ``_insert_owned``'s
+        own ``self._db.execute()`` would deadlock against the write lock
+        ``DbPool.transaction()`` already holds for the whole block — see
+        ``DbPool.transaction()``'s docstring).
         """
-        # 1. ENTRY
-        log.tasks.debug(
-            "[tasks] store.create: entry",
-            extra={"_fields": {
-                "task_id": task.task_id, "owner_id": self._owner_id,
-                "status": task.status,
-            }},
-        )
-        await self._insert_owned(self._table, {
+        return {
             "task_id": task.task_id,
             "owner_id": task.owner_id,
             "goal": task.goal,
@@ -357,7 +384,23 @@ class DurableTaskStore(OwnedRepository):
             "decomposition_depth": task.decomposition_depth,
             "worktree_path": task.worktree_path,
             "story_branch": task.story_branch,
-        })
+        }
+
+    async def create(self, task: DurableTask) -> None:
+        """Insert a new task. ``owner_id`` is stamped from the bound owner.
+
+        Raises if ``task.owner_id`` disagrees with the bound owner (the
+        OwnedRepository insert helper rejects cross-owner writes loudly).
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.create: entry",
+            extra={"_fields": {
+                "task_id": task.task_id, "owner_id": self._owner_id,
+                "status": task.status,
+            }},
+        )
+        await self._insert_owned(self._table, self._task_insert_columns(task))
         # 4. EXIT
         log.tasks.info(
             "[tasks] store.create: created",
@@ -1181,17 +1224,59 @@ class DurableTaskStore(OwnedRepository):
         a schedule firing, an agent's own sub-goal — all become a row here, and the
         loop is what runs them. Stamps this store's principal so a caller states
         what the work MEANS, not which tenant it belongs to.
+
+        Both writes (the base INSERT and the loop-contract UPDATE that
+        ``create()`` alone leaves out — see ``_task_insert_columns``) plus the
+        ``task.enqueued`` journal row commit in ONE transaction (spec 2.1,
+        AD-24): a caller must never observe a task row with no matching
+        journal event, or a journal event for a row that was rolled back.
         """
-        row = task.model_copy(update={"owner_id": self._owner_id})
-        await self.create(row)
-        await self._db.execute(
-            f"UPDATE {self._table} SET destination=?, achievement=?, max_attempts=?, "  # noqa: S608
-            "depends_on=?, trigger_kind=?, idempotency_key=? "
-            "WHERE task_id=? AND owner_id=?",
-            (task.destination, task.achievement, int(task.max_attempts),
-             ",".join(task.depends_on) or None, task.trigger_kind,
-             task.idempotency_key, task.task_id, self._owner_id),
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.enqueue: entry",
+            extra={"_fields": {
+                "task_id": task.task_id, "owner_id": self._owner_id,
+                "trigger": task.trigger_kind,
+            }},
         )
+        row = task.model_copy(update={"owner_id": self._owner_id})
+        insert_sql, insert_params = _insert_stmt(
+            self._table, self._task_insert_columns(row)
+        )
+        # 2. DECISION -- both writes plus the journal row share one transaction
+        # (spec 2.1, AD-24): a caller must never observe a task row with no
+        # matching journal event, or a journal event for a row rolled back.
+        async with self._db.transaction() as conn:
+            # 3. STEP -- the base INSERT, the loop-contract UPDATE `create()`
+            # alone leaves out (see `_task_insert_columns`), and the journal row.
+            await conn.execute(insert_sql, insert_params)
+            await conn.execute(
+                f"UPDATE {self._table} SET destination=?, achievement=?, max_attempts=?, "  # noqa: S608
+                "depends_on=?, trigger_kind=?, idempotency_key=? "
+                "WHERE task_id=? AND owner_id=?",
+                (task.destination, task.achievement, int(task.max_attempts),
+                 ",".join(task.depends_on) or None, task.trigger_kind,
+                 task.idempotency_key, task.task_id, self._owner_id),
+            )
+            await journal_record(conn, JournalEvent(
+                type="task.enqueued",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id=self._owner_id,
+                target_kind=ActorKind.OWNER,
+                target_id=task.task_id,
+                outcome=Outcome.PENDING,
+                record_ref=RecordRef(
+                    kind="sqlite",
+                    locator={"table": self._table, "task_id": task.task_id},
+                ),
+                attrs=TaskEnqueuedAttrs(
+                    trigger_kind=task.trigger_kind,
+                    depends_on_count=len(task.depends_on),
+                    max_attempts=int(task.max_attempts),
+                ),
+            ))
+        # 4. EXIT
         log.tasks.info(
             "[loop] task enqueued",
             extra={"_fields": {"task_id": task.task_id, "trigger": task.trigger_kind,
@@ -1240,7 +1325,11 @@ class DurableTaskStore(OwnedRepository):
         """True when every dependency DELIVERED. A dead-lettered dependency
         dead-letters this row too, rather than leaving it blocked forever — a
         parent waiting on work that will never land is leaked work wearing a
-        different hat, and leaked work is invisible."""
+        different hat, and leaked work is invisible.
+
+        The cascading dead-letter UPDATE and its ``task.dead_lettered``
+        journal row commit in ONE transaction, same as the direct
+        ``fail_and_requeue`` path (spec 2.1, AD-24)."""
         marks = ",".join("?" for _ in deps)
         rows = await self._db.fetch_all(
             f"SELECT task_id, status FROM {self._table} "  # noqa: S608
@@ -1249,14 +1338,44 @@ class DurableTaskStore(OwnedRepository):
         )
         by_id = {str(r["task_id"]): str(r["status"]) for r in rows}
         if any(by_id.get(d) in ("dead_letter", "failed") for d in deps):
-            await self._db.execute(
-                f"UPDATE {self._table} SET status='dead_letter', "  # noqa: S608
-                "last_error=?, last_failure_class='dependency_failed', "
-                "updated_at=? WHERE task_id=? AND owner_id=?",
-                (f"a dependency will never land: "
-                 f"{','.join(d for d in deps if by_id.get(d) in ('dead_letter','failed'))}",
-                 datetime.now(UTC).isoformat(), task_id, self._owner_id),
-            )
+            failed_deps = [d for d in deps if by_id.get(d) in ("dead_letter", "failed")]
+            error_msg = f"a dependency will never land: {','.join(failed_deps)}"
+            # Read BEFORE the transaction — the row's own attempt/lease facts
+            # for the journal event's attrs, honest rather than fabricated.
+            cascading = await self.get(task_id)
+            async with self._db.transaction() as conn:
+                cursor = await conn.execute(
+                    f"UPDATE {self._table} SET status='dead_letter', "  # noqa: S608
+                    "last_error=?, last_failure_class='dependency_failed', "
+                    "updated_at=? WHERE task_id=? AND owner_id=?",
+                    (error_msg, datetime.now(UTC).isoformat(), task_id, self._owner_id),
+                )
+                # Only when THIS call actually made the transition — a
+                # concurrent duplicate cascade (two callers both discovering
+                # the same failed dependency) must never write two
+                # `task.dead_lettered` rows for one real transition.
+                if cursor.rowcount == 1:
+                    await journal_record(conn, JournalEvent(
+                        type="task.dead_lettered",
+                        schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS,
+                        actor_id=self._owner_id,
+                        target_kind=ActorKind.OWNER,
+                        target_id=task_id,
+                        outcome=Outcome.DEAD_LETTERED,
+                        record_ref=RecordRef(
+                            kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                        ),
+                        attrs=TaskDeadLetteredAttrs(
+                            task_kind=cascading.trigger_kind,
+                            attempt_count=cascading.attempt_count,
+                            max_attempts=cascading.max_attempts,
+                            lease_owner=cascading.lease_owner,
+                            failure_class="dependency_failed",
+                            permanent=True,
+                            dependency_ids=",".join(failed_deps),
+                        ),
+                    ))
             log.tasks.warning(
                 "[loop] task dead-lettered — a dependency failed permanently",
                 extra={"_fields": {"task_id": task_id, "depends_on": list(deps)}},
@@ -1274,16 +1393,38 @@ class DurableTaskStore(OwnedRepository):
         same shape scheduler.py already runs in production for jobs. A SELECT
         followed by an UPDATE would double-run, and double-running a task that
         sends a message sends it twice.
+
+        The claim UPDATE and the ``task.claimed`` journal row commit in ONE
+        transaction (spec 2.1, AD-24) — but ONLY when this caller actually won
+        the compare-and-set; a claim that matched zero rows recorded nothing
+        happening to THIS worker.
         """
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=lease_seconds)
-        affected = await self._db.execute_returning_rowcount(
-            f"UPDATE {self._table} SET status='running', lease_owner=?, "  # noqa: S608
-            "lease_expires_at=?, updated_at=? "
-            "WHERE task_id=? AND owner_id=? AND status='pending'",
-            (worker, expires.isoformat(), now.isoformat(), task_id, self._owner_id),
-        )
-        won = affected == 1
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                f"UPDATE {self._table} SET status='running', lease_owner=?, "  # noqa: S608
+                "lease_expires_at=?, updated_at=? "
+                "WHERE task_id=? AND owner_id=? AND status='pending'",
+                (worker, expires.isoformat(), now.isoformat(), task_id, self._owner_id),
+            )
+            won = cursor.rowcount == 1
+            if won:
+                await journal_record(conn, JournalEvent(
+                    type="task.claimed",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=worker,
+                    target_kind=ActorKind.OWNER,
+                    target_id=task_id,
+                    outcome=Outcome.OK,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                    ),
+                    attrs=TaskClaimedAttrs(
+                        lease_owner=worker, lease_seconds=int(lease_seconds),
+                    ),
+                ))
         log.tasks.info(
             "[loop] claim",
             extra={"_fields": {"task_id": task_id, "worker": worker, "won": won}},
@@ -1785,14 +1926,44 @@ class DurableTaskStore(OwnedRepository):
         now = datetime.now(UTC)
 
         if permanent or exhausted:
-            await self._db.execute(
-                f"UPDATE {self._table} SET status='dead_letter', attempt_count=?, "  # noqa: S608
-                "last_error=?, last_failure_class=?, banned_capabilities=?, "
-                "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
-                "WHERE task_id=? AND owner_id=?",
-                (attempts, error[:2000], failure_class or None,
-                 ",".join(merged) or None, now.isoformat(), task_id, self._owner_id),
-            )
+            # The dead-letter UPDATE and its `task.dead_lettered` journal row
+            # commit in ONE transaction (spec 2.1, AD-24) — this is the loop's
+            # give-up, needs_you/high in the attention policy Story 2.2 wires.
+            async with self._db.transaction() as conn:
+                cursor = await conn.execute(
+                    f"UPDATE {self._table} SET status='dead_letter', attempt_count=?, "  # noqa: S608
+                    "last_error=?, last_failure_class=?, banned_capabilities=?, "
+                    "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+                    "WHERE task_id=? AND owner_id=?",
+                    (attempts, error[:2000], failure_class or None,
+                     ",".join(merged) or None, now.isoformat(), task_id, self._owner_id),
+                )
+                # Only when THIS call actually matched a row — same rule as
+                # claim()/mark_delivered()/mark_completed_unaddressed(): a
+                # concurrent duplicate dead-letter attempt must never write two
+                # `task.dead_lettered` rows for one real transition.
+                if cursor.rowcount == 1:
+                    await journal_record(conn, JournalEvent(
+                        type="task.dead_lettered",
+                        schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS,
+                        actor_id=self._owner_id,
+                        target_kind=ActorKind.OWNER,
+                        target_id=task_id,
+                        outcome=Outcome.DEAD_LETTERED,
+                        record_ref=RecordRef(
+                            kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                        ),
+                        attrs=TaskDeadLetteredAttrs(
+                            task_kind=row.trigger_kind,
+                            attempt_count=attempts,
+                            max_attempts=row.max_attempts,
+                            lease_owner=row.lease_owner,
+                            failure_class=failure_class or None,
+                            permanent=permanent,
+                            dependency_ids=None,
+                        ),
+                    ))
             log.tasks.error(
                 "[loop] task DEAD-LETTERED — it will not be retried",
                 extra={"_fields": {"task_id": task_id, "attempts": attempts,
@@ -1907,12 +2078,32 @@ class DurableTaskStore(OwnedRepository):
         # seam keyed the proof on a recovery drive's `trace_id` (not a task id at all)
         # it wrote against nothing and reported success forever. A proof that can
         # never disagree with its claim is not a proof.
-        affected = await self._db.execute_returning_rowcount(
-            f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
-            "delivered_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
-            "WHERE task_id=? AND owner_id=?",
-            (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
-        )
+        #
+        # The UPDATE and its `task.finished` journal row commit in ONE
+        # transaction (spec 2.1, AD-24) — but ONLY when the UPDATE actually
+        # matched a row; a proof that matched nothing recorded nothing.
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
+                "delivered_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+                "WHERE task_id=? AND owner_id=?",
+                (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
+            )
+            affected = cursor.rowcount
+            if affected:
+                await journal_record(conn, JournalEvent(
+                    type="task.finished",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=self._owner_id,
+                    target_kind=ActorKind.OWNER,
+                    target_id=task_id,
+                    outcome=Outcome.OK,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                    ),
+                    attrs=TaskFinishedAttrs(completion_mode="delivered"),
+                ))
         if not affected:
             # Never raises: the answer HAS reached the user by the time this runs, and
             # a bookkeeping failure must not cost a delivered turn. But it is an ERROR,
@@ -1947,12 +2138,30 @@ class DurableTaskStore(OwnedRepository):
         the other end of the lifecycle.
         """
         now = datetime.now(UTC)
-        affected = await self._db.execute_returning_rowcount(
-            f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
-            "acknowledged_at=?, lease_owner=NULL, lease_expires_at=NULL, "
-            "updated_at=? WHERE task_id=? AND owner_id=?",
-            (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
-        )
+        # The UPDATE and its `task.finished` journal row commit in ONE
+        # transaction (spec 2.1, AD-24) — same rule as mark_delivered above.
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
+                "acknowledged_at=?, lease_owner=NULL, lease_expires_at=NULL, "
+                "updated_at=? WHERE task_id=? AND owner_id=?",
+                (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
+            )
+            affected = cursor.rowcount
+            if affected:
+                await journal_record(conn, JournalEvent(
+                    type="task.finished",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=self._owner_id,
+                    target_kind=ActorKind.OWNER,
+                    target_id=task_id,
+                    outcome=Outcome.OK,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                    ),
+                    attrs=TaskFinishedAttrs(completion_mode="unaddressed"),
+                ))
         if not affected:
             # Same reasoning as mark_delivered: measure the effect, never trust
             # the call, and never raise into the loop over bookkeeping.

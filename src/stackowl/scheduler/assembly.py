@@ -1141,11 +1141,16 @@ def _build_health_aggregator(
         StrayDatabaseContributor,
     )
     from stackowl.infra.clock import WallClock
+    from stackowl.journal.health import JournalHealthContributor
     from stackowl.paths import StackowlHome
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
+    # Spec 2.1 — surfaces a journal.record() failure (a task's state committed
+    # with no journal row to prove it) in the live health sweep. No dependency
+    # on anything else assembled here, so it is unconditional like DbContributor.
+    agg.register(JournalHealthContributor())
     # A DATABASE BESIDE THE LIVE ONE. The 0-byte `~/.stackowl/stackowl.db` came back
     # twice on 2026-09-11 — an ad-hoc connect at the obvious guess, which SQLite turns
     # into an empty file — and nothing noticed. Detection only: `StrayDatabaseHealer`,
