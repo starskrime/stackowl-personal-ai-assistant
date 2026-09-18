@@ -70,7 +70,13 @@ from stackowl.journal.narrator import (
     register_name_resolver,
     reset_name_resolvers_for_tests,
 )
-from stackowl.journal.needs_you import open_items
+from stackowl.journal.needs_you import (
+    NeedsYouResolution,
+    compute_item_digest,
+    open_items,
+    resolve,
+    sweep_expired_items,
+)
 from stackowl.journal.recorder import record
 from stackowl.journal.registry import EventRegistry, EventTypeSpec, get_registry
 from stackowl.journal.write_gate import pause_writes, resume_writes, writes_paused
@@ -89,11 +95,13 @@ __all__ = [
     "NameResolver",
     "NarrationResult",
     "NeedsYouKind",
+    "NeedsYouResolution",
     "Outcome",
     "RecordKind",
     "RecordRef",
     "RowFetcher",
     "classify",
+    "compute_item_digest",
     "compute_registry_digest",
     "current_max_cursor",
     "get_registry",
@@ -109,7 +117,9 @@ __all__ = [
     "register_name_resolver",
     "reset_name_resolvers_for_tests",
     "reset_write_gate_for_tests",
+    "resolve",
     "resume_writes",
+    "sweep_expired_items",
     "wait_for_commit",
     "writes_paused",
 ]

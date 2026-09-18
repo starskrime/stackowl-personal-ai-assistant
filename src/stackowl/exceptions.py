@@ -740,6 +740,28 @@ class JournalInvalidAttrsError(DomainError):
         )
 
 
+class NeedsYouItemNotFoundError(DomainError):
+    """Raised when ``journal.needs_you.resolve()`` (Story 3.2, AD-28) is
+    called with an ``item_id`` no row has at all.
+
+    Every other outcome ``resolve()`` can reach -- already resolved, already
+    expired, refused on a stale version/digest -- is a legitimate protocol
+    outcome, carried on the returned ``NeedsYouResolution.outcome`` rather
+    than raised. An unknown ``item_id`` is different: it means the caller
+    (a surface, a stale deep link, a test) is asking about a row that was
+    never opened, which is a caller bug, not something for a resolver to
+    silently no-op.
+    """
+
+    def __init__(self, item_id: str) -> None:
+        self.item_id = item_id
+        self.remedy = (
+            "resolve() was called with an item_id no needs_you row has -- "
+            "check the id the caller is answering against"
+        )
+        super().__init__(f"needs_you item {item_id!r} does not exist")
+
+
 class JournalRecordReaderRefusedError(DomainError):
     """Raised when a registered journal record reader (AD-4, Story 2.10) is
     called with an ``owner_id`` other than the platform's one owner.
