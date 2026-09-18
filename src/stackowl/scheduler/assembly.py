@@ -210,6 +210,9 @@ class SchedulerAssembly:
         )
         from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
         from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
+        from stackowl.scheduler.handlers.needs_you_expiry_sweep import (
+            register_needs_you_expiry_sweep_handler,
+        )
         from stackowl.scheduler.handlers.tool_pruning import ToolPruningHandler
         from stackowl.scheduler.handlers.workspace_env_janitor import (
             register_workspace_env_janitor_handler,
@@ -321,6 +324,12 @@ class SchedulerAssembly:
         from stackowl.db.pool import default_db_path as _journal_db_path
 
         register_journal_prune_handler(db, _journal_db_path())
+        # The Needs-you queue needs its own prompt decay leg -- an item whose
+        # expires_at has passed must not stay open in the strip just because
+        # nobody happened to call open_items() (Story 3.2, AD-28). Registered
+        # here, seeded on its own 1-minute cadence below (not journal_prune's
+        # hourly one -- see the handler module's own docstring for why).
+        register_needs_you_expiry_sweep_handler(db)
         # Stray virtualenvs need the same decay leg. Measured 2026-08-22: FOUR envs
         # in the workspace totalling 707 MB, two of them byte-identical, none
         # referenced anywhere in src/ — built ad hoc through `shell` because the
@@ -1016,6 +1025,13 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="journal_prune", schedule="every 1h",
             interval_minutes=60,
+        )
+        # Needs-you expiry sweep -- 1-minute cadence, not journal_prune's
+        # hourly one (Story 3.2, AD-28): a stale item must not stay open in
+        # the strip for up to an hour after it should have expired.
+        await _seed_minutes_schedule(
+            db, handler_name="needs_you_expiry_sweep", schedule="every 1m",
+            interval_minutes=1,
         )
         # Workspace env janitor — reclaim stray per-tool virtualenvs. Daily rather
         # than 12-hourly because it walks whole trees to find the newest mtime, and

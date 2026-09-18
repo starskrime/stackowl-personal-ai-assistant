@@ -516,6 +516,35 @@ async def test_downloads_janitor_seed_is_idempotent(tmp_db: DbPool) -> None:
     assert len(rows) == 1  # second build did not duplicate
 
 
+async def test_build_registers_and_seeds_needs_you_expiry_sweep(tmp_db: DbPool) -> None:
+    """Story 3.2, AD-28 -- exactly one expiry-sweep job exists, seeded
+    idempotently, on its own 1-minute cadence (not journal_prune's hourly
+    one)."""
+    await _build(tmp_db)
+
+    handler = HandlerRegistry.instance().get("needs_you_expiry_sweep")
+    assert handler is not None
+    assert handler.handler_name == "needs_you_expiry_sweep"
+
+    rows = await tmp_db.fetch_all(
+        "SELECT handler_name, schedule, idempotency_key FROM jobs "
+        "WHERE handler_name = ?", ("needs_you_expiry_sweep",),
+    )
+    assert len(rows) == 1
+    assert rows[0]["schedule"] == "every 1m"
+    assert rows[0]["idempotency_key"] == "needs_you_expiry_sweep:every-1m"
+
+
+async def test_needs_you_expiry_sweep_seed_is_idempotent(tmp_db: DbPool) -> None:
+    await _build(tmp_db)
+    HandlerRegistry.reset()
+    await _build(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT job_id FROM jobs WHERE handler_name = ?", ("needs_you_expiry_sweep",),
+    )
+    assert len(rows) == 1  # second build did not duplicate
+
+
 async def test_supervisor_supervises_the_scheduler(tmp_db: DbPool) -> None:
     components = await _build(tmp_db)
     # Supervisor's internal _tasks dict (or similar) contains the scheduler.
