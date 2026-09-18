@@ -48,7 +48,7 @@ development_status:
   2-1-the-journal-records-task-events-in-the-same-transaction-as-t: done
   2-2-every-event-reads-as-a-plain-sentence-and-knows-whether-it-n: done
   2-3-gateway-and-core-refuse-to-talk-across-versions: done
-  2-4-only-the-real-core-can-connect-to-the-gateway: backlog
+  2-4-only-the-real-core-can-connect-to-the-gateway: done
   2-5-split-mode-tui-progress-comes-back-from-the-journal: backlog
   2-6-jobs-heals-and-health-have-a-history: backlog
   2-7-every-turn-s-model-calls-tool-calls-and-delegation-hops-are: backlog
