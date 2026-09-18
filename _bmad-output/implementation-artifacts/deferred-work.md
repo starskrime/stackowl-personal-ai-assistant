@@ -87,3 +87,27 @@ source_spec: `spec-2-2-every-event-reads-as-a-plain-sentence-and-knows-whether-i
 severity: low
 reason: Pre-existing comment from Story 2.1 (unchanged context in Story 2.2's diff, not modified by it). `ARCHITECTURE-SPINE.md`'s current AD-5 text: "Only explicit give-up or unhealed event types (such as `heal.exhausted`, `task.dead_lettered`, `job.parked`)... are `needs_you` at `high`" -- three named examples via "such as", not two, likely because AD-5 gained a third example after Story 2.1's comment was written. Cosmetic only: the comment does not affect behavior, only its own accuracy. What would settle it: a one-line comment fix updating "two" to "three" (or naming all three).
 status: open
+
+### DW-11: The gateway does not self-restart (`os.execv`) when it is the older side of a gateway/core Hello mismatch, though epics.md's literal AC text ("the side running the older version restarts under supervision") does not textually exempt it
+origin: spec-2-3-gateway-and-core-refuse-to-talk-across-versions.md, planning (frontmatter `deferred`, Design Notes), carried through review (intent-alignment)
+location: src/stackowl/startup/orchestrator.py (_supervise_core, _phase_gateway's gateway branch); src/stackowl/runtime/gateway_link.py (GatewayLink)
+source_spec: `spec-2-3-gateway-and-core-refuse-to-talk-across-versions.md`
+severity: medium
+reason: `review-adversary.md`'s adopted AD-33 fix (M11/C3) calls for the gateway to "pause its own journal and identity writes until its code matches `schema_head`, then re-exec." Doing that safely requires (a) the gateway surviving its own `os.execv`, which drops its listening UDS socket and the connected core's link to it (both non-inheritable under Python's PEP 446 default), and (b) teaching core's frame loop to wait-and-reconnect across a gateway restart instead of its current, universal assumption that a dropped gateway connection means "tear myself down" (`orchestrator.py`'s `_core_frame_loop` docstring: "Ends when the gateway hangs up (clean EOF) -- that drives the core's graceful teardown"). Confirmed via `orchestrator.py:4686`'s own comment ("Gateway/mono never arm" the restart_event/CodeWatcher/execv triggers core alone has) that no gateway self-restart primitive exists anywhere in this codebase today. Building (b) is an architectural inversion, not a mechanical addition, on a live production gateway serving the owner's real Telegram bot. Instead: the gateway refuses the link, pauses journal writes, and (after repeated core respawns confirm the fault is its own, bounded by `_MAX_CONSECUTIVE_HELLO_MISMATCHES`) reports the link `degraded` with a remedy telling the operator to restart it manually. What would settle it: a follow-up story that first teaches core to tolerate a mid-session gateway disconnect (wait-and-reconnect instead of tearing down), then adds a bounded, counted gateway self-`os.execv` path mirroring core's own.
+status: open
+
+### DW-12: `ipc/frames.py`'s frame-direction comment block still never lists `consent_request`/`consent_response`/`send_file`/`send_ephemeral`/`ephemeral_sent`/`delete_message`'s direction pairing
+origin: spec-2-3-gateway-and-core-refuse-to-talk-across-versions.md, Review Triage Log (blind-hunter)
+location: src/stackowl/ipc/frames.py (module docstring, frame-direction comment block near the top of the file)
+source_spec: `spec-2-3-gateway-and-core-refuse-to-talk-across-versions.md`
+severity: low
+reason: Confirmed this incompleteness pre-dates Story 2.3 -- the baseline comment already omitted these frames before this story, which only touched the lines naming `hello` and the four deleted frames (`SteerFrame`/`StopFrame`/`QueryRunningFrame`/`RunningStateFrame`). Cosmetic only: the comment does not affect behavior, only its own completeness as a map of real frame traffic. What would settle it: a follow-up comment update enumerating every frame's real direction pairing.
+status: open
+
+### DW-13: `tests/runtime/test_split_wiring.py`'s docstring claims "the full split round-trip is already proven by tests/runtime/test_split_link.py over a real socket," which is inaccurate for the core side
+origin: spec-2-3-gateway-and-core-refuse-to-talk-across-versions.md, Review Triage Log (verification-gap, "Other findings")
+location: tests/runtime/test_split_wiring.py (module docstring, lines 6-7)
+source_spec: `spec-2-3-gateway-and-core-refuse-to-talk-across-versions.md`
+severity: low
+reason: Verified directly -- `grep -rn "CoreLink(" src/stackowl/` returns zero production instantiations, confirming `test_split_link.py` drives the core side through the confirmed-dead `CoreLink` class, not the real orchestrator wiring. `test_split_wiring.py` itself is untouched by Story 2.3, so the docstring's inaccuracy pre-dates it. It becomes more consequential now: Story 2.3's new `_core_frame_loop` Hello-exchange logic is exactly the kind of real orchestrator wiring that false claim would lead a future reader to believe is already covered by "a real socket round-trip," when it is not (Story 2.3 closed part of that specific gap with a dedicated AST-based wiring test, `tests/startup/test_core_hello_wiring.py`, rather than fixing this docstring). What would settle it: correcting the docstring to name what `test_split_link.py` actually covers (the gateway-side link + a dead CoreLink-backed core stub), and/or routing more of `_core_frame_loop`'s real wiring through a genuine two-process or equivalent test.
+status: open
