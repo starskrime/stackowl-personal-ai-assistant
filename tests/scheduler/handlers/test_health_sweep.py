@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from stackowl.db.pool import DbPool
 from stackowl.health.status import HealthStatus
 from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 from stackowl.scheduler.job import Job
@@ -63,11 +64,11 @@ def _job() -> Job:
 
 
 @pytest.mark.asyncio
-async def test_all_healthy_no_alert() -> None:
+async def test_all_healthy_no_alert(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("db", "ok", None, 1.0)])
     alerts: list[str] = []
 
-    handler = HealthSweepHandler(agg, alert=alerts.append)  # type: ignore[arg-type]
+    handler = HealthSweepHandler(agg, alert=alerts.append, db=tmp_db)  # type: ignore[arg-type]
     result = await handler.execute(_job())
 
     assert result.success is True
@@ -76,7 +77,7 @@ async def test_all_healthy_no_alert() -> None:
 
 
 @pytest.mark.asyncio
-async def test_down_subsystem_triggers_alert() -> None:
+async def test_down_subsystem_triggers_alert(tmp_db: DbPool) -> None:
     agg = _FakeAggregator(
         [
             HealthStatus("db", "down", "pool wedged", 5000.0),
@@ -88,7 +89,7 @@ async def test_down_subsystem_triggers_alert() -> None:
     async def _sink(msg: str) -> None:
         alerts.append(msg)
 
-    handler = HealthSweepHandler(agg, alert=_sink)
+    handler = HealthSweepHandler(agg, alert=_sink, db=tmp_db)
     result = await handler.execute(_job())
 
     assert result.success is True  # the sweep itself ran fine; "down" is metadata
@@ -98,14 +99,14 @@ async def test_down_subsystem_triggers_alert() -> None:
 
 
 @pytest.mark.asyncio
-async def test_degraded_alerts_but_handler_succeeds() -> None:
+async def test_degraded_alerts_but_handler_succeeds(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("graph", "degraded", "kuzu wheel missing", 2.0)])
     alerts: list[str] = []
 
     async def _sink(msg: str) -> None:
         alerts.append(msg)
 
-    handler = HealthSweepHandler(agg, alert=_sink)
+    handler = HealthSweepHandler(agg, alert=_sink, db=tmp_db)
     result = await handler.execute(_job())
 
     assert result.success is True
@@ -114,33 +115,33 @@ async def test_degraded_alerts_but_handler_succeeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_alert_sink_still_logs_and_succeeds() -> None:
+async def test_no_alert_sink_still_logs_and_succeeds(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("db", "down", "x", 1.0)])
-    handler = HealthSweepHandler(agg, alert=None)
+    handler = HealthSweepHandler(agg, alert=None, db=tmp_db)
     result = await handler.execute(_job())
     assert result.success is True
     assert result.metadata["down"] == 1
 
 
 @pytest.mark.asyncio
-async def test_alert_sink_failure_does_not_fail_sweep() -> None:
+async def test_alert_sink_failure_does_not_fail_sweep(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("db", "down", "x", 1.0)])
 
     async def _boom(_msg: str) -> None:
         raise RuntimeError("delivery broke")
 
-    handler = HealthSweepHandler(agg, alert=_boom)
+    handler = HealthSweepHandler(agg, alert=_boom, db=tmp_db)
     result = await handler.execute(_job())
     assert result.success is True  # alert failure is swallowed + logged
 
 
 @pytest.mark.asyncio
-async def test_aggregator_raises_returns_failure() -> None:
+async def test_aggregator_raises_returns_failure(tmp_db: DbPool) -> None:
     class _Boom:
         async def collect(self) -> list[HealthStatus]:
             raise RuntimeError("aggregator broke")
 
-    handler = HealthSweepHandler(_Boom())  # type: ignore[arg-type]
+    handler = HealthSweepHandler(_Boom(), db=tmp_db)  # type: ignore[arg-type]
     result = await handler.execute(_job())
     assert result.success is False
     assert "aggregator broke" in (result.error or "")
@@ -152,13 +153,13 @@ async def test_aggregator_raises_returns_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_first_degraded_sweep_alerts_once() -> None:
+async def test_first_degraded_sweep_alerts_once(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("graph", "degraded", "x", 2.0)])
     alerts: list[str] = []
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     result = await handler.execute(_job())
 
@@ -168,13 +169,13 @@ async def test_first_degraded_sweep_alerts_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_immediate_repeat_same_status_does_not_realert() -> None:
+async def test_immediate_repeat_same_status_does_not_realert(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("graph", "degraded", "x", 2.0)])
     alerts: list[str] = []
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     await handler.execute(_job())
     await handler.execute(_job())
@@ -183,13 +184,13 @@ async def test_immediate_repeat_same_status_does_not_realert() -> None:
 
 
 @pytest.mark.asyncio
-async def test_backoff_elapsed_heartbeat_realerts() -> None:
+async def test_backoff_elapsed_heartbeat_realerts(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("graph", "degraded", "x", 2.0)])
     alerts: list[str] = []
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     await handler.execute(_job())
     clock.advance(3600.0)
@@ -199,13 +200,13 @@ async def test_backoff_elapsed_heartbeat_realerts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_escalation_degraded_to_down_bypasses_backoff() -> None:
+async def test_escalation_degraded_to_down_bypasses_backoff(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("graph", "degraded", "x", 2.0)])
     alerts: list[str] = []
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     await handler.execute(_job())
     agg.set([HealthStatus("graph", "down", "worse now", 2.0)])
@@ -216,13 +217,13 @@ async def test_escalation_degraded_to_down_bypasses_backoff() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recovery_fires_resolved_notice_and_clears_state() -> None:
+async def test_recovery_fires_resolved_notice_and_clears_state(tmp_db: DbPool) -> None:
     agg = _FakeAggregator([HealthStatus("graph", "degraded", "x", 2.0)])
     alerts: list[str] = []
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     await handler.execute(_job())
     assert handler._alert_state  # populated after the first unhealthy sweep
@@ -237,19 +238,21 @@ async def test_recovery_fires_resolved_notice_and_clears_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fully_healthy_sweep_with_nothing_tracked_has_no_resolved_notice() -> None:
+async def test_fully_healthy_sweep_with_nothing_tracked_has_no_resolved_notice(
+    tmp_db: DbPool,
+) -> None:
     agg = _FakeAggregator([HealthStatus("db", "ok", None, 1.0)])
     alerts: list[str] = []
     clock = _FakeClock()
 
-    handler = HealthSweepHandler(agg, alert=_async_sink(alerts), clock=clock)  # type: ignore[arg-type]
+    handler = HealthSweepHandler(agg, alert=_async_sink(alerts), clock=clock, db=tmp_db)  # type: ignore[arg-type]
     await handler.execute(_job())
 
     assert alerts == []  # nothing was ever tracked — no spurious resolved-notice
 
 
 @pytest.mark.asyncio
-async def test_new_incident_not_swallowed_by_unrelated_ongoing_dedup() -> None:
+async def test_new_incident_not_swallowed_by_unrelated_ongoing_dedup(tmp_db: DbPool) -> None:
     """svc_alpha already deduped/suppressed + svc_beta newly degraded →
     alert fires with ONLY svc_beta."""
     agg = _FakeAggregator([HealthStatus("svc_alpha", "degraded", "x", 1.0)])
@@ -257,7 +260,7 @@ async def test_new_incident_not_swallowed_by_unrelated_ongoing_dedup() -> None:
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     await handler.execute(_job())  # svc_alpha alerts + is tracked
     assert len(alerts) == 1
@@ -278,6 +281,7 @@ async def test_new_incident_not_swallowed_by_unrelated_ongoing_dedup() -> None:
 @pytest.mark.asyncio
 async def test_heal_and_verify_path_reaching_full_health_fires_resolved(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_db: DbPool,
 ) -> None:
     """The post-heal-and-reverify branch (~line 138) also fires a resolved-notice."""
     from types import SimpleNamespace
@@ -316,6 +320,7 @@ async def test_heal_and_verify_path_reaching_full_health_fires_resolved(
         alert=_async_sink(alerts),  # type: ignore[arg-type]
         healers={"db": _FakeHealable()},  # type: ignore[dict-item]
         clock=clock,
+        db=tmp_db,
     )
     # Seed prior alert state as if an earlier tick already alerted "db down" —
     # this tick's heal-and-reverify recovering it must produce a resolved-notice.
@@ -333,6 +338,7 @@ async def test_heal_and_verify_path_reaching_full_health_fires_resolved(
 @pytest.mark.asyncio
 async def test_unhealthy_log_fires_every_tick_regardless_of_dedup_suppression(
     caplog: pytest.LogCaptureFixture,
+    tmp_db: DbPool,
 ) -> None:
     """Regression: the UNHEALTHY log must keep firing even when the alert-sink
     send itself is suppressed by dedup (dedup only ever gates the outbound send)."""
@@ -343,7 +349,7 @@ async def test_unhealthy_log_fires_every_tick_regardless_of_dedup_suppression(
     clock = _FakeClock()
 
     handler = HealthSweepHandler(
-        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0  # type: ignore[arg-type]
+        agg, alert=_async_sink(alerts), clock=clock, realert_backoff_s=3600.0, db=tmp_db  # type: ignore[arg-type]
     )
     await handler.execute(_job())  # tick 1 — alerts + logs
 

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import stackowl.config.settings as settings_mod
+from stackowl.db.pool import DbPool
 from stackowl.health.status import HealthStatus
 from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 from stackowl.scheduler.job import Job
@@ -68,7 +69,7 @@ def _flag(monkeypatch):  # noqa: ANN202
 
 
 @pytest.mark.asyncio
-async def test_down_subsystem_healed_and_reverified_no_alert(_flag) -> None:
+async def test_down_subsystem_healed_and_reverified_no_alert(_flag, tmp_db: DbPool) -> None:
     _flag(True)
     # detect: db down → heal → verify: db ok.
     agg = _ScriptedAggregator(
@@ -81,7 +82,7 @@ async def test_down_subsystem_healed_and_reverified_no_alert(_flag) -> None:
     async def _sink(msg: str) -> None:
         alerts.append(msg)
 
-    handler = HealthSweepHandler(agg, alert=_sink, healers={"db": healer})
+    handler = HealthSweepHandler(agg, alert=_sink, healers={"db": healer}, db=tmp_db)
     result = await handler.execute(_job())
 
     assert healer.ensures == 1, "the down resource must be recycled"
@@ -92,7 +93,7 @@ async def test_down_subsystem_healed_and_reverified_no_alert(_flag) -> None:
 
 
 @pytest.mark.asyncio
-async def test_unhealable_subsystem_still_escalates(_flag) -> None:
+async def test_unhealable_subsystem_still_escalates(_flag, tmp_db: DbPool) -> None:
     _flag(True)
     # detect: db down → heal attempted → verify: still down → escalate.
     agg = _ScriptedAggregator(
@@ -106,7 +107,7 @@ async def test_unhealable_subsystem_still_escalates(_flag) -> None:
     async def _sink(msg: str) -> None:
         alerts.append(msg)
 
-    handler = HealthSweepHandler(agg, alert=_sink, healers={"db": healer})
+    handler = HealthSweepHandler(agg, alert=_sink, healers={"db": healer}, db=tmp_db)
     result = await handler.execute(_job())
 
     assert healer.ensures == 1
@@ -116,7 +117,7 @@ async def test_unhealable_subsystem_still_escalates(_flag) -> None:
 
 
 @pytest.mark.asyncio
-async def test_flag_off_is_detect_only_byte_identical(_flag) -> None:
+async def test_flag_off_is_detect_only_byte_identical(_flag, tmp_db: DbPool) -> None:
     _flag(False)
     agg = _ScriptedAggregator([HealthStatus("db", "down", "pool wedged", 5000.0)])
     healer = _FakeHealable(available=False)
@@ -125,7 +126,7 @@ async def test_flag_off_is_detect_only_byte_identical(_flag) -> None:
     async def _sink(msg: str) -> None:
         alerts.append(msg)
 
-    handler = HealthSweepHandler(agg, alert=_sink, healers={"db": healer})
+    handler = HealthSweepHandler(agg, alert=_sink, healers={"db": healer}, db=tmp_db)
     result = await handler.execute(_job())
 
     assert healer.ensures == 0, "flag OFF must not heal"
@@ -135,7 +136,7 @@ async def test_flag_off_is_detect_only_byte_identical(_flag) -> None:
 
 
 @pytest.mark.asyncio
-async def test_flag_on_no_healer_is_detect_only(_flag) -> None:
+async def test_flag_on_no_healer_is_detect_only(_flag, tmp_db: DbPool) -> None:
     _flag(True)
     # ON but a down subsystem with no registered healer → no heal, alerts as before.
     agg = _ScriptedAggregator([HealthStatus("graph", "down", "kuzu gone", 2.0)])
@@ -144,7 +145,7 @@ async def test_flag_on_no_healer_is_detect_only(_flag) -> None:
     async def _sink(msg: str) -> None:
         alerts.append(msg)
 
-    handler = HealthSweepHandler(agg, alert=_sink, healers={})
+    handler = HealthSweepHandler(agg, alert=_sink, healers={}, db=tmp_db)
     result = await handler.execute(_job())
 
     assert agg.collects == 1, "nothing to heal → no re-collect"

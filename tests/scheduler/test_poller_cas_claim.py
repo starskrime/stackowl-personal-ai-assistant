@@ -119,10 +119,10 @@ async def test_recover_and_poll_dispatch_missed_job_exactly_once(migrated_db: Db
     job dispatches the handler EXACTLY ONCE.
 
     F110 worried recover()'s replay (which calls _run_job) could double-fire with
-    the poll loop. Both paths run the SAME pending->running CAS claim
-    (_won_transition over the single serialized connection), so only one dispatcher
-    wins the occurrence. This pins it with the REAL race (concurrent gather), not
-    just a sequential check.
+    the poll loop. Both paths run the SAME pending->running CAS claim (a guarded
+    UPDATE whose winning rowcount is read straight off its own transaction —
+    Spec 2.6), so only one dispatcher wins the occurrence. This pins it with the
+    REAL race (concurrent gather), not just a sequential check.
     """
     import asyncio
 

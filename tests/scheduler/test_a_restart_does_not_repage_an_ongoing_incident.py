@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.db.pool import DbPool
 from stackowl.health.status import HealthStatus
 from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
@@ -95,13 +96,13 @@ class _Recorder:
         self.written.append((name, status))
 
 
-def _handler(agg, recorder, clock, sent: list[str]):
+def _handler(agg, recorder, clock, sent: list[str], db: DbPool):
     async def _alert(msg: str) -> None:
         sent.append(msg)
 
     return HealthSweepHandler(
         agg, alert=_alert, clock=clock, realert_backoff_s=BACKOFF_S,
-        alert_record=recorder,
+        alert_record=recorder, db=db,
     )
 
 
@@ -122,12 +123,14 @@ async def _sweep(h) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def test_a_fresh_process_does_not_repage_an_incident_already_reported() -> None:
+async def test_a_fresh_process_does_not_repage_an_incident_already_reported(
+    tmp_db: DbPool,
+) -> None:
     """THE DEFECT. A restart 10 minutes into an hour-long backoff paged him again
     — and on 2026-09-03 that happened 11 times inside one outage."""
     sent: list[str] = []
     rec = _Recorder({"provider:NeraAiRaw": ("down", 600.0)})  # alerted 10 min ago
-    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent))
+    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent, tmp_db))
 
     assert sent == [], (
         "a fresh process re-paged an incident the operator was told about 10 "
@@ -135,49 +138,49 @@ async def test_a_fresh_process_does_not_repage_an_incident_already_reported() ->
     )
 
 
-async def test_the_heartbeat_still_fires_once_the_hour_has_passed() -> None:
+async def test_the_heartbeat_still_fires_once_the_hour_has_passed(tmp_db: DbPool) -> None:
     """The backoff is a heartbeat, not a mute. "Still down" after an hour is
     exactly what the design wants said."""
     sent: list[str] = []
     rec = _Recorder({"provider:NeraAiRaw": ("down", BACKOFF_S + 60.0)})
-    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent))
+    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent, tmp_db))
 
     assert len(sent) == 1, sent
 
 
-async def test_an_unreported_subsystem_still_pages_immediately() -> None:
+async def test_an_unreported_subsystem_still_pages_immediately(tmp_db: DbPool) -> None:
     """FAIL TOWARD PAGING is untouched. A subsystem with no durable record is a
     new incident and must reach him at once — the cost the codebase explicitly
     chose to pay."""
     sent: list[str] = []
-    await _sweep(_handler(_Aggregator([_down()]), _Recorder({}), _Clock(), sent))
+    await _sweep(_handler(_Aggregator([_down()]), _Recorder({}), _Clock(), sent, tmp_db))
     assert len(sent) == 1, sent
 
 
-async def test_a_level_change_still_bypasses_the_backoff() -> None:
+async def test_a_level_change_still_bypasses_the_backoff(tmp_db: DbPool) -> None:
     """degraded -> down is new information however recently he was paged."""
     sent: list[str] = []
     rec = _Recorder({"provider:NeraAiRaw": ("degraded", 60.0)})
-    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent))
+    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent, tmp_db))
     assert len(sent) == 1, sent
 
 
-async def test_sending_an_alert_records_it_durably() -> None:
+async def test_sending_an_alert_records_it_durably(tmp_db: DbPool) -> None:
     """A backoff that reads a record nothing writes would suppress nothing. The
     write is the half that makes the next process's read meaningful."""
     sent: list[str] = []
     rec = _Recorder({})
-    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent))
+    await _sweep(_handler(_Aggregator([_down()]), rec, _Clock(), sent, tmp_db))
     assert rec.written == [("provider:NeraAiRaw", "down")], rec.written
 
 
-async def test_no_recorder_behaves_exactly_as_before() -> None:
+async def test_no_recorder_behaves_exactly_as_before(tmp_db: DbPool) -> None:
     """The durable record is optional wiring. Without it the handler must keep
     its in-memory behaviour byte-for-byte, so an unwired deployment is unchanged."""
     sent: list[str] = []
     h = HealthSweepHandler(
         _Aggregator([_down()]), alert=lambda m: _noop(sent, m),
-        clock=_Clock(), realert_backoff_s=BACKOFF_S,
+        clock=_Clock(), realert_backoff_s=BACKOFF_S, db=tmp_db,
     )
     await _sweep(h)
     assert len(sent) == 1
@@ -206,7 +209,7 @@ def test_the_record_is_actually_WIRED_into_the_sweep() -> None:
     )
 
 
-async def test_the_recorded_AGE_is_preserved_not_reset_to_now() -> None:
+async def test_the_recorded_AGE_is_preserved_not_reset_to_now(tmp_db: DbPool) -> None:
     """CAUGHT BY MUTATION. Seeding with ``now`` instead of ``now - age`` passes
     every test above — a level change still bypasses, a new subsystem still
     pages — while silently restarting the hour for an incident already 59 minutes
@@ -219,7 +222,7 @@ async def test_the_recorded_AGE_is_preserved_not_reset_to_now() -> None:
     sent: list[str] = []
     clock = _Clock()
     rec = _Recorder({"provider:NeraAiRaw": ("down", BACKOFF_S - 60.0)})  # 59 min in
-    h = _handler(_Aggregator([_down()]), rec, clock, sent)
+    h = _handler(_Aggregator([_down()]), rec, clock, sent, tmp_db)
 
     await _sweep(h)          # 59 min in — correctly silent
     assert sent == [], sent

@@ -1081,6 +1081,10 @@ class StartupOrchestrator:
             )
         from stackowl.pipeline.durable.journal_names import register_task_name_resolver
         from stackowl.pipeline.durable.store import DurableTaskStore
+        from stackowl.scheduler.journal_names import (
+            register_job_name_resolver,
+            register_subsystem_name_resolver,
+        )
 
         db_pool = DbPool(default_db_path())
         await db_pool.open()
@@ -1114,6 +1118,9 @@ class StartupOrchestrator:
         # falling back to its tombstone text. Registered once, here, so the
         # live process has a working resolver before anything narrates.
         register_task_name_resolver(db_pool)
+        # Story 2.6 -- the job/heal/health NameResolvers, same reason.
+        register_job_name_resolver(db_pool)
+        register_subsystem_name_resolver()
 
         # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
         # "everything in md or sqlite. No data duplication."

@@ -39,13 +39,18 @@ class RecordKind(StrEnum):
 
     AD-2 names the eventual full set: tasks, jobs, owls, memory, consent,
     heals, deliveries, providers, health, channels, tool calls, model calls,
-    delegation hops. Only ``TASK`` is declared here -- Story 2.1 wires only the
-    task lifecycle; a later story adds its own member when it wires its own
-    emitter, per AD-3's additive-only evolution. Pre-declaring the rest now
-    would be vocabulary with no registrant.
+    delegation hops. ``TASK`` was declared by Story 2.1; Story 2.6 adds
+    ``JOB``/``HEAL``/``HEALTH`` for the scheduler's job lifecycle, the
+    healer's attempt/heal/exhaust cycle and health-status transitions. Each
+    later story adds its own member when it wires its own emitter, per AD-3's
+    additive-only evolution. Pre-declaring the rest now would be vocabulary
+    with no registrant.
     """
 
     TASK = "task"
+    JOB = "job"
+    HEAL = "heal"
+    HEALTH = "health"
 
 
 class Outcome(StrEnum):
@@ -79,3 +84,69 @@ class Intensity(StrEnum):
 
     NORMAL = "normal"
     HIGH = "high"
+
+
+class HealthErrorCode(StrEnum):
+    """Closed vocabulary for ``health.changed``'s ``error_code`` (Story 2.6,
+    FR84). AD-4 forbids exception text in ``attrs`` -- this is the bounded,
+    closed-enum substitute a health transition's cause is reduced to before it
+    ever reaches a journal row.
+
+    Deliberately a SMALL, coarse set rather than one member per exception
+    type: a reader of the journal needs "what kind of thing went wrong", not
+    a re-hydrated stack trace -- that is what ``remedy_for``'s free-text advice
+    is already for, on the ``HealthStatus`` object itself, never stored here.
+    """
+
+    TIMEOUT = "timeout"
+    CONNECTION_REFUSED = "connection_refused"
+    PERMISSION_DENIED = "permission_denied"
+    RESOURCE_EXHAUSTED = "resource_exhausted"
+    NOT_FOUND = "not_found"
+    UNKNOWN = "unknown"
+
+
+#: Phrase table mirroring ``health/status.py::_SQLITE_REMEDIES``'s own shape --
+#: matched in order, first hit wins. Reused structure (type/errno/phrase table),
+#: not reused text: `remedy_for` returns operator ADVICE (free text, never
+#: stored in the journal); this returns a closed CODE (bounded, journal-safe).
+_HEALTH_ERROR_PHRASES: tuple[tuple[str, HealthErrorCode], ...] = (
+    ("timed out", HealthErrorCode.TIMEOUT),
+    ("timeout", HealthErrorCode.TIMEOUT),
+    ("connection refused", HealthErrorCode.CONNECTION_REFUSED),
+    ("econnrefused", HealthErrorCode.CONNECTION_REFUSED),
+    ("permission denied", HealthErrorCode.PERMISSION_DENIED),
+    ("readonly database", HealthErrorCode.PERMISSION_DENIED),
+    ("not writable", HealthErrorCode.PERMISSION_DENIED),
+    ("no space", HealthErrorCode.RESOURCE_EXHAUSTED),
+    ("disk full", HealthErrorCode.RESOURCE_EXHAUSTED),
+    ("enospc", HealthErrorCode.RESOURCE_EXHAUSTED),
+    ("circuit open", HealthErrorCode.RESOURCE_EXHAUSTED),
+    ("out of file descriptors", HealthErrorCode.RESOURCE_EXHAUSTED),
+    ("not found", HealthErrorCode.NOT_FOUND),
+    ("no such table", HealthErrorCode.NOT_FOUND),
+    ("unable to open database file", HealthErrorCode.NOT_FOUND),
+)
+
+
+def classify_health_error(message: str | None) -> HealthErrorCode:
+    """Classify a ``HealthStatus.message`` into a closed :class:`HealthErrorCode`.
+
+    Mirrors ``health/status.py::remedy_for``'s branch structure (a fixed
+    phrase table, matched in order) rather than its inputs: ``remedy_for``
+    classifies a live exception (type / errno / SQLite phrase); this classifies
+    whatever a health contributor already reduced its failure to -- a
+    ``HealthStatus.message`` string, the only evidence available at the health
+    sweep's own call site (no raw exception survives past the contributor that
+    caught it). Only the CODE returned here ever reaches a journal row --
+    ``message`` itself never does (AD-4: never exception text). ``None`` or an
+    unmatched message classifies as :attr:`HealthErrorCode.UNKNOWN`, never
+    raises.
+    """
+    if not message:
+        return HealthErrorCode.UNKNOWN
+    text = message.lower()
+    for phrase, code in _HEALTH_ERROR_PHRASES:
+        if phrase in text:
+            return code
+    return HealthErrorCode.UNKNOWN

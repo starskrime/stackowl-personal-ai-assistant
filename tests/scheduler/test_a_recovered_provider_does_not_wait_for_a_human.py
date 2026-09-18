@@ -35,9 +35,10 @@ import logging
 
 import pytest
 
+from stackowl.db.pool import DbPool
 from stackowl.health.status import HealthStatus
-from stackowl.scheduler.job import Job
 from stackowl.scheduler.handlers.health_sweep import clear_degraded_if_a_provider_is_back
+from stackowl.scheduler.job import Job
 
 
 def _job() -> Job:
@@ -207,7 +208,7 @@ def test_the_orchestrator_BINDS_the_sweep_to_the_live_services() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_REAL_handler_clears_a_bound_latch() -> None:
+async def test_the_REAL_handler_clears_a_bound_latch(tmp_db: DbPool) -> None:
     """DRIVES `execute()`, not the helper. Every other test here calls the function
     directly, which is exactly how the ContextVar defect above stayed invisible: a
     double standing in front of the code under test cannot test the wiring."""
@@ -218,7 +219,7 @@ async def test_the_REAL_handler_clears_a_bound_latch() -> None:
             return [_status("provider:NeraAiRaw", "ok"), _status("db", "ok")]
 
     svc = _Services(degraded=True)
-    handler = HealthSweepHandler(_Aggregator())  # type: ignore[arg-type]
+    handler = HealthSweepHandler(_Aggregator(), db=tmp_db)  # type: ignore[arg-type]
     handler.bind_live_services(svc)
 
     await handler.execute(_job())
@@ -231,6 +232,7 @@ async def test_the_REAL_handler_clears_a_bound_latch() -> None:
 @pytest.mark.asyncio
 async def test_an_UNBOUND_sweep_says_so_instead_of_doing_nothing_quietly(
     caplog: pytest.LogCaptureFixture,
+    tmp_db: DbPool,
 ) -> None:
     """A dead self-heal that logs nothing is indistinguishable from a working one.
     That is precisely how the first version of this fix would have lived in
@@ -241,7 +243,7 @@ async def test_an_UNBOUND_sweep_says_so_instead_of_doing_nothing_quietly(
         async def collect(self) -> list[HealthStatus]:
             return [_status("provider:NeraAiRaw", "ok")]
 
-    handler = HealthSweepHandler(_Aggregator())  # type: ignore[arg-type]
+    handler = HealthSweepHandler(_Aggregator(), db=tmp_db)  # type: ignore[arg-type]
     with caplog.at_level(logging.WARNING):
         await handler.execute(_job())
 

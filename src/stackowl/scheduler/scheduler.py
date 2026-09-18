@@ -14,6 +14,14 @@ from stackowl.infra import retry_ledger
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.journal import ActorKind, JournalEvent, Outcome, RecordRef
+from stackowl.journal import record as journal_record
+from stackowl.journal.job_events import (
+    JobFailedAttrs,
+    JobFinishedAttrs,
+    JobParkedAttrs,
+    JobStartedAttrs,
+)
 
 # A leaf module by design — it imports nothing of the platform but the logger —
 # so the scheduler can ask it at module level without dragging in the durable
@@ -32,9 +40,21 @@ from stackowl.scheduler.scheduler_helpers import (
     schedule_interval_seconds,
     write_audit,
 )
-from stackowl.scheduler.scheduler_mutations import _won_transition, run_now, update_job
+from stackowl.scheduler.scheduler_mutations import run_now, update_job
 from stackowl.supervisor.supervisor import SupervisedTask
 from stackowl.tools.verification import is_trustworthy_success
+
+#: AD-4's bound, reused rather than re-declared — a job's `handler_name` is
+#: stamped straight into `JobStartedAttrs`/etc. and must never exceed it.
+_MAX_LABEL_LEN = 64
+
+
+def _job_record_ref(job_id: str) -> RecordRef:
+    """AD-4's record_ref for every ``job.*`` event -- always ``jobs``, even for
+    a one-shot whose row this SAME call path deletes moments later (Design
+    Notes: AD-4's disclosed "target already gone -> expired" contract covers
+    that, not a defect)."""
+    return RecordRef(kind="sqlite", locator={"table": "jobs", "job_id": job_id})
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only import (no runtime cost / cycle)
     from stackowl.notifications.proactive_job import ProactiveJobDeliverer
@@ -434,14 +454,13 @@ class JobScheduler(SupervisedTask):
 
         # F103: claim the occurrence with the SAME compare-and-swap run_now uses,
         # so a concurrent poll tick and run_now (or two pollers) can never both
-        # dispatch this job. A guarded ``pending -> running`` UPDATE plus
-        # ``_won_transition`` (which reads ``changes()`` on the pool's single
-        # serialized connection) reports whether THIS dispatcher won. If we lose
-        # (another dispatcher already flipped the row), bail without running.
-        # COUPLING: ``_won_transition``'s correctness DEPENDS on DbPool using one
-        # serialized connection (``SELECT changes()`` reflects the immediately
-        # preceding UPDATE on THAT connection). A future multi-connection pool
-        # would silently corrupt this CAS — keep the pool single-connection.
+        # dispatch this job. A guarded ``pending -> running`` UPDATE, whose
+        # ``cursor.rowcount`` (read directly off the just-executed statement,
+        # inside the SAME transaction — mirrors ``DurableTaskStore.claim()``'s
+        # own CAS shape) reports whether THIS dispatcher won. If we lose
+        # (another dispatcher already flipped the row), bail without running —
+        # and without recording anything (Spec 2.6: only a WON claim is a real
+        # ``job.started`` transition).
         # `claimed_at` is stamped BY THE CLAIM, in the same statement, so it can
         # never disagree with the status it describes. It is deliberately never
         # CLEARED: every claim overwrites it, and every reader gates on
@@ -449,12 +468,34 @@ class JobScheduler(SupervisedTask):
         # construction. Clearing would mean editing all twelve sites that move a
         # job out of 'running' — and missing one is this codebase's most common
         # defect, an actuator wired on only some paths.
-        await self._db.execute(
-            "UPDATE jobs SET status = 'running', claimed_at = ? "
-            "WHERE job_id = ? AND status = 'pending'",
-            (datetime.now(UTC).isoformat(), job.job_id),
-        )
-        if not await _won_transition(self._db):
+        #
+        # Spec 2.6/AD-24: the claim UPDATE and its ``job.started`` journal row
+        # commit in ONE transaction — a caller must never observe a job marked
+        # 'running' with no matching journal event, or an event for a claim
+        # that was rolled back.
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                "UPDATE jobs SET status = 'running', claimed_at = ? "
+                "WHERE job_id = ? AND status = 'pending'",
+                (datetime.now(UTC).isoformat(), job.job_id),
+            )
+            won = cursor.rowcount == 1
+            if won:
+                await journal_record(conn, JournalEvent(
+                    type="job.started",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id="scheduler",
+                    # Same convention as `task_events.py`'s wired call sites — the
+                    # target belongs to the one owner's account, not to whatever
+                    # actor triggered the transition (AD-17).
+                    target_kind=ActorKind.OWNER,
+                    target_id=job.job_id,
+                    outcome=Outcome.OK,
+                    record_ref=_job_record_ref(job.job_id),
+                    attrs=JobStartedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
+                ))
+        if not won:
             log.heartbeat.info(
                 "[scheduler] %s: lost dispatch claim — another worker is running it",
                 job.job_id,
@@ -600,11 +641,31 @@ class JobScheduler(SupervisedTask):
                 # NEVER touch next_run_at (the canonical recurring cadence). A
                 # daily@08:00 job that fails retries at ~08:05 via retry_at while
                 # its 08:00-tomorrow cadence slot stays intact.
+                #
+                # Spec 2.6/AD-24: the retry UPDATE and its ``job.failed`` journal
+                # row commit in ONE transaction — this run failed but the job
+                # LIVES ON (still within its retry budget), never ``job.parked``.
                 retry_at = (datetime.now(UTC) + timedelta(minutes=_RETRY_DELAY_MIN)).isoformat()
-                await self._db.execute(
-                    "UPDATE jobs SET status = 'pending', retry_count = ?, retry_at = ? WHERE job_id = ?",
-                    (new_retries, retry_at, job.job_id),
-                )
+                async with self._db.transaction() as conn:
+                    cursor = await conn.execute(
+                        "UPDATE jobs SET status = 'pending', retry_count = ?, retry_at = ? WHERE job_id = ?",
+                        (new_retries, retry_at, job.job_id),
+                    )
+                    if cursor.rowcount:
+                        await journal_record(conn, JournalEvent(
+                            type="job.failed",
+                            schema_version=1,
+                            actor_kind=ActorKind.AUTONOMOUS,
+                            actor_id="scheduler",
+                            target_kind=ActorKind.OWNER,
+                            target_id=job.job_id,
+                            outcome=Outcome.FAILED,
+                            record_ref=_job_record_ref(job.job_id),
+                            attrs=JobFailedAttrs(
+                                handler_name=job.handler_name[:_MAX_LABEL_LEN],
+                                failure_count=new_retries,
+                            ),
+                        ))
             else:
                 await self._mark_failed(job, last_error=result.error)
 
@@ -661,10 +722,29 @@ class JobScheduler(SupervisedTask):
             # retired like every finished one-shot — never re-armed to fire again.
             # This is also how a completion whose delete failed heals itself: the
             # recorded run stopped a second dispatch, and this poll deletes the row.
-            deleted = await delete_finished_one_shot(
-                self._db, job.job_id, handler=job.handler_name,
-                outcome="completed (occurrence already recorded)",
-            )
+            #
+            # Spec 2.6/AD-24: `_retire_completed_one_shot`'s own delete+journal
+            # transaction is a no-op when its delete fails (job.finished is never
+            # recorded for that occurrence) — THIS is the only remaining chance to
+            # record it, once the delete finally succeeds here.
+            async with self._db.transaction() as conn:
+                deleted = await delete_finished_one_shot(
+                    self._db, job.job_id, handler=job.handler_name,
+                    outcome="completed (occurrence already recorded)",
+                    conn=conn,
+                )
+                if deleted:
+                    await journal_record(conn, JournalEvent(
+                        type="job.finished",
+                        schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS,
+                        actor_id="scheduler",
+                        target_kind=ActorKind.OWNER,
+                        target_id=job.job_id,
+                        outcome=Outcome.OK,
+                        record_ref=_job_record_ref(job.job_id),
+                        attrs=JobFinishedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
+                    ))
             log.heartbeat.info(
                 "[scheduler] %s: idempotent-skip — finished one-shot %s",
                 job.job_id,
@@ -745,22 +825,45 @@ class JobScheduler(SupervisedTask):
         # (migration 0040: "no other table references it") and a deleted
         # job can never be re-polled, so skipping its row here loses
         # nothing.
-        rows_affected = await self._db.execute_returning_rowcount(
-            # `last_error` is cleared with the rest of the failure record. It is
-            # ONE record — retry_count, retry_at, failure_count and the reason —
-            # and clearing three of four left rows claiming zero failures beside a
-            # populated error string. Measured 2026-08-24: three healthy jobs
-            # (skill_synthesizer, retry_sweep, and the since-deleted dream_worker)
-            # were reporting errors
-            # from runs that had long since succeeded, and the string is read back
-            # through scheduler_helpers into the TUI job list. requeue(),
-            # owl_lifecycle and resume_job already clear it on recovery; this was
-            # the one path that did not.
-            "UPDATE jobs SET status = ?, last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = NULL, failure_count = 0, last_error = NULL "
-            "WHERE job_id = ?",
-            (status, now_iso, next_run, job.job_id),
-        )
+        # Spec 2.6/AD-24: the completion UPDATE, the job_runs history row and
+        # ``job.finished`` all commit in ONE transaction — a caller must never
+        # observe a job re-armed 'pending' with no matching journal event, or
+        # an event for a completion that was rolled back.
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                # `last_error` is cleared with the rest of the failure record. It is
+                # ONE record — retry_count, retry_at, failure_count and the reason —
+                # and clearing three of four left rows claiming zero failures beside a
+                # populated error string. Measured 2026-08-24: three healthy jobs
+                # (skill_synthesizer, retry_sweep, and the since-deleted dream_worker)
+                # were reporting errors
+                # from runs that had long since succeeded, and the string is read back
+                # through scheduler_helpers into the TUI job list. requeue(),
+                # owl_lifecycle and resume_job already clear it on recovery; this was
+                # the one path that did not.
+                "UPDATE jobs SET status = ?, last_run_at = ?, next_run_at = ?, "
+                "retry_count = 0, retry_at = NULL, failure_count = 0, last_error = NULL "
+                "WHERE job_id = ?",
+                (status, now_iso, next_run, job.job_id),
+            )
+            rows_affected = cursor.rowcount
+            if rows_affected:
+                await conn.execute(
+                    "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, "
+                    "duration_ms, ran_at) VALUES (?,?,?,?,?,?)",
+                    (run_id, job.job_id, self._occurrence_key(job), "completed", duration_ms, now_iso),
+                )
+                await journal_record(conn, JournalEvent(
+                    type="job.finished",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id="scheduler",
+                    target_kind=ActorKind.OWNER,
+                    target_id=job.job_id,
+                    outcome=Outcome.OK,
+                    record_ref=_job_record_ref(job.job_id),
+                    attrs=JobFinishedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
+                ))
         if rows_affected == 0:
             log.heartbeat.info(
                 "[scheduler] %s: exit — completed (row removed while its handler "
@@ -769,10 +872,6 @@ class JobScheduler(SupervisedTask):
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
             return
-        await self._db.execute(
-            "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) VALUES (?,?,?,?,?,?)",
-            (run_id, job.job_id, self._occurrence_key(job), "completed", duration_ms, now_iso),
-        )
         log.heartbeat.info(
             "[scheduler] %s: exit — completed",
             job.job_id,
@@ -804,9 +903,29 @@ class JobScheduler(SupervisedTask):
             job.job_id,
             extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
         )
-        if await delete_finished_one_shot(
-            self._db, job.job_id, handler=job.handler_name, outcome="completed",
-        ):
+        # Spec 2.6/AD-24: the delete and ``job.finished`` commit in ONE
+        # transaction — ``delete_finished_one_shot``'s own internal
+        # exception handling (never raises) means a delete failure simply
+        # leaves this transaction with nothing to commit, and no event
+        # follows (I/O matrix: a real transition only).
+        async with self._db.transaction() as conn:
+            deleted = await delete_finished_one_shot(
+                self._db, job.job_id, handler=job.handler_name, outcome="completed",
+                conn=conn,
+            )
+            if deleted:
+                await journal_record(conn, JournalEvent(
+                    type="job.finished",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id="scheduler",
+                    target_kind=ActorKind.OWNER,
+                    target_id=job.job_id,
+                    outcome=Outcome.OK,
+                    record_ref=_job_record_ref(job.job_id),
+                    attrs=JobFinishedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
+                ))
+        if deleted:
             log.heartbeat.info(
                 "[scheduler] %s: exit — completed, one-shot retired",
                 job.job_id,
@@ -867,7 +986,7 @@ class JobScheduler(SupervisedTask):
         log.heartbeat.debug("[scheduler] _retire_recorded_terminal_one_shots: entry")
         try:
             rows = await self._db.fetch_all(
-                "SELECT j.job_id, j.handler_name, j.last_error, EXISTS ("
+                "SELECT j.job_id, j.handler_name, j.last_error, j.retry_count, EXISTS ("
                 "  SELECT 1 FROM audit_log a WHERE a.event_type = 'job_failed_terminal' "
                 "  AND a.target = j.job_id) AS recorded "
                 "FROM jobs j WHERE j.status = 'failed' AND j.enabled = 1 "
@@ -903,9 +1022,31 @@ class JobScheduler(SupervisedTask):
                         extra={"_fields": {"job_id": job_id, "handler": handler}},
                     )
                     continue
-            if await delete_finished_one_shot(
-                self._db, job_id, handler=handler, outcome="failed (heal sweep)",
-            ):
+            # Spec 2.6/AD-24: `_mark_failed`'s own terminal-branch delete+journal
+            # transaction is a no-op when ITS delete fails (job.parked is never
+            # recorded for that give-up) — THIS is the only remaining chance to
+            # record it, once the delete finally succeeds here.
+            async with self._db.transaction() as conn:
+                deleted = await delete_finished_one_shot(
+                    self._db, job_id, handler=handler, outcome="failed (heal sweep)",
+                    conn=conn,
+                )
+                if deleted:
+                    await journal_record(conn, JournalEvent(
+                        type="job.parked",
+                        schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS,
+                        actor_id="scheduler",
+                        target_kind=ActorKind.OWNER,
+                        target_id=job_id,
+                        outcome=Outcome.PARKED,
+                        record_ref=_job_record_ref(job_id),
+                        attrs=JobParkedAttrs(
+                            handler_name=handler[:_MAX_LABEL_LEN],
+                            attempt_count=int(row["retry_count"] or 0) + 1,
+                        ),
+                    ))
+            if deleted:
                 retired += 1
         if rows:
             log.heartbeat.info(
@@ -977,12 +1118,41 @@ class JobScheduler(SupervisedTask):
         delay = _ONE_SHOT_REARM_BACKOFF_SEC[idx]
         next_run = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
         now_iso = datetime.now(UTC).isoformat()
-        await self._db.execute(
-            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = NULL, failure_count = ?, "
-            "last_error = ? WHERE job_id = ?",
-            (now_iso, next_run, attempt, last_error, job.job_id),
-        )
+        # Spec 2.6/AD-24: the re-arm UPDATE, its audit row and ``job.failed``
+        # commit in ONE transaction — the job LIVES ON (re-armed with backoff),
+        # never ``job.parked``.
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
+                "retry_count = 0, retry_at = NULL, failure_count = ?, "
+                "last_error = ? WHERE job_id = ?",
+                (now_iso, next_run, attempt, last_error, job.job_id),
+            )
+            if cursor.rowcount:
+                await write_audit(
+                    self._db,
+                    "job_rearmed_one_shot",
+                    job.job_id,
+                    actor="scheduler",
+                    details={"handler": job.handler_name, "attempt": attempt,
+                             "delay_sec": delay, "failure_class": failure_class,
+                             "last_error": last_error},
+                    conn=conn,
+                )
+                await journal_record(conn, JournalEvent(
+                    type="job.failed",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id="scheduler",
+                    target_kind=ActorKind.OWNER,
+                    target_id=job.job_id,
+                    outcome=Outcome.FAILED,
+                    record_ref=_job_record_ref(job.job_id),
+                    attrs=JobFailedAttrs(
+                        handler_name=job.handler_name[:_MAX_LABEL_LEN],
+                        failure_count=attempt,
+                    ),
+                ))
         # INFO, not DEBUG: this line is the evidence that a one-shot survived a
         # transient fault, and production runs at INFO.
         log.heartbeat.info(
@@ -993,15 +1163,6 @@ class JobScheduler(SupervisedTask):
                                "attempt": attempt, "delay_sec": delay,
                                "failure_class": failure_class or "unknown",
                                "next_run": next_run}},
-        )
-        await write_audit(
-            self._db,
-            "job_rearmed_one_shot",
-            job.job_id,
-            actor="scheduler",
-            details={"handler": job.handler_name, "attempt": attempt,
-                     "delay_sec": delay, "failure_class": failure_class,
-                     "last_error": last_error},
         )
         await self._notify_failure(
             job, last_error, terminal=False,
@@ -1038,17 +1199,39 @@ class JobScheduler(SupervisedTask):
             # deleted too, because a terminal row left in `jobs` is counted as a live
             # schedule by every reader. The audit row is the record of the failure,
             # and the job row is deleted only once that record exists.
-            recorded = await write_audit(
-                self._db,
-                "job_failed_terminal",
-                job.job_id,
-                actor="scheduler",
-                details={"handler": job.handler_name, "last_error": last_error,
-                         "failure_class": failure_class},
-            )
-            deleted = recorded and await delete_finished_one_shot(
-                self._db, job.job_id, handler=job.handler_name, outcome="failed",
-            )
+            #
+            # Spec 2.6/AD-24: the audit row, the delete and ``job.parked``
+            # (NEEDS_YOU/HIGH — the scheduler's own give-up, AD-5's named
+            # example) all commit in ONE transaction.
+            async with self._db.transaction() as conn:
+                recorded = await write_audit(
+                    self._db,
+                    "job_failed_terminal",
+                    job.job_id,
+                    actor="scheduler",
+                    details={"handler": job.handler_name, "last_error": last_error,
+                             "failure_class": failure_class},
+                    conn=conn,
+                )
+                deleted = recorded and await delete_finished_one_shot(
+                    self._db, job.job_id, handler=job.handler_name, outcome="failed",
+                    conn=conn,
+                )
+                if deleted:
+                    await journal_record(conn, JournalEvent(
+                        type="job.parked",
+                        schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS,
+                        actor_id="scheduler",
+                        target_kind=ActorKind.OWNER,
+                        target_id=job.job_id,
+                        outcome=Outcome.PARKED,
+                        record_ref=_job_record_ref(job.job_id),
+                        attrs=JobParkedAttrs(
+                            handler_name=job.handler_name[:_MAX_LABEL_LEN],
+                            attempt_count=job.retry_count + 1,
+                        ),
+                    ))
             if not deleted:
                 # THE ROW IS THE RECORD when the audit write or the delete failed. It is
                 # written BEFORE the alert: a row still 'running' after an alert is
@@ -1150,12 +1333,43 @@ class JobScheduler(SupervisedTask):
             if candidate < next_run:
                 early_retry_at = candidate
 
-        await self._db.execute(
-            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = ?, failure_count = ?, "
-            "last_error = ? WHERE job_id = ?",
-            (now_iso, next_run, early_retry_at, new_failure_count, last_error, job.job_id),
-        )
+        # Spec 2.6/AD-24: the re-arm UPDATE, its audit row and ``job.failed``
+        # commit in ONE transaction — the job LIVES ON (re-armed to its next
+        # cadence slot), never ``job.parked`` (F-60: recurring jobs never park).
+        async with self._db.transaction() as conn:
+            cursor = await conn.execute(
+                "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
+                "retry_count = 0, retry_at = ?, failure_count = ?, "
+                "last_error = ? WHERE job_id = ?",
+                (now_iso, next_run, early_retry_at, new_failure_count, last_error, job.job_id),
+            )
+            if cursor.rowcount:
+                await write_audit(
+                    self._db,
+                    "job_rearmed_after_failure",
+                    job.job_id,
+                    actor="scheduler",
+                    details={
+                        "handler": job.handler_name,
+                        "next_run_at": next_run,
+                        "last_error": last_error,
+                    },
+                    conn=conn,
+                )
+                await journal_record(conn, JournalEvent(
+                    type="job.failed",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id="scheduler",
+                    target_kind=ActorKind.OWNER,
+                    target_id=job.job_id,
+                    outcome=Outcome.FAILED,
+                    record_ref=_job_record_ref(job.job_id),
+                    attrs=JobFailedAttrs(
+                        handler_name=job.handler_name[:_MAX_LABEL_LEN],
+                        failure_count=new_failure_count,
+                    ),
+                ))
         if early_retry_at is not None:
             # INFO, not DEBUG: this line is the evidence that a recurring
             # occurrence survived a transient fault, and production runs at INFO.
@@ -1185,21 +1399,11 @@ class JobScheduler(SupervisedTask):
                 }
             },
         )
-        # The audit row above is the durable, operator-visible record of the
-        # re-arm. F-61 — a recurring job exhausting its retries is a genuine outage,
-        # so beyond the durable-but-silent audit row we ALSO push a proactive
-        # operator alert through the shared cron-born delivery seam (when wired).
-        await write_audit(
-            self._db,
-            "job_rearmed_after_failure",
-            job.job_id,
-            actor="scheduler",
-            details={
-                "handler": job.handler_name,
-                "next_run_at": next_run,
-                "last_error": last_error,
-            },
-        )
+        # The audit row above (written inside the transaction) is the durable,
+        # operator-visible record of the re-arm. F-61 — a recurring job
+        # exhausting its retries is a genuine outage, so beyond the
+        # durable-but-silent audit row we ALSO push a proactive operator alert
+        # through the shared cron-born delivery seam (when wired).
         # Every recurring job (owl-lifecycle included) gets the F-61 per-re-arm
         # operator alert (owner decision 2026-07-22): with the circuit breaker
         # removed there is no longer a threshold notification to fall back on,

@@ -18,9 +18,14 @@ detect+alert subset; recycle remains a follow-up.
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
+import aiosqlite
+
+from stackowl.db.pool import DbPool
 from stackowl.health.status import (
     HEALTHY_STATES,
     LIVENESS_FAILING_STATES,
@@ -28,8 +33,22 @@ from stackowl.health.status import (
 )
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
+from stackowl.journal import ActorKind, JournalEvent, Outcome, RecordRef
+from stackowl.journal import record as journal_record
+from stackowl.journal.enums import classify_health_error
+from stackowl.journal.heal_events import (
+    HealAttemptedAttrs,
+    HealExhaustedAttrs,
+    HealHealedAttrs,
+)
+from stackowl.journal.health_events import HealthChangedAttrs
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
+
+#: A subsystem's health-status name is already bounded (`HealthStatus.name`)
+#: well inside AD-4's 64-char attrs bound -- no truncation needed, but the
+#: constant is named here so a future field knows the ceiling it must respect.
+_ACTOR_ID = "health_sweep"
 
 
 def clear_degraded_if_a_provider_is_back(
@@ -243,6 +262,7 @@ class HealthSweepHandler(JobHandler):
         self,
         aggregator: HealthAggregator,
         *,
+        db: DbPool,
         alert: AlertSink | None = None,
         # Mapping, not dict: this only ever does `.get()` and a truthiness check,
         # and ChannelHealers is a Mapping that resolves channel adapters at LOOKUP
@@ -254,6 +274,11 @@ class HealthSweepHandler(JobHandler):
         alert_record: AlertRecord | None = None,
     ) -> None:
         self._aggregator = aggregator
+        # Story 2.6 — the transaction home for heal.*/health.changed journal
+        # events, kept alongside their heal_attempts/health_status_changes rows
+        # (AD-24). Required, matching every other handler that took on a real
+        # DB dependency (assembly already has `db` in scope at construction).
+        self._db = db
         self._alert = alert
         self._healers = healers or {}
         self._recovery = recovery
@@ -359,6 +384,14 @@ class HealthSweepHandler(JobHandler):
             )
         clear_degraded_if_a_provider_is_back(statuses, self._live_services)
 
+        # FR84/Story 2.6 — compare THIS collect against each subsystem's last
+        # recorded status and journal any real transition. Runs on EVERY tick
+        # (not just an unhealthy one) so a subsystem recovering on its own
+        # (never healed by this sweep) is captured too, and again after the
+        # heal-triggered re-collect below.
+        async with self._db.transaction() as conn:
+            await self._record_health_changes(conn, statuses)
+
         down = [s for s in statuses if s.status in LIVENESS_FAILING_STATES]
         degraded = [s for s in statuses if s.status in WARNING_STATES]
         duration_ms = (time.monotonic() - t0) * 1000
@@ -393,15 +426,31 @@ class HealthSweepHandler(JobHandler):
         attempted = await self._heal_and_verify(job, down, degraded)
         if attempted:
             statuses = await self._aggregator.collect()
+            async with self._db.transaction() as conn:
+                await self._record_health_changes(conn, statuses)
             down = [s for s in statuses if s.status in LIVENESS_FAILING_STATES]
             degraded = [s for s in statuses if s.status in WARNING_STATES]
             duration_ms = (time.monotonic() - t0) * 1000
             still_unhealthy = {s.name for s in (*down, *degraded)}
-            healed = attempted - still_unhealthy  # recycled AND re-verified ok
+            healed = set(attempted) - still_unhealthy  # recycled AND re-verified ok
+            # Spec 2.6 — the currently-missing exhaustion branch: a subsystem
+            # a heal was ATTEMPTED for and is STILL unhealthy after this
+            # re-verify has exhausted the sweep's own heal loop (NEEDS_YOU/HIGH,
+            # AD-5's named example) — distinct from a subsystem no healer
+            # covers at all, which never enters `attempted` and stays on the
+            # ordinary down/degraded alert path below.
+            exhausted = set(attempted) & still_unhealthy
+            await self._resolve_heal_attempts(attempted, healed, exhausted)
             if healed:
                 log.scheduler.warning(
                     "[scheduler] health_sweep.execute: subsystems RECOVERED after heal",
                     extra={"_fields": {"job_id": job.job_id, "healed": sorted(healed)}},
+                )
+            if exhausted:
+                log.scheduler.error(
+                    "[scheduler] health_sweep.execute: heal EXHAUSTED — still "
+                    "unhealthy after its own re-verify",
+                    extra={"_fields": {"job_id": job.job_id, "exhausted": sorted(exhausted)}},
                 )
             if not down and not degraded:
                 # 4. EXIT — every unhealthy subsystem was healed + re-verified. No alert.
@@ -507,19 +556,27 @@ class HealthSweepHandler(JobHandler):
         job: Job,
         down: Sequence[HealthStatus],
         degraded: Sequence[HealthStatus],
-    ) -> set[str]:
+    ) -> dict[str, str]:
         """ADR-6 heal step: recycle every unhealthy subsystem that has a registered
-        HealableResource. Returns the set of names a recycle was ATTEMPTED for (the
-        caller re-collects to confirm which actually recovered). No-op — empty set —
-        when the flag is OFF or no healer matches, keeping the sweep byte-identical.
-        Never raises: a heal error is logged and the subsystem simply stays unhealthy.
+        HealableResource. Returns ``{subsystem: heal_attempts.id}`` for every
+        subsystem a recycle was ATTEMPTED for (the caller re-collects to confirm
+        which actually recovered, and resolves each row to healed/exhausted —
+        Story 2.6). No-op — empty dict — when the flag is OFF or no healer
+        matches, keeping the sweep byte-identical.
+
+        A subsystem stays in the returned mapping even when ``ensure_available()``
+        itself raises: the ATTEMPT happened (recorded as ``heal.attempted``
+        below, matching AD-5's "an attempt was made" framing), and the caller's
+        re-verify is what decides healed vs. exhausted — an attempt that raised
+        is exactly the exhausted case, not a silently dropped one. Never raises
+        out: a heal error is logged and the subsystem simply stays unhealthy.
         """
         if not self._healers or not _health_loop_enabled():
-            return set()
+            return {}
         from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
 
         actuator = self._recovery or RecoveryActuator()
-        attempted: set[str] = set()
+        attempted: dict[str, str] = {}
         for s in (*down, *degraded):
             healer = self._healers.get(s.name)
             if healer is None:
@@ -531,9 +588,10 @@ class HealthSweepHandler(JobHandler):
                 Failure(name=s.name, kind="health", transient=True, consequential=False)
             ):
                 continue
+            row_id = await self._record_heal_attempted(s.name)
+            attempted[s.name] = row_id
             try:
                 await healer.ensure_available()
-                attempted.add(s.name)
             except Exception as exc:  # a heal failure leaves it unhealthy → escalates
                 log.scheduler.error(
                     "[scheduler] health_sweep.heal: recycle failed",
@@ -541,6 +599,148 @@ class HealthSweepHandler(JobHandler):
                     extra={"_fields": {"job_id": job.job_id, "subsystem": s.name}},
                 )
         return attempted
+
+    async def _record_heal_attempted(self, subsystem: str) -> str:
+        """Insert one ``heal_attempts`` row and its ``heal.attempted`` journal
+        event, in the SAME transaction (AD-24). Returns the row id so the
+        caller's later resolve (healed/exhausted) can address it."""
+        row_id = str(uuid.uuid4())
+        now_iso = datetime.now(UTC).isoformat()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "INSERT INTO heal_attempts "
+                "(id, subsystem, status, attempt_count, created_at, updated_at) "
+                "VALUES (?, ?, 'attempted', 1, ?, ?)",
+                (row_id, subsystem, now_iso, now_iso),
+            )
+            await journal_record(conn, JournalEvent(
+                type="heal.attempted",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id=_ACTOR_ID,
+                target_kind=ActorKind.OWNER,
+                target_id=subsystem,
+                outcome=Outcome.PENDING,
+                record_ref=RecordRef(
+                    kind="sqlite", locator={"table": "heal_attempts", "id": row_id},
+                ),
+                attrs=HealAttemptedAttrs(attempt_count=1),
+            ))
+        return row_id
+
+    async def _resolve_heal_attempts(
+        self, attempted: dict[str, str], healed: set[str], exhausted: set[str],
+    ) -> None:
+        """Resolve every attempted ``heal_attempts`` row to healed or exhausted,
+        each in its own transaction alongside its journal event (AD-24)."""
+        now_iso = datetime.now(UTC).isoformat()
+        for name in healed:
+            async with self._db.transaction() as conn:
+                await conn.execute(
+                    "UPDATE heal_attempts SET status = 'healed', updated_at = ? WHERE id = ?",
+                    (now_iso, attempted[name]),
+                )
+                await journal_record(conn, JournalEvent(
+                    type="heal.healed",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=_ACTOR_ID,
+                    target_kind=ActorKind.OWNER,
+                    target_id=name,
+                    outcome=Outcome.HEALED,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": "heal_attempts", "id": attempted[name]},
+                    ),
+                    attrs=HealHealedAttrs(attempt_count=1),
+                ))
+        for name in exhausted:
+            async with self._db.transaction() as conn:
+                await conn.execute(
+                    "UPDATE heal_attempts SET status = 'exhausted', updated_at = ? WHERE id = ?",
+                    (now_iso, attempted[name]),
+                )
+                await journal_record(conn, JournalEvent(
+                    type="heal.exhausted",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=_ACTOR_ID,
+                    target_kind=ActorKind.OWNER,
+                    target_id=name,
+                    # AD-5 — the heal loop's own give-up: NEEDS_YOU/HIGH, computed
+                    # by the registry from this type, never set here.
+                    outcome=Outcome.FAILED,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": "heal_attempts", "id": attempted[name]},
+                    ),
+                    attrs=HealExhaustedAttrs(attempt_count=1),
+                ))
+
+    async def _record_health_changes(
+        self, conn: aiosqlite.Connection, statuses: Sequence[HealthStatus],
+    ) -> None:
+        """FR84 — for each collected status, compare against the LAST row
+        recorded for that subsystem in ``health_status_changes`` (no new
+        in-memory cache) and journal a real transition.
+
+        A subsystem with no prior row gets a silent SEED row (previous ==
+        new, no journal event) so a FUTURE tick has a baseline to compare
+        against — the table's own ``previous_status NOT NULL`` leaves no other
+        way to represent "nothing observed yet". An unchanged tick records
+        neither a row nor an event. Runs inside the CALLER's open transaction
+        (AD-24) — never opens or commits its own.
+        """
+        for s in statuses:
+            cursor = await conn.execute(
+                "SELECT new_status FROM health_status_changes "
+                "WHERE subsystem = ? ORDER BY occurred_at DESC LIMIT 1",
+                (s.name,),
+            )
+            row = await cursor.fetchone()
+            now_iso = datetime.now(UTC).isoformat()
+            if row is None:
+                # First-ever observation — nothing to compare against (I/O
+                # matrix): seed the baseline, no journal event.
+                await conn.execute(
+                    "INSERT INTO health_status_changes "
+                    "(id, subsystem, previous_status, new_status, error_code, occurred_at) "
+                    "VALUES (?, ?, ?, ?, NULL, ?)",
+                    (str(uuid.uuid4()), s.name, s.status, s.status, now_iso),
+                )
+                continue
+            previous_status = str(row[0])
+            if previous_status == s.status:
+                continue  # unchanged tick — no row, no event
+            # Never str(exc)/exception text (FR84, AD-4) — a closed code only,
+            # and only when the NEW status is itself a failure/warning; a
+            # transition back to a healthy state carries no error code.
+            error_code = (
+                classify_health_error(s.message) if s.status not in HEALTHY_STATES else None
+            )
+            row_id = str(uuid.uuid4())
+            await conn.execute(
+                "INSERT INTO health_status_changes "
+                "(id, subsystem, previous_status, new_status, error_code, occurred_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (row_id, s.name, previous_status, s.status,
+                 error_code.value if error_code else None, now_iso),
+            )
+            await journal_record(conn, JournalEvent(
+                type="health.changed",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id=_ACTOR_ID,
+                target_kind=ActorKind.OWNER,
+                target_id=s.name,
+                outcome=Outcome.HEALED if s.status in HEALTHY_STATES else Outcome.FAILED,
+                record_ref=RecordRef(
+                    kind="sqlite", locator={"table": "health_status_changes", "id": row_id},
+                ),
+                attrs=HealthChangedAttrs(
+                    previous_status=previous_status,
+                    new_status=s.status,
+                    error_code=error_code.value if error_code else None,
+                ),
+            ))
 
     def _dedupe_and_update(
         self, down: Sequence[HealthStatus], degraded: Sequence[HealthStatus]

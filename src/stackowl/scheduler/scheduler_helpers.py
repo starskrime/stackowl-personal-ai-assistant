@@ -6,12 +6,15 @@ import json
 import re
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.scheduler.job import Job
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only
+    import aiosqlite
 
 # Fixed-interval schedule DSL token: ``every <n><unit>`` (s/m/h/d, case-insensitive,
 # optional space). NOT user natural language — a scheduler token like ``daily@``.
@@ -111,12 +114,20 @@ async def write_audit(
     target: str,
     actor: str = "user",
     details: dict[str, Any] | None = None,
+    *,
+    conn: aiosqlite.Connection | None = None,
 ) -> bool:
     """Insert a row into ``audit_log`` for a scheduler lifecycle event.
 
     Returns whether the row was written. A caller recording a transition that has
     already happened may ignore it; a caller about to DELETE the only other record
     of what happened — a one-shot's terminal failure — must not.
+
+    ``conn`` — Story 2.6: pass the live connection of an already-open
+    ``DbPool.transaction()`` block so this audit row, the state change that
+    caused it and a ``job.*`` journal event all commit or roll back together
+    (AD-24) instead of this call opening its own separate, uncoordinated write.
+    ``None`` (every pre-existing caller) is byte-identical to before.
     """
     log.scheduler.debug(
         "[scheduler] audit.write: entry",
@@ -130,7 +141,7 @@ async def write_audit(
         from stackowl.audit.logger import chain_append_via_pool
 
         await chain_append_via_pool(
-            db, event_type, actor, target, time.time(), payload
+            db, event_type, actor, target, time.time(), payload, conn=conn,
         )
     except Exception as exc:  # B5 — never silent
         log.scheduler.warning(
@@ -149,6 +160,7 @@ async def write_audit(
 
 async def delete_finished_one_shot(
     db: DbPool, job_id: str, *, handler: str, outcome: str,
+    conn: aiosqlite.Connection | None = None,
 ) -> bool:
     """Retire a FINISHED one-shot by deleting its row. True when the row is gone.
 
@@ -164,15 +176,24 @@ async def delete_finished_one_shot(
     True when the row was deleted OR was already gone (removed while it ran, e.g. by
     ``stop_job``). False — never raised — when the delete FAILED: the caller decides
     what keeps the row from being run again.
+
+    ``conn`` — Story 2.6: pass the live connection of an already-open
+    ``DbPool.transaction()`` block so this delete and a ``job.finished``/
+    ``job.parked`` journal event commit or roll back together (AD-24). ``None``
+    (every pre-existing caller) is byte-identical to before.
     """
     log.scheduler.debug(
         "[scheduler] delete_finished_one_shot: entry",
         extra={"_fields": {"job_id": job_id, "handler": handler, "outcome": outcome}},
     )
     try:
-        deleted = await db.execute_returning_rowcount(
-            "DELETE FROM jobs WHERE job_id = ?", (job_id,)
-        )
+        if conn is not None:
+            cursor = await conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            deleted = cursor.rowcount
+        else:
+            deleted = await db.execute_returning_rowcount(
+                "DELETE FROM jobs WHERE job_id = ?", (job_id,)
+            )
     except Exception as exc:  # B5 — logged with a remedy, never raised
         log.scheduler.error(
             "[scheduler] delete_finished_one_shot: FAILED — the finished one-shot is "

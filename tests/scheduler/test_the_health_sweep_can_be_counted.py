@@ -47,6 +47,7 @@ import textwrap
 
 import pytest
 
+from stackowl.db.pool import DbPool
 from stackowl.health.status import HealthStatus
 from stackowl.scheduler.handlers import health_sweep as mod
 from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
@@ -148,10 +149,11 @@ def test_the_exit_line_is_INFO_because_production_does_not_record_DEBUG() -> Non
 @pytest.mark.asyncio
 async def test_a_healthy_sweep_leaves_a_countable_record(
     caplog: pytest.LogCaptureFixture,
+    tmp_db: DbPool,
 ) -> None:
     """The 1,836 sweeps that used to vanish. Verdict rides as a FIELD, not as a
     distinct message, so the outcomes can be grouped into a ratio."""
-    handler = HealthSweepHandler(_Aggregator([_ok(), _ok("cache")]))
+    handler = HealthSweepHandler(_Aggregator([_ok(), _ok("cache")]), db=tmp_db)
 
     with caplog.at_level(logging.INFO, logger="stackowl.scheduler"):
         result = await handler.execute(_job())
@@ -167,10 +169,11 @@ async def test_a_healthy_sweep_leaves_a_countable_record(
 @pytest.mark.asyncio
 async def test_an_unhealthy_sweep_is_counted_by_the_same_line(
     caplog: pytest.LogCaptureFixture,
+    tmp_db: DbPool,
 ) -> None:
     """Both outcomes on ONE line is the point — the ratio is unreadable when the
     numerator and the denominator are different messages at different levels."""
-    handler = HealthSweepHandler(_Aggregator([_down(), _ok("cache")]))
+    handler = HealthSweepHandler(_Aggregator([_down(), _ok("cache")]), db=tmp_db)
 
     with caplog.at_level(logging.INFO, logger="stackowl.scheduler"):
         await handler.execute(_job())
@@ -183,9 +186,10 @@ async def test_an_unhealthy_sweep_is_counted_by_the_same_line(
 @pytest.mark.asyncio
 async def test_even_a_probe_that_raises_is_counted(
     caplog: pytest.LogCaptureFixture,
+    tmp_db: DbPool,
 ) -> None:
     """The path most likely to be missed, and the one an outage actually takes."""
-    handler = HealthSweepHandler(_Aggregator(RuntimeError("probe exploded")))
+    handler = HealthSweepHandler(_Aggregator(RuntimeError("probe exploded")), db=tmp_db)
 
     with caplog.at_level(logging.INFO, logger="stackowl.scheduler"):
         result = await handler.execute(_job())

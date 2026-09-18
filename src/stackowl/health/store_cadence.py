@@ -306,6 +306,23 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     # a SET clause. Story 2.1 wires only the four task-lifecycle events, and the
     # durable loop writes tasks on ordinary traffic — same HOT cadence as `tasks`.
     _hot("journal_events", "occurred_at"),
+    # Story 2.6 — heals and health transitions have no calendar cadence: the
+    # health sweep runs every 5m (PERIODIC-shaped), but it writes these tables
+    # only when there is something to write. `heal_attempts` gets a row only
+    # when a subsystem is UNHEALTHY and has a registered healer; a platform
+    # that stays healthy for weeks correctly writes none. `health_status_changes`
+    # gets a row only on a REAL transition (plus one silent seed row per
+    # subsystem on its first observation) — an unchanged tick writes nothing,
+    # by design (see `HealthSweepHandler._record_health_changes`). PERIODIC's
+    # 7-day silence bound would false-alarm on exactly the healthy, stable case
+    # this feature is supposed to stay quiet for — ON_DEMAND is the honest fit,
+    # same as `webhook_events_log`/`parliament_sessions` above: written only
+    # when the triggering event happens, never on a clock.
+    _on_demand("heal_attempts", "created_at", "written only when a heal is attempted"),
+    _on_demand(
+        "health_status_changes", "occurred_at",
+        "written only on a real health-status transition",
+    ),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}

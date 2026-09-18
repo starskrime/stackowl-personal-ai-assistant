@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 from stackowl.db.pool import BUSY_TIMEOUT_MS as _BUSY_TIMEOUT_MS
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    import aiosqlite
+
     from stackowl.db.pool import DbPool
 
 log = logging.getLogger("stackowl.audit")
@@ -94,6 +96,8 @@ async def chain_append_via_pool(
     target: str | None,
     timestamp: float,
     details_json: str,
+    *,
+    conn: aiosqlite.Connection | None = None,
 ) -> None:
     """Append a chained v2 audit row over a :class:`DbPool` (the shared chokepoint
     for the async writers: scheduler write_audit + dream-worker contradictions).
@@ -104,25 +108,47 @@ async def chain_append_via_pool(
     canonical :func:`compute_integrity_hash` so these rows chain identically to
     :meth:`AuditLogger.append` — closing the multi-writer break (R1) where these
     rows previously wrote integrity_hash='' and voided verify_chain.
+
+    ``conn`` — Story 2.6: when the caller already holds an open
+    ``DbPool.transaction()`` connection (recording a job's terminal audit row
+    and its ``job.parked`` journal event atomically, AD-24), pass it here so
+    both the prev_hash read and the INSERT run on THAT connection/transaction
+    instead of ``db.fetch_all``/``db.execute`` re-acquiring the pool's write
+    lock the caller's transaction already holds (which would deadlock — see
+    ``DbPool.transaction()``'s own docstring). ``None`` (every other caller)
+    is byte-identical to this function's prior behaviour.
     """
     # 1. ENTRY
     log.debug(
         "[audit] chain_append_via_pool: entry event_type=%s actor=%s", event_type, actor
     )
-    rows = await db.fetch_all(
-        "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
-    )
-    prev_hash = rows[0]["integrity_hash"] if rows else ""
+    if conn is not None:
+        cursor = await conn.execute(
+            "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        prev_hash = row[0] if row else ""
+    else:
+        rows = await db.fetch_all(
+            "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
+        )
+        prev_hash = rows[0]["integrity_hash"] if rows else ""
     integrity_hash = compute_integrity_hash(
         prev_hash, event_type, actor, target, timestamp, details_json
     )
     # 3. STEP — INSERT with chain_version stamped.
-    await db.execute(
+    insert_sql = (
         "INSERT INTO audit_log "
         "(event_type, actor, target, timestamp, details, integrity_hash, chain_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (event_type, actor, target, timestamp, details_json, integrity_hash, _CHAIN_VERSION),
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
+    insert_params = (
+        event_type, actor, target, timestamp, details_json, integrity_hash, _CHAIN_VERSION,
+    )
+    if conn is not None:
+        await conn.execute(insert_sql, insert_params)
+    else:
+        await db.execute(insert_sql, insert_params)
     # 4. EXIT
     log.debug("[audit] chain_append_via_pool: exit event_type=%s", event_type)
 

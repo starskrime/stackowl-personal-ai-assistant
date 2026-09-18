@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.db.pool import DbPool
 from stackowl.health.status import HealthStatus
 from stackowl.learning.failure_outcome_miner import RcaVerdict
 from stackowl.memory.outcome_store import TaskOutcome
@@ -149,7 +150,7 @@ def test_classification_grounded_in_exception_hierarchy() -> None:
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_one_incident_one_rca_across_ticks() -> None:
+async def test_one_incident_one_rca_across_ticks(tmp_db: DbPool) -> None:
     # A real sweep drives a subsystem that STAYS degraded even after a recycle
     # (the healer no-ops), so its alert-state map records the persistent incident.
     class _NoopHealer:
@@ -160,6 +161,7 @@ async def test_one_incident_one_rca_across_ticks() -> None:
     sweep = HealthSweepHandler(
         _FakeAggregator(degraded),  # type: ignore[arg-type]
         healers={"cache": _NoopHealer()},  # type: ignore[dict-item]
+        db=tmp_db,
     )
     rca = _RecordingRca()
     handler = IncidentEscalationHandler(
@@ -185,8 +187,8 @@ async def test_one_incident_one_rca_across_ticks() -> None:
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_nonretryable_short_circuits_without_rca() -> None:
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+async def test_nonretryable_short_circuits_without_rca(tmp_db: DbPool) -> None:
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     # 3 failed outcomes, same capability + a DETERMINISTIC domain failure class.
     outcomes = [
         _outcome("t1", "ManifestValidationError", "some_tool"),
@@ -213,8 +215,8 @@ async def test_nonretryable_short_circuits_without_rca() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transient_failure_class_runs_rca() -> None:
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+async def test_transient_failure_class_runs_rca(tmp_db: DbPool) -> None:
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -249,13 +251,13 @@ def _sprawling_outcome(trace: str, *, tools: tuple[str, ...]) -> TaskOutcome:
 
 
 @pytest.mark.asyncio
-async def test_fake_incident_guard_skips_co_occurrence_only_cluster() -> None:
+async def test_fake_incident_guard_skips_co_occurrence_only_cluster(tmp_db: DbPool) -> None:
     """A frequently-called tool that only ever CO-OCCURS in sprawling,
     goal-refuted turns (failed_capability=None every time, paired with a
     DIFFERENT other tool each time) must NOT trigger a full RCA — the
     skill_view false-incident shape (2026-07-08, see
     project_skill_view_false_incident_rejected memory)."""
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _sprawling_outcome("t1", tools=("skill_view", "memory")),
         _sprawling_outcome("t2", tools=("skill_view", "owl_build")),
@@ -277,11 +279,11 @@ async def test_fake_incident_guard_skips_co_occurrence_only_cluster() -> None:
 
 
 @pytest.mark.asyncio
-async def test_single_tool_turns_still_open_a_real_incident() -> None:
+async def test_single_tool_turns_still_open_a_real_incident(tmp_db: DbPool) -> None:
     """The guard must NOT swallow genuine single-capability recurrence: every
     row names exactly one capability (no fan-out ambiguity), so co-occurrence
     IS precise here — this must still open and run the RCA."""
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -313,13 +315,13 @@ def _precise_outcome(trace: str, tool: str, *, failure_class: str = "unachieved_
 
 
 @pytest.mark.asyncio
-async def test_one_real_row_diluted_by_noise_does_not_escalate() -> None:
+async def test_one_real_row_diluted_by_noise_does_not_escalate(tmp_db: DbPool) -> None:
     """2026-07-08 shell-misattribution incident: a cluster can clear the raw
     min_size (3) with only ONE genuinely-attributed row plus co-occurrence
     noise rows (a DIFFERENT tool actually failed each time, shell just rode
     along in a sprawling multi-tool turn). One real occurrence is not
     "recurring" — must NOT escalate."""
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _precise_outcome("real1", "shell"),
         _sprawling_outcome("noise1", tools=("shell", "owl_build")),
@@ -340,11 +342,11 @@ async def test_one_real_row_diluted_by_noise_does_not_escalate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evidence_excludes_co_occurrence_noise_rows() -> None:
+async def test_evidence_excludes_co_occurrence_noise_rows(tmp_db: DbPool) -> None:
     """When there ARE enough real rows to escalate, the evidence handed to the
     RCA analyzer must contain ONLY the precisely-attributed rows — noise rows
     must not dilute/mislead the root-cause narrative with unrelated traces."""
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _precise_outcome("real1", "shell"),
         _precise_outcome("real2", "shell"),
@@ -375,8 +377,10 @@ async def test_evidence_excludes_co_occurrence_noise_rows() -> None:
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_masked_recurring_substitution_detected_with_no_failed_rows() -> None:
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+async def test_masked_recurring_substitution_detected_with_no_failed_rows(
+    tmp_db: DbPool,
+) -> None:
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     # Every one of these turns SUCCEEDED (bridged by substitution) — zero failed
     # rows exist. Only list_recovered_global (migration 0077) can see this.
     recovered = [
@@ -409,7 +413,7 @@ async def test_masked_recurring_substitution_detected_with_no_failed_rows() -> N
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_hard_failed_rca_retries_on_next_tick() -> None:
+async def test_hard_failed_rca_retries_on_next_tick(tmp_db: DbPool) -> None:
     class _NoopHealer:
         async def ensure_available(self) -> None:
             return None
@@ -418,6 +422,7 @@ async def test_hard_failed_rca_retries_on_next_tick() -> None:
     sweep = HealthSweepHandler(
         _FakeAggregator(degraded),  # type: ignore[arg-type]
         healers={"cache": _NoopHealer()},  # type: ignore[dict-item]
+        db=tmp_db,
     )
     # First RCA attempt hard-fails (e.g. a stage backend/provider outage);
     # second attempt succeeds.
@@ -467,7 +472,7 @@ class _BoomingMiner:
 
 
 @pytest.mark.asyncio
-async def test_new_verdict_routed_with_kind_derived_from_ran_rca() -> None:
+async def test_new_verdict_routed_with_kind_derived_from_ran_rca(tmp_db: DbPool) -> None:
     """A short-circuited (non-retryable) verdict is "alternative"; a fully
     analyzed verdict is "fix" — exactly the ran_rca signal _resolve_incident
     already computes, no new classification invented."""
@@ -476,7 +481,7 @@ async def test_new_verdict_routed_with_kind_derived_from_ran_rca() -> None:
     async def _router(verdict: RcaVerdict, kind: str) -> None:
         routed.append((verdict, kind))
 
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ManifestValidationError", "some_tool"),
         _outcome("t2", "ManifestValidationError", "some_tool"),
@@ -500,7 +505,7 @@ async def test_new_verdict_routed_with_kind_derived_from_ran_rca() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_concluded_verdict_does_NOT_page_the_operator() -> None:
+async def test_a_concluded_verdict_does_NOT_page_the_operator(tmp_db: DbPool) -> None:
     """Bakir, 2026-09-02: "A finished diagnosis goes in the periodic brief."
 
     MEASURED: 12 of one day's 25 CRITICAL Telegram pages were exactly this — the
@@ -521,7 +526,7 @@ async def test_a_concluded_verdict_does_NOT_page_the_operator() -> None:
     async def _alert(message: str) -> None:
         alerts.append(message)
 
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -542,7 +547,7 @@ async def test_a_concluded_verdict_does_NOT_page_the_operator() -> None:
     )
 
 
-async def test_a_concluded_verdict_reaches_the_LEDGER() -> None:
+async def test_a_concluded_verdict_reaches_the_LEDGER(tmp_db: DbPool) -> None:
     """The other half, and the one that makes the silence safe. Removing the page
     without recording the verdict somewhere readable would not be a digest — it
     would be deletion."""
@@ -552,7 +557,7 @@ async def test_a_concluded_verdict_reaches_the_LEDGER() -> None:
         async def execute(self, sql: str, params: tuple) -> None:
             writes.append((sql, params))
 
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -591,7 +596,7 @@ class _RecordingUnverifiedRca:
 
 
 @pytest.mark.asyncio
-async def test_unverified_verdict_never_alerts_chat() -> None:
+async def test_unverified_verdict_never_alerts_chat(tmp_db: DbPool) -> None:
     """A verdict the verifier stage could not confirm must never reach the
     operator chat — only a verified=True verdict (or the always-verified
     fallback_verdict short-circuit) does. Logged, not chat-alerted."""
@@ -600,7 +605,7 @@ async def test_unverified_verdict_never_alerts_chat() -> None:
     async def _alert(message: str) -> None:
         alerts.append(message)
 
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -622,9 +627,9 @@ async def test_unverified_verdict_never_alerts_chat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_new_verdict_feeds_the_miner() -> None:
+async def test_new_verdict_feeds_the_miner(tmp_db: DbPool) -> None:
     miner = _RecordingMiner()
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -646,7 +651,7 @@ async def test_new_verdict_feeds_the_miner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_second_new_incident_mines_only_its_own_verdict() -> None:
+async def test_second_new_incident_mines_only_its_own_verdict(tmp_db: DbPool) -> None:
     """mine() must be called with ONLY the newly-consumed verdict, not the full
     accumulated self.verdicts history. Before this fix, every new incident
     re-passed the whole map, so a tick with N previously-resolved signatures
@@ -655,7 +660,7 @@ async def test_second_new_incident_mines_only_its_own_verdict() -> None:
     forever, on every recurring scheduler run.
     """
     miner = _RecordingMiner()
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     handler = IncidentEscalationHandler(
         health_sweep=healthy,
         outcome_store=_FakeOutcomeStore([
@@ -688,7 +693,9 @@ async def test_second_new_incident_mines_only_its_own_verdict() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumption_hook_failures_never_block_dedup_or_next_tick() -> None:
+async def test_consumption_hook_failures_never_block_dedup_or_next_tick(
+    tmp_db: DbPool,
+) -> None:
     """A router/alert/miner that all explode must not stop the incident from
     being marked handled, and must not raise into the scheduler tick."""
     async def _boom_router(verdict: RcaVerdict, kind: str) -> None:
@@ -697,7 +704,7 @@ async def test_consumption_hook_failures_never_block_dedup_or_next_tick() -> Non
     async def _boom_alert(message: str) -> None:
         raise RuntimeError("alert exploded")
 
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -731,9 +738,9 @@ class _RecordingBridge:
 
 
 @pytest.mark.asyncio
-async def test_verified_verdict_stages_a_memory_fact() -> None:
+async def test_verified_verdict_stages_a_memory_fact(tmp_db: DbPool) -> None:
     bridge = _RecordingBridge()
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -757,7 +764,7 @@ async def test_verified_verdict_stages_a_memory_fact() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unverified_verdict_does_not_stage_a_memory_fact() -> None:
+async def test_unverified_verdict_does_not_stage_a_memory_fact(tmp_db: DbPool) -> None:
     """Unverified is exactly the noise operators asked NOT to see (mirrors the
     alert-suppression behavior right above it) — no memory fact either."""
     class _UnverifiedRca:
@@ -770,7 +777,7 @@ async def test_unverified_verdict_does_not_stage_a_memory_fact() -> None:
             )
 
     bridge = _RecordingBridge()
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),
@@ -789,12 +796,14 @@ async def test_unverified_verdict_does_not_stage_a_memory_fact() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_bridge_stage_failure_never_blocks_dedup_or_next_tick() -> None:
+async def test_memory_bridge_stage_failure_never_blocks_dedup_or_next_tick(
+    tmp_db: DbPool,
+) -> None:
     class _BoomingBridge:
         async def stage(self, fact: object) -> None:
             raise RuntimeError("bridge exploded")
 
-    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    healthy = HealthSweepHandler(_FakeAggregator([]), db=tmp_db)  # type: ignore[arg-type]
     outcomes = [
         _outcome("t1", "ToolExecutionError", "web_fetch"),
         _outcome("t2", "ToolExecutionError", "web_fetch"),

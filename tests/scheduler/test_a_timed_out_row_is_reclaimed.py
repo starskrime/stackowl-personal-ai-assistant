@@ -225,17 +225,15 @@ async def test_the_claim_itself_stamps_claimed_at(tmp_db: DbPool) -> None:
     every reaper test above still passes on hand-built fixtures while production
     strands rows forever — which is exactly how the first version shipped green.
     """
-    from stackowl.scheduler.scheduler_mutations import _won_transition
-
     job = _job("dream_worker", due_minutes_ago=1, status="pending")
     await insert_job(tmp_db, job)
 
-    await tmp_db.execute(
+    rows_affected = await tmp_db.execute_returning_rowcount(
         "UPDATE jobs SET status = 'running', claimed_at = ? "
         "WHERE job_id = ? AND status = 'pending'",
         (datetime.now(UTC).isoformat(), job.job_id),
     )
-    assert await _won_transition(tmp_db)
+    assert rows_affected == 1
 
     rows = await tmp_db.fetch_all(
         "SELECT claimed_at FROM jobs WHERE job_id = ?", (job.job_id,)

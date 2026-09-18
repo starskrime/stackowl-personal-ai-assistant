@@ -178,18 +178,41 @@ async def _drive_to_exhaustion(db: DbPool, sched: JobScheduler, job_id: str) -> 
 
 
 def _fail_sql_once(monkeypatch: pytest.MonkeyPatch, method: str, prefix: str) -> list[str]:
-    """Make ``DbPool.<method>`` raise 'database is locked' the FIRST time it runs
-    a statement starting with ``prefix``. Returns the list the failure is noted in."""
-    real = getattr(DbPool, method)
+    """Make a write raise 'database is locked' the FIRST time it runs a
+    statement starting with ``prefix``. Returns the list the failure is noted in.
+
+    Story 2.6 — patches ``aiosqlite.Connection.execute`` directly (``method``
+    is kept as a caller-facing label/no-op selector, unused in the patch
+    itself) rather than a specific ``DbPool.<method>``: several scheduler
+    write helpers (``delete_finished_one_shot``, ``chain_append_via_pool``)
+    now sometimes route a write through the CALLER's own open
+    ``DbPool.transaction()`` connection instead of a ``DbPool`` method, so a
+    failure injected only at the pool-method layer would silently stop
+    firing for those call sites. ``DbPool.execute``/``execute_returning_rowcount``
+    and a transaction's ``conn.execute(...)`` both ultimately call the SAME
+    underlying connection object's ``execute`` (``DbPool`` holds one
+    connection for its whole lifetime), so patching there catches both.
+    """
+    import aiosqlite
+    from aiosqlite.context import contextmanager as _dual_protocol
+
+    # aiosqlite.Connection.execute is decorated with aiosqlite's OWN
+    # `@contextmanager` (returns a `Result` -- both awaitable AND usable as
+    # `async with ... as cursor:`). `fetch_all` uses the `async with` form,
+    # `execute`/`execute_returning_rowcount` use plain `await` -- a bare
+    # `async def` replacement supports only the latter, so the SAME decorator
+    # is applied here to keep both call shapes working on the patched method.
+    real = aiosqlite.Connection.execute
     failed: list[str] = []
 
-    async def _flaky(self: DbPool, sql: str, params: Any = ()) -> Any:
+    @_dual_protocol
+    async def _flaky(self: aiosqlite.Connection, sql: str, params: Any = None) -> Any:
         if sql.lstrip().upper().startswith(prefix) and not failed:
             failed.append(sql)
             raise sqlite3.OperationalError("database is locked")
         return await real(self, sql, params)
 
-    monkeypatch.setattr(DbPool, method, _flaky)
+    monkeypatch.setattr(aiosqlite.Connection, "execute", _flaky)
     return failed
 
 
@@ -286,6 +309,15 @@ async def test_a_delete_that_FAILS_does_not_run_the_job_again(
 
     assert handler.calls == 1, "a one-shot whose delete failed ran a second time"
     assert await _row(tmp_db, job.job_id) is None, "and the row was never retired"
+    # Spec 2.6: the ORIGINAL completion transaction was a no-op (its delete
+    # failed, so it never journaled) — the heal that finally retires the row
+    # is the only remaining chance to record `job.finished`.
+    finished = await tmp_db.fetch_all(
+        "SELECT outcome FROM journal_events WHERE type = 'job.finished' AND target_id = ?",
+        (job.job_id,),
+    )
+    assert len(finished) == 1, "the healed retirement must still record job.finished"
+    assert finished[0]["outcome"] == "ok"
 
 
 async def test_a_success_whose_delete_AND_run_record_both_fail_SAYS_so(
@@ -407,6 +439,18 @@ async def test_the_poll_cycle_HEALS_a_terminal_one_shot_whose_delete_failed(
 
     assert await _row(tmp_db, job.job_id) is None, "nothing retried the retirement"
     assert len(await _terminal_audits(tmp_db, job.job_id)) == 1, "recorded twice"
+    # Spec 2.6: `_mark_failed`'s own terminal-branch transaction was a no-op
+    # (its delete failed, so it never journaled) — this heal sweep is the
+    # only remaining chance to record `job.parked`.
+    parked = await tmp_db.fetch_all(
+        "SELECT outcome, attention, intensity FROM journal_events "
+        "WHERE type = 'job.parked' AND target_id = ?",
+        (job.job_id,),
+    )
+    assert len(parked) == 1, "the healed retirement must still record job.parked"
+    assert parked[0]["outcome"] == "parked"
+    assert parked[0]["attention"] == "needs_you"
+    assert parked[0]["intensity"] == "high"
 
 
 async def test_the_poll_cycle_RECORDS_then_retires_a_failure_never_recorded(

@@ -694,7 +694,7 @@ async def test_guard_memory_command_registered_via_orchestrator(
             skill_synthesizer_handler=_unused(),  # type: ignore[arg-type]
             tool_outcome_miner_handler=_unused(),  # type: ignore[arg-type]
             tool_revalidation_handler=_unused(),  # type: ignore[arg-type]
-            health_sweep_handler=HealthSweepHandler(_unused()),  # type: ignore[arg-type]
+            health_sweep_handler=HealthSweepHandler(_unused(), db=tmp_db),  # type: ignore[arg-type]
             incident_escalation_handler=_unused(),  # type: ignore[arg-type]
             # A05.1 — the control plane is the aggregator's second consumer, so
             # the container now carries it by name. This double never touches it;

@@ -683,6 +683,10 @@ class SchedulerAssembly:
 
         health_sweep_handler = HealthSweepHandler(
             health_aggregator,
+            # Story 2.6 — the heal.*/health.changed transaction home
+            # (AD-24); `db` is already in local scope, used two lines above
+            # for `AuditAlertRecord(db, ...)`.
+            db=db,
             alert=health_alert,
             alert_record=AuditAlertRecord(db, _HealthAuditLogger(_default_db_path())),
             # Wrapped so a channel adapter is resolved WHEN THE SWEEP LOOKS, not

@@ -22,6 +22,9 @@ from datetime import UTC, datetime
 from stackowl.db.pool import DbPool
 from stackowl.infra.clock import Clock
 from stackowl.infra.observability import log
+from stackowl.journal import ActorKind, JournalEvent, Outcome, RecordRef
+from stackowl.journal import record as journal_record
+from stackowl.journal.job_events import JobFinishedAttrs, JobStartedAttrs
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler_helpers import (
@@ -31,6 +34,15 @@ from stackowl.scheduler.scheduler_helpers import (
     write_audit,
 )
 from stackowl.tools.verification import is_trustworthy_success
+
+#: AD-4's bound, mirrors ``scheduler.py``'s own module-level constant.
+_MAX_LABEL_LEN = 64
+
+
+def _job_record_ref(job_id: str) -> RecordRef:
+    """AD-4's record_ref for every ``job.*`` event -- mirrors
+    ``scheduler.py``'s own helper of the same name."""
+    return RecordRef(kind="sqlite", locator={"table": "jobs", "job_id": job_id})
 
 # Ownership tags that a caller must never be able to rewrite via a params merge
 # (NIT-2): clobbering these would let a future caller re-attribute a job and
@@ -161,16 +173,35 @@ async def run_now(
 
     # In-flight CAS: only the dispatcher that flips pending→running may run. If
     # the poller already claimed it (status != 'pending'), we lose and reject —
-    # no double dispatch. The pool serialises a single connection, so a
-    # ``SELECT changes()`` straight after the guarded UPDATE reports exactly how
-    # many rows that UPDATE touched (1 = we won, 0 = lost / not pending).
-    await db.execute(
-        # Stamped by the claim itself — see the note at the poll dispatcher's CAS.
-        "UPDATE jobs SET status = 'running', claimed_at = ? "
-        "WHERE job_id = ? AND status = 'pending'",
-        (datetime.now(UTC).isoformat(), job_id),
-    )
-    if not await _won_transition(db):
+    # no double dispatch. ``cursor.rowcount``, read directly off the
+    # just-executed statement inside the SAME transaction, reports exactly how
+    # many rows that UPDATE touched (1 = we won, 0 = lost / not pending) —
+    # mirrors the poller's own CAS shape (``JobScheduler._run_job``).
+    #
+    # Spec 2.6/AD-24: the claim UPDATE and its ``job.started`` journal row
+    # commit in ONE transaction — a manually-triggered run is covered
+    # identically to the poller's own dispatch.
+    async with db.transaction() as conn:
+        cursor = await conn.execute(
+            # Stamped by the claim itself — see the note at the poll dispatcher's CAS.
+            "UPDATE jobs SET status = 'running', claimed_at = ? "
+            "WHERE job_id = ? AND status = 'pending'",
+            (datetime.now(UTC).isoformat(), job_id),
+        )
+        won = cursor.rowcount == 1
+        if won:
+            await journal_record(conn, JournalEvent(
+                type="job.started",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id="scheduler",
+                target_kind=ActorKind.OWNER,
+                target_id=job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job_id),
+                attrs=JobStartedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
+            ))
+    if not won:
         log.scheduler.warning(
             "[scheduler] run_now: rejected — job not pending (lost transition)",
             extra={"_fields": {"job_id": job_id, "status": job.status}},
@@ -214,38 +245,6 @@ async def run_now(
     return result
 
 
-async def _won_transition(db: DbPool) -> bool:
-    """True if the immediately-preceding guarded UPDATE flipped exactly one row.
-
-    Reads SQLite's ``changes()`` on the same (single, serialised) connection the
-    UPDATE just committed on, so it reflects that statement's affected rowcount.
-
-    COUPLING (do not break): this CAS is correct ONLY because ``DbPool`` holds a
-    single serialized connection — ``changes()`` reports the rowcount of the
-    immediately preceding statement *on that same connection*. Both the poller
-    (``JobScheduler._run_job``) and ``run_now`` rely on this to never
-    double-dispatch. A future multi-connection / connection-pool change would let
-    ``changes()`` read a DIFFERENT connection's counter and silently corrupt the
-    claim — if the pool ever goes multi-connection, this must move to an explicit
-    ``execute_returning_rowcount`` claim instead.
-    """
-    rows = await db.fetch_all("SELECT changes() AS n")
-    if not rows:
-        return False
-    try:
-        return int(rows[0].get("n", 0)) == 1
-    except (TypeError, ValueError) as exc:  # B5 — defensive, never raise out
-        log.scheduler.warning(
-            "[scheduler] run_now: changes() unreadable — treating as lost",
-            exc_info=exc,
-            # WHAT WAS UNREADABLE. This branch decides whether the CAS claim
-            # was won — whether the job runs at all — and it reported the loss
-            # with neither the value nor the exception it had just caught.
-            extra={"_fields": {"raw": repr(rows[0].get("n"))[:80]}},
-        )
-        return False
-
-
 def _rejected(job_id: str, reason: str) -> JobResult:
     return JobResult(job_id=job_id, success=False, output=None, error=reason, duration_ms=0.0)
 
@@ -275,13 +274,34 @@ async def _record_run(db: DbPool, job: Job, result: JobResult, duration_ms: floa
     # A VETOED success (success=True, verified=False) is not a completed run.
     # Recorded as one, the next poll's dedup would retire a one-shot that never
     # really ran — no retry, no audit, no alert.
-    status = "completed" if is_trustworthy_success(result.success, result.verified) else "failed"
+    trustworthy = is_trustworthy_success(result.success, result.verified)
+    status = "completed" if trustworthy else "failed"
     occurrence_key = f"{job.idempotency_key}@{job.next_run_at}"
-    await db.execute(
-        "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (run_id, job.job_id, occurrence_key, status, duration_ms, now_iso),
-    )
+    # Spec 2.6/AD-24: the job_runs history row and (for a RECURRING job's
+    # successful run only) ``job.finished`` commit in ONE transaction. A
+    # ONE-SHOT's ``job.finished`` comes from its own retirement path
+    # (``settle`` -> ``_mark_completed`` -> ``_retire_completed_one_shot``,
+    # already wrapped there) — recording it here too would double-journal the
+    # SAME transition.
+    record_finished = trustworthy and not job.params.get("run_once")
+    async with db.transaction() as conn:
+        await conn.execute(
+            "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (run_id, job.job_id, occurrence_key, status, duration_ms, now_iso),
+        )
+        if record_finished:
+            await journal_record(conn, JournalEvent(
+                type="job.finished",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id="scheduler",
+                target_kind=ActorKind.OWNER,
+                target_id=job.job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job.job_id),
+                attrs=JobFinishedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
+            ))
 
 
 async def _restore_after_run(db: DbPool, job: Job, *, tz: str = "UTC") -> None:
