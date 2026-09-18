@@ -135,3 +135,19 @@ source_spec: `spec-2-5-split-mode-tui-progress-comes-back-from-the-journal.md`
 severity: low
 reason: AD-3 states evolution is additive-only via `schema_version` + upcasters, "kept until their rows are pruned," and names the narrator/fan-out/snapshot/browser as consumers that must all see the latest version through one. That framework does not exist yet: every event type registered anywhere in the tree today (`journal/task_events.py`, the only emitter wired so far) declares `schema_version=1`, so there is nothing to upcast FROM -- confirmed via `grep -rn "schema_version=" src/stackowl/journal/` returning only `schema_version=1` declarations. Building a real upcaster registry/dispatch now would be speculative against a shape nothing has evolved into. What would settle it: when a future story first bumps some event type's `schema_version` past 1, that story must also add the upcaster registry AD-3 describes, wired into `journal/fanout.py`'s `read_since` (or a shared decode path both fan-out and the narrator's own read call) BEFORE any consumer reads a mixed-version table.
 status: open
+
+### DW-17: `journal/retention.py`'s `PROVISIONAL_JOURNAL_RETENTION_DAYS` is a provisional 1-day constant, not the real journal retention setting AD-6 describes
+origin: spec-2-6-jobs-heals-and-health-have-a-history.md, Design Notes
+location: src/stackowl/journal/retention.py; tests/journal/test_retention_tripwire.py (the only reader)
+source_spec: `spec-2-6-jobs-heals-and-health-have-a-history.md`
+severity: low
+reason: The epic's own Technical Decisions state retention values "stay provisional until Story 2.12's benchmark." Today's REAL production prune windows are `prune_completed_after_days=1` (`config/task_loop_settings.py`, tasks) and `_RUN_HISTORY_RETENTION_DAYS=7` (`scheduler/handlers/db_reclaim.py`, job_runs) -- both owner-authorized and far below AD-6's eventual ~30-day default, so a tripwire compared against 30 would fail immediately against values this story does not own. The constant is set to the tightest existing real window (1 day) so the tripwire is honest without forcing a change to owner-authorized production behaviour. What would settle it: Story 2.11 raises `PROVISIONAL_JOURNAL_RETENTION_DAYS` to the real setting (architecturally ~30 days) and, in the SAME change, reconciles every subsystem prune window this tripwire checks (task/job-run retention) so none is shorter than the new value.
+status: open
+
+### DW-18: `job.started` can be left unresolved (no follow-up event) when a job's handler isn't registered at claim time
+origin: spec-2-6-jobs-heals-and-health-have-a-history.md, Review Triage Log (adversarial-review)
+location: src/stackowl/scheduler/scheduler.py (`_run_job`); src/stackowl/scheduler/scheduler_mutations.py (`run_now`)
+source_spec: `spec-2-6-jobs-heals-and-health-have-a-history.md`
+severity: low
+reason: After the pending->running CAS claim wins and `job.started` commits, both `_run_job` and `run_now` look up the claimed job's handler in the registry; when it is not found (a narrow boot-ordering race), the row is reverted to `pending` via a plain write with no `conn=` and no journal event. A journal reader sees an orphaned `job.started` with no counterpart until the job is next claimed. Confirmed by reading both call sites directly -- not a double-write, not data corruption, and the race window (handler registration ordering at boot) is narrow. What would settle it: wrap the revert-to-pending write in `self._db.transaction()` and record a `job.failed` (or a new, more precise event type) alongside it, mirroring every other state-change-plus-journal-event site this story already wired.
+status: open
