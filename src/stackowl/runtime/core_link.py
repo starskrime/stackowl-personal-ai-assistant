@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
-from stackowl.ipc.frames import ClarifyAskFrame, HelloFrame, IngressFrame, SendTextFrame
+from stackowl.ipc.frames import ClarifyAskFrame, IngressFrame, SendTextFrame
 from stackowl.ipc.stream_bridge import SocketStreamWriter
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.runtime.message_bridge import frame_to_ingress
@@ -115,9 +115,6 @@ class CoreLink:
         self._conn = conn
         self._dispatch = dispatch
         self._tasks: set[asyncio.Task[None]] = set()
-
-    async def send_hello(self, core_pid: int) -> None:
-        await self._conn.send(HelloFrame(core_pid=core_pid))
 
     async def run(self) -> None:
         """Receive frames until the gateway hangs up (clean EOF)."""

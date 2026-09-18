@@ -50,6 +50,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.backends.base import OrchestratorBackend
     from stackowl.providers.registry import ProviderRegistry
+    from stackowl.runtime.link_health import GatewayCoreLinkHealthContributor
     from stackowl.scheduler.handlers.check_in import CheckInHandler
     from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
     from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
@@ -183,6 +184,12 @@ class SchedulerAssembly:
         # function — no execution) to confirm a live sibling capability exists.
         # None → that consult honestly reports "no registry wired" (logged).
         tool_registry: ToolRegistry | None = None,
+        # Spec 2.3 — the GATEWAY-role-only Hello-mismatch health contributor.
+        # Same "None means don't register" pattern as `browser_runtime`
+        # (`None in gateway role`): the caller constructs one only when
+        # `self._role == "gateway"`, so a core/mono process's aggregator is
+        # byte-identical to before this story.
+        link_health_contributor: GatewayCoreLinkHealthContributor | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -527,6 +534,7 @@ class SchedulerAssembly:
             owl_registry,
             TaskOutcomeStore(db),
             db=db,
+            link_health_contributor=link_health_contributor,
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         # A CONCLUDED RCA IS DURABLE CONTENT, not a flap. Same builder — the address
@@ -1076,6 +1084,7 @@ def _build_health_aggregator(
     owl_registry: OwlRegistry | None = None,
     outcome_store: TaskOutcomeStore | None = None,
     db: object | None = None,
+    link_health_contributor: GatewayCoreLinkHealthContributor | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -1128,6 +1137,13 @@ def _build_health_aggregator(
     owl-rating check needs both the owl list and the vote store); either
     missing skips registration, same "no live handle threaded through" pattern
     as the other optional contributors.
+
+    ``link_health_contributor`` (Spec 2.3) is gateway-role-only, same
+    ``None``-means-skip pattern as ``browser_runtime`` (``None in gateway
+    role``): the caller constructs a
+    :class:`~stackowl.runtime.link_health.GatewayCoreLinkHealthContributor`
+    only when its own role is ``"gateway"`` — a core/mono process passes
+    ``None`` and this aggregator is byte-identical to before this story.
     """
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
@@ -1151,6 +1167,10 @@ def _build_health_aggregator(
     # with no journal row to prove it) in the live health sweep. No dependency
     # on anything else assembled here, so it is unconditional like DbContributor.
     agg.register(JournalHealthContributor())
+    # Spec 2.3 — gateway-role-only (None on core/mono, see docstring above):
+    # surfaces a gateway/core Hello mismatch in the same periodic sweep.
+    if link_health_contributor is not None:
+        agg.register(link_health_contributor)
     # A DATABASE BESIDE THE LIVE ONE. The 0-byte `~/.stackowl/stackowl.db` came back
     # twice on 2026-09-11 — an ad-hoc connect at the obvious guess, which SQLite turns
     # into an empty file — and nothing noticed. Detection only: `StrayDatabaseHealer`,

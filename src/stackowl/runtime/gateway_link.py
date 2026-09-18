@@ -49,6 +49,9 @@ from stackowl.ipc.frames import (
     SendTextFrame,
 )
 from stackowl.ipc.stream_bridge import StreamDemux
+from stackowl.journal import write_gate
+from stackowl.runtime import link_health
+from stackowl.runtime.hello import evaluate_hello
 from stackowl.runtime.message_bridge import ingress_to_frame
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -147,6 +150,10 @@ class GatewayLink:
         # core that is tearing down.
         self._conn: FrameConnection | None = None
         self._buffering = False
+        # Spec 2.3 — this gateway's OWN Hello, bound per-connection (fresh per
+        # accept, never cached across a core reconnect — AD-33). Compared
+        # against every inbound HelloFrame in `_route` via `evaluate_hello`.
+        self._local_hello: HelloFrame | None = None
         self._pending: list[IngressMessage] = []
         # F-35 — submitted-but-unfinished turns, keyed by trace_id (the request_id
         # used for demux routing AND core idempotency). A turn forwarded to a live
@@ -177,16 +184,34 @@ class GatewayLink:
 
     # --- connection lifecycle (driven by the gateway accept handler) -------
 
-    def set_connection(self, conn: FrameConnection) -> None:
-        """Bind the current core connection (called per accepted connection)."""
+    def set_connection(self, conn: FrameConnection, *, local_hello: HelloFrame) -> None:
+        """Bind the current core connection (called per accepted connection).
+
+        ``local_hello`` is THIS gateway's own, freshly-computed Hello (AD-33 —
+        never cached across a core reconnect) — stored so the HelloFrame
+        branch in ``_route`` can evaluate the incoming core's Hello against it.
+        """
         self._conn = conn
+        self._local_hello = local_hello
         log.gateway.info("[ipc] gateway link: core connection bound")
 
     def drop_connection(self) -> None:
         """Forget the current connection — subsequent submits buffer until reconnect."""
         self._conn = None
         self._buffering = True
+        # Spec 2.3 — a lost link means this gateway can no longer prove its
+        # schema/registry match the core that just vanished; refuse new
+        # journal writes until the NEXT confirmed-compatible Hello.
+        write_gate.pause_writes("gateway-core link lost")
         log.gateway.info("[ipc] gateway link: core connection dropped — buffering")
+
+    @property
+    def consecutive_hello_mismatches(self) -> int:
+        """The SAME counter ``GatewayCoreLinkHealthContributor`` reports on —
+        delegates to ``runtime.link_health`` so ``_supervise_core`` (which polls
+        this to decide whether to keep respawning the core) and the health
+        sweep can never disagree."""
+        return link_health.mismatch_count()
 
     async def finalize(self) -> None:
         """End every cut turn's reader so no spinner dangles after a drop.
@@ -449,11 +474,42 @@ class GatewayLink:
             if self._event_bus is not None:
                 self._event_bus.emit(frame.event, frame.payload)
         elif isinstance(frame, HelloFrame):
+            # Spec 2.3 — a (re)connected core's Hello is evaluated against THIS
+            # gateway's own (bound at `set_connection` time) before it is
+            # trusted to receive. `self._local_hello` is None only if a
+            # HelloFrame arrives with no prior `set_connection` — treated as an
+            # incompatible link, fail-safe, rather than crashing on frame.
+            local = self._local_hello
+            verdict = (
+                evaluate_hello(local=local, remote=frame, local_is_core=False)
+                if local is not None
+                else None
+            )
+            if verdict is None or not verdict.compatible:
+                log.gateway.error(
+                    "[ipc] gateway link: Hello mismatch — refusing link",
+                    extra={"_fields": {
+                        "local": local.model_dump() if local is not None else None,
+                        "remote": frame.model_dump(),
+                    }},
+                )
+                if local is not None:
+                    link_health.note_mismatch(local, frame)
+                write_gate.pause_writes("gateway/core Hello mismatch")
+                # Defense-in-depth — reinforces the AC's "refuses to activate
+                # the link": not reachable via today's real wiring (a core
+                # sends exactly one Hello per connection, so `_buffering` is
+                # already True from `set_connection`'s caller), but a link
+                # that failed compatibility must never read as active.
+                self._buffering = True
+                return
+            link_health.note_match()
+            write_gate.resume_writes()
             # A (re)connected core that has finished booting: it can receive now,
             # so stop buffering and flush anything queued during the gap.
             log.gateway.info(
                 "[ipc] gateway link: core ready (hello)",
-                extra={"_fields": {"core_pid": frame.core_pid}},
+                extra={"_fields": {"sender_pid": frame.sender_pid}},
             )
             self._buffering = False
             await self._flush_pending()

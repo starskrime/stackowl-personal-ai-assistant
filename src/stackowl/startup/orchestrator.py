@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.mcp.client import McpClient
     from stackowl.pipeline.streaming import ResponseChunk
+    from stackowl.runtime.gateway_link import GatewayLink  # pragma: no cover — typing only
     from stackowl.supervisor.supervisor import Supervisor  # pragma: no cover — typing only
 
 
@@ -151,6 +152,15 @@ _STALL_POLL_SECONDS = 60.0
 #: that looks, from the outside, exactly like a platform working hard. Any healthy
 #: verdict resets the count, so this bounds a FAILING sequence and never a long uptime.
 _MAX_CONSECUTIVE_STALL_RESTARTS = 3
+
+#: Spec 2.3 — consecutive core (re)connections that all failed the Hello
+#: compatibility check (a genuinely-older gateway, per `runtime.hello`'s
+#: digest-only tiebreak) before `_supervise_core` stops respawning entirely.
+#: A gateway that is provably stale will fail EVERY fresh core's Hello the
+#: same way, so retrying past this point is pure waste — the fix needs an
+#: operator to restart the gateway (this story does not build gateway
+#: self-restart; see the spec's Design Notes / DW-11).
+_MAX_CONSECUTIVE_HELLO_MISMATCHES = 3
 
 
 async def _wait_for_exit_or_stall(
@@ -235,6 +245,7 @@ async def _supervise_core(
     first_conn_event: asyncio.Event | None = None,
     on_crash: Callable[[int | None], Awaitable[None]] | None = None,
     stall_probe: Callable[[datetime], Awaitable[HealthStatus]] | None = None,
+    gateway_link: GatewayLink | None = None,
 ) -> None:
     """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
 
@@ -252,6 +263,16 @@ async def _supervise_core(
     supervising (set ``stop_event`` to bring the gateway down) rather than buffer
     silently. ``first_conn_event`` is cleared BEFORE each respawn so we wait for
     the NEW connection, not a stale set from the previous core.
+
+    Spec 2.3 — ``gateway_link`` (when passed) is consulted right after every
+    ``_wait_for_exit_or_stall``: if its ``consecutive_hello_mismatches`` has
+    reached ``_MAX_CONSECUTIVE_HELLO_MISMATCHES``, this loop STOPS respawning
+    (a genuinely-older gateway will fail every fresh core's Hello the same
+    way, so further respawns are pure waste) rather than call ``spawn_core``
+    again. ``GatewayLink`` already owns the counter (needed for the health
+    contributor regardless); this is the ONLY place that decides whether to
+    keep calling ``spawn_core`` at all, so it is the natural, minimal place to
+    consult it — no new coordination primitive between the two.
     """
     from stackowl.runtime.supervisor import spawn_core
 
@@ -271,6 +292,24 @@ async def _supervise_core(
             proc, probe, watch_started
         )
         if stop_event.is_set():
+            return
+        # Spec 2.3 — a genuinely-older gateway fails EVERY fresh core's Hello
+        # the same way; past the limit, respawning is pure waste. Checked
+        # right after the core generation just supervised exits/stalls, so
+        # the LAST respawn's mismatch (if any) is already counted before we
+        # decide whether to try again.
+        if (
+            gateway_link is not None
+            and gateway_link.consecutive_hello_mismatches >= _MAX_CONSECUTIVE_HELLO_MISMATCHES
+        ):
+            log.critical(
+                "★ GATEWAY/CORE HELLO KEEPS MISMATCHING ★ — %d consecutive core "
+                "(re)connections have all failed the Hello compatibility check. "
+                "The gateway is almost always the stale side (Spec 2.3's "
+                "digest-only tiebreak). STANDING DOWN respawns; this needs a "
+                "person to restart the gateway process.",
+                gateway_link.consecutive_hello_mismatches,
+            )
             return
         if saw_progress:
             stall_restarts = 0
@@ -961,10 +1000,6 @@ class StartupOrchestrator:
                 extra={"_fields": {"socket_path": str(socket_path)}},
             )
             core_conn = await IpcClient(socket_path).connect()
-            # Announce readiness so the gateway flushes any messages buffered while
-            # this (possibly just-exec-replaced) core was booting.
-            with contextlib.suppress(Exception):
-                await core_conn.send(HelloFrame(core_pid=os.getpid()))
             log.info("[startup] core: connected to gateway")
         elif self._role == "gateway":
             gateway_socket_path = _resolve_socket_path(self._settings)
@@ -1024,6 +1059,22 @@ class StartupOrchestrator:
 
         db_pool = DbPool(default_db_path())
         await db_pool.open()
+
+        if self._role == "core":
+            assert core_conn is not None
+            # Spec 2.3 — moved here (was right after connect, before the DB
+            # pool existed) because a real Hello needs `highest_migration`,
+            # which only a live `db_pool` can answer. Announces readiness so
+            # the gateway flushes any messages buffered while this (possibly
+            # just-exec-replaced) core was booting — AND lets the gateway
+            # evaluate compatibility before trusting this core with traffic.
+            # No `contextlib.suppress` here: a Hello that can't be sent is
+            # this story's whole point, never silently continued past.
+            from stackowl.runtime.hello import build_local_hello
+
+            await core_conn.send(
+                await build_local_hello(sender_pid=os.getpid(), db_pool=db_pool)
+            )
 
         # AD-30 -- the ONE NameResolver for RecordKind.TASK, so
         # journal.narrate() can name a live task by its goal instead of
@@ -2023,6 +2074,7 @@ class StartupOrchestrator:
         # ever dispatches (browser handlers, dream worker, fact extraction,
         # notification digest, etc. all depended on the scheduler loop).
         # See plan gleaming-finding-puppy.md Commit E.
+        from stackowl.runtime.link_health import GatewayCoreLinkHealthContributor
         from stackowl.scheduler.assembly import SchedulerAssembly
 
         scheduler_components = await SchedulerAssembly.build(
@@ -2055,6 +2107,11 @@ class StartupOrchestrator:
             # Task 7 — so IncidentEscalationHandler's "alternative" verdict
             # consumer can consult capability_substitution.find_substitute.
             tool_registry=tool_registry,
+            # Spec 2.3 — gateway-role-only (None on core/mono): surfaces a
+            # gateway/core Hello mismatch in the periodic health sweep.
+            link_health_contributor=(
+                GatewayCoreLinkHealthContributor() if self._role == "gateway" else None
+            ),
         )
         # A RECOVERED PROVIDER MUST NOT WAIT FOR A HUMAN. Same seam, same reason as
         # the Task 7 wiring below: `services` is built once at :1625 and shared by
@@ -3361,7 +3418,31 @@ class StartupOrchestrator:
                 # IpcServer closes the connection when this returns, so we route it
                 # to EOF here, then drop+finalize so the next core can reattach.
                 assert gateway_link is not None
-                gateway_link.set_connection(conn)
+                # Spec 2.3 — recomputed FRESH on every accepted connection (AD-33:
+                # never cached across a core reconnect), so a schema/registry
+                # change made while this gateway keeps running is still detected.
+                # Logged + re-raised (never silently swallowed, matching the
+                # removal of the old Hello send's `contextlib.suppress` below):
+                # a failure here is bounded (both `first_conn_event.wait()`
+                # callers are already `asyncio.wait_for(..., timeout=...)`, so
+                # this degrades to a timeout rather than a hang) but loses
+                # precise diagnosis if hidden.
+                from stackowl.runtime.hello import build_local_hello
+
+                try:
+                    local_hello = await build_local_hello(
+                        sender_pid=os.getpid(), db_pool=db_pool
+                    )
+                    gateway_link.set_connection(conn, local_hello=local_hello)
+                    await conn.send(local_hello)
+                except Exception as exc:
+                    log.error(
+                        "[startup] gateway: failed to build/send local Hello "
+                        "for an accepted core connection — link not established",
+                        exc_info=exc,
+                        extra={"_fields": {"socket_path": str(gateway_socket_path)}},
+                    )
+                    raise
                 gateway_first_conn_ready.set()
                 try:
                     await gateway_link.run(conn)
@@ -3470,6 +3551,34 @@ class StartupOrchestrator:
             log.info("[startup] core: frame loop started")
             try:
                 async for frame in core_conn:
+                    if isinstance(frame, HelloFrame):
+                        # Spec 2.3 — the GATEWAY's Hello, received here after it
+                        # accepted this connection. Evaluated against a FRESH
+                        # local Hello (never cached — AD-33) from this core's
+                        # own point of view (`local_is_core=True`).
+                        from stackowl.runtime.hello import (
+                            build_local_hello,
+                            evaluate_hello,
+                            react_to_core_hello_verdict,
+                        )
+
+                        local = await build_local_hello(
+                            sender_pid=os.getpid(), db_pool=db_pool
+                        )
+                        verdict = evaluate_hello(
+                            local=local, remote=frame, local_is_core=True
+                        )
+                        if not verdict.compatible:
+                            log.error(
+                                "[startup] core: Hello mismatch with gateway — %s",
+                                verdict.older,
+                                extra={"_fields": {
+                                    "local": local.model_dump(),
+                                    "remote": frame.model_dump(),
+                                }},
+                            )
+                        react_to_core_hello_verdict(verdict, stop_event=stop_event)
+                        continue
                     if isinstance(frame, ConsentResponseFrame):
                         # The gateway's user answered a consent prompt — resolve
                         # the parked SocketConsentPrompter future so the tool runs
@@ -4830,6 +4939,9 @@ class StartupOrchestrator:
                     gateway_first_conn_ready,
                     on_crash=_notify_core_crash,
                     stall_probe=_probe_core_stall,
+                    # Spec 2.3 — so repeated Hello mismatches across core
+                    # respawns stop the loop instead of retrying forever.
+                    gateway_link=gateway_link,
                 )
             )
             # AND THE SUPERVISOR THAT WATCHES FOR A SILENT DEATH COULD DIE SILENTLY
