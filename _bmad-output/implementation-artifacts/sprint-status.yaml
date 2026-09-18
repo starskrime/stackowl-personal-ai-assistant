@@ -54,7 +54,7 @@ development_status:
   2-7-every-turn-s-model-calls-tool-calls-and-delegation-hops-are: done
   2-8-memory-writes-and-consent-decisions-are-recorded: done
   2-9-deliveries-channels-and-providers-are-recorded: done
-  2-10-nothing-escapes-the-journal: backlog
+  2-10-nothing-escapes-the-journal: done
   2-11-the-journal-stays-small-on-small-hardware: backlog
   2-12-journal-cost-measured-on-a-small-host: backlog
   epic-2-retrospective: optional
