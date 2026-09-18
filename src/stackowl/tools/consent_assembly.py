@@ -21,6 +21,7 @@ from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.audit.logger import AuditLogger
+    from stackowl.db.pool import DbPool
     from stackowl.tools.consent import RoutingPrompter
     from stackowl.tools.registry import ConsequentialActionGate
 
@@ -37,8 +38,15 @@ class ConsentAssembly:
     """Factory that wires the consent gate + per-channel prompter routing."""
 
     @staticmethod
-    def build(audit_logger: AuditLogger) -> ConsentComponents:
-        """Build the consent gate over a CLI-registered routing prompter."""
+    def build(audit_logger: AuditLogger, db_pool: DbPool | None = None) -> ConsentComponents:
+        """Build the consent gate over a CLI-registered routing prompter.
+
+        ``db_pool`` (Story 2.8) — threaded into :class:`ConsentPolicy` so
+        ``_finalize`` can record a ``consent.decided`` journal event
+        alongside the existing sync audit write. Defaults to ``None`` so
+        every existing test/caller that constructs a policy with no journal
+        wiring stays byte-identical.
+        """
         log.infra.info("[consent] assembly.build: entry")
 
         # Deferred imports — keep this module cheap when consent isn't used.
@@ -82,7 +90,10 @@ class ConsentAssembly:
             _FAILURE_MINER_CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO,
         }
         consent_gate = ConsequentialActionGate(
-            ConsentPolicy(prompter=routing_prompter, audit_logger=audit_logger, tiers=tiers)
+            ConsentPolicy(
+                prompter=routing_prompter, audit_logger=audit_logger, tiers=tiers,
+                db_pool=db_pool,
+            )
         )
 
         log.infra.info("[consent] assembly.build: exit — gate + routing prompter ready")

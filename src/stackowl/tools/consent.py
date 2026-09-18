@@ -26,7 +26,7 @@ import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
@@ -36,6 +36,9 @@ from stackowl.interaction.reversibility_resolver import (
     ReversibilityResolver,
     reversibility_resolver_enabled,
 )
+
+if TYPE_CHECKING:  # pragma: no cover -- typing-only
+    from stackowl.db.pool import DbPool
 
 __all__ = [
     "ConsentScope",
@@ -733,6 +736,13 @@ class ConsentPolicy:
     prompter: ConsentPrompter = field(default_factory=FailClosedPrompter)
     clock: Clock = field(default_factory=WallClock)
     audit_logger: object | None = None  # AuditLogger-shaped (.append); typed loosely to avoid import cycle
+    #: Story 2.8 -- wired once (`ConsentAssembly.build`/`startup/orchestrator.py`,
+    #: mirroring `providers/registry.py::set_db_pool`), so `_finalize` can
+    #: additionally record a `consent.decided` journal event in its own
+    #: transaction (AD-24). `None` is the ordinary state for every test and
+    #: the bare `registry.py` fallback -- `_finalize` then journals nothing,
+    #: exactly like a `None` `CuratedMemory` db_pool.
+    db_pool: DbPool | None = None
     tiers: dict[str, TrustTier] = field(default_factory=dict)
     always_ask_tools: frozenset[str] = _DEFAULT_ALWAYS_ASK_TOOLS
     always_ask_categories: frozenset[str] = _DEFAULT_ALWAYS_ASK_CATEGORIES
@@ -803,7 +813,7 @@ class ConsentPolicy:
                 }},
             )
             if official:
-                return self._finalize(
+                return await self._finalize(
                     True, tool_name=tool_name, channel=channel,
                     session_key=session_key, category=category,
                     reason="official_channel", scope=ConsentScope.ONCE,
@@ -814,14 +824,14 @@ class ConsentPolicy:
 
         # 2. DECISION — hard tiers and standing grants short-circuit the prompt.
         if tier is TrustTier.NEVER:
-            return self._finalize(False, tool_name, channel, session_key, category, "tier_never", None)
+            return await self._finalize(False, tool_name, channel, session_key, category, "tier_never", None)
 
         if session_key and tool_name in self._session_deny.get(session_key, set()):
-            return self._finalize(False, tool_name, channel, session_key, category, "session_deny", None)
+            return await self._finalize(False, tool_name, channel, session_key, category, "session_deny", None)
 
         if not excluded:
             if tier is TrustTier.AUTO:
-                return self._finalize(True, tool_name, channel, session_key, category, "tier_auto", None)
+                return await self._finalize(True, tool_name, channel, session_key, category, "tier_auto", None)
             # F-27 — a low-blast-radius REVERSIBLE effect (locally owned + undo-able)
             # is auto-allowed-with-undo rather than re-prompted. Only reaches here for
             # NON-excluded tools, so dangerous categories stay on ALWAYS_ASK.
@@ -835,16 +845,21 @@ class ConsentPolicy:
                     if not ReversibilityResolver.must_reach_user(
                         Decision(reversibility=Reversibility.reversible(via="undo_write"))
                     ):
-                        return self._finalize(
+                        return await self._finalize(
                             True, tool_name, channel, session_key, category,
                             "reversible_auto", None,
                         )
                 else:
-                    return self._finalize(True, tool_name, channel, session_key, category, "reversible_auto", None)
+                    return await self._finalize(
+                        True, tool_name, channel, session_key, category,
+                        "reversible_auto", None,
+                    )
             if self._window_active(session_key, tool_name):
-                return self._finalize(True, tool_name, channel, session_key, category, "window_grant", None)
+                return await self._finalize(
+                    True, tool_name, channel, session_key, category, "window_grant", None,
+                )
             if tool_name in self._session_batch.get(session_key, set()):
-                return self._finalize(True, tool_name, channel, session_key, category, "session_batch", None)
+                return await self._finalize(True, tool_name, channel, session_key, category, "session_batch", None)
 
         # 3. STEP — must ask the user (fail closed if the prompter errors).
         req = ConsentRequest(
@@ -865,7 +880,7 @@ class ConsentPolicy:
                 exc_info=exc,
                 extra={"_fields": {"tool": tool_name, "channel": channel}},
             )
-            return self._finalize(False, tool_name, channel, session_key, category, "prompt_error", None)
+            return await self._finalize(False, tool_name, channel, session_key, category, "prompt_error", None)
 
         if scope is ConsentScope.DENY:
             # "not_approved", not "user_denied". The prompter returns DENY for a
@@ -875,7 +890,7 @@ class ConsentPolicy:
             # decision, and owl_build reported "declined by user" for prompts he was
             # never shown. An audit line that guesses intent is worse than one that
             # states only what is known.
-            return self._finalize(
+            return await self._finalize(
                 False, tool_name, channel, session_key, category, "not_approved", scope,
             )
 
@@ -886,7 +901,7 @@ class ConsentPolicy:
                     "[consent] policy.request: recorded session-deny grant",
                     extra={"_fields": {"tool": tool_name, "session": session_key}},
                 )
-            return self._finalize(False, tool_name, channel, session_key, category, "user_deny_session", scope)
+            return await self._finalize(False, tool_name, channel, session_key, category, "user_deny_session", scope)
 
         # Record any standing grant — but NEVER for excluded tools/categories,
         # and never under an empty session_key (which would collapse every
@@ -906,7 +921,7 @@ class ConsentPolicy:
                     extra={"_fields": {"tool": tool_name, "session": session_key, "window_s": self.window_seconds}},
                 )
 
-        return self._finalize(True, tool_name, channel, session_key, category, f"user_{scope.value}", scope)
+        return await self._finalize(True, tool_name, channel, session_key, category, f"user_{scope.value}", scope)
 
     # ------------------------------------------------------------------
     # internals
@@ -935,7 +950,7 @@ class ConsentPolicy:
         del self._windows[key]
         return False
 
-    def _finalize(
+    async def _finalize(
         self,
         allowed: bool,
         tool_name: str,
@@ -967,6 +982,20 @@ class ConsentPolicy:
                     exc_info=exc,
                     extra={"_fields": {"tool": tool_name}},
                 )
+        # Story 2.8 (AD-24) — ADDITIONALLY, after the existing sync audit
+        # write above (untouched — see the spec's Design Notes on why this
+        # is a NEW table rather than a migration of that write onto
+        # `chain_append_via_pool`): a `consent.decided` journal row, in its
+        # own transaction. Never blocks `allowed` on failure (B5) — the
+        # helper itself swallows everything.
+        if self.db_pool is not None:
+            from stackowl.journal import consent_events
+
+            await consent_events.record_consent_decision(
+                self.db_pool, tool_name=tool_name, channel=channel,
+                session_key=session_key, category=category, reason=reason,
+                scope=scope.value if scope is not None else None, allowed=allowed,
+            )
         log.tool.info(
             "[consent] policy.request: exit",
             extra={"_fields": {"tool": tool_name, "decision": decision, "reason": reason}},

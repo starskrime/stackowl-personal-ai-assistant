@@ -191,3 +191,27 @@ source_spec: `spec-2-7-every-turn-s-model-calls-tool-calls-and-delegation-hops-a
 severity: low
 reason: `health_check()` correctly checks the `record()` consecutive-failure streak before the budget-overflow count, so the more serious message wins when both are non-zero (verified correct by direct reading). No test exercises both `_state.consecutive_failures` and `_state.budget_exceeded_count` being non-zero at once, so a future edit that reorders the two branches would silently flip which message an operator sees, with nothing catching it. `tests/journal/test_health_contributor.py` and `tests/journal/test_turn_budget.py` each only ever set one of the two fields. What would settle it: one small additional test setting both counters (via the test-only reset/note helpers) and asserting the failure-streak message/remedy wins.
 status: open
+
+### DW-24: Consent's audit write stays on its existing synchronous path, parallel to the new `consent_decision_records` table, instead of migrating onto `chain_append_via_pool` for a single shared audit_log record_ref
+origin: spec-2-8-memory-writes-and-consent-decisions-are-recorded.md, Design Notes
+location: src/stackowl/tools/consent.py::ConsentPolicy._finalize; src/stackowl/journal/consent_events.py; src/stackowl/db/migrations/0147_consent_decision_records.sql
+source_spec: `spec-2-8-memory-writes-and-consent-decisions-are-recorded.md`
+severity: medium
+reason: `chain_append_via_pool` (audit/logger.py) already exists for exactly "join a caller's open db_pool.transaction() so an audit row and a journal event commit atomically" (Story 2.6's own precedent). Using it here instead of a new table would be the more DRY choice, but it requires converting `ConsentPolicy._finalize`'s CURRENT synchronous `audit_logger.append()` call -- exercised by 11+ existing tests -- onto the async path, on a live production consequential-action consent gate. This story follows Story 2.7's own "no existing async DB mutation to join" fallback instead (a fresh transaction into a small dedicated table, `turn_action_records`'s own precedent), deliberately trading one small duplicated table for a materially smaller, lower-risk diff on a production-critical path. Not a gap -- a reasoned, stated alternative. What would settle it: a dedicated follow-up story that converts `audit_logger.append()` itself onto `chain_append_via_pool`, re-verifies all 11+ existing consent tests against the async path, and then retires `consent_decision_records` in favor of a shared audit_log `record_ref`.
+status: open
+
+### DW-25: `BatchAuditor.grant`/`reject`/`action` (`tools/interaction/_batch_support.py`) are not journaled by this story
+origin: spec-2-8-memory-writes-and-consent-decisions-are-recorded.md, Boundaries & Constraints ("Never")
+location: src/stackowl/tools/interaction/_batch_support.py
+source_spec: `spec-2-8-memory-writes-and-consent-decisions-are-recorded.md`
+severity: low
+reason: `BatchAuditor` is a structurally distinct, lower-severity (`write`, not `consequential`) flow, explicitly not the consequential-action consent gate `ConsentPolicy._finalize` decides. The spec's own Boundaries text names it as out of scope for this story rather than an oversight. Left unjournaled, logged here rather than silently dropped. What would settle it: a follow-up story that either registers a distinct `batch.*` journal event type for it or explicitly marks it `unjournaled` with a stated reason once Story 2.10's coverage tripwire exists to enforce that choice.
+status: open
+
+### DW-26: `SqliteMemoryBridge.stage()` and `SqliteLessonsStore.publish()` are not instrumented as "the SQLite memory write" this story journals
+origin: spec-2-8-memory-writes-and-consent-decisions-are-recorded.md, Boundaries & Constraints ("Never")
+location: src/stackowl/memory/sqlite_bridge.py (staged_facts); src/stackowl/learning/lessons_store.py::SqliteLessonsStore.publish
+source_spec: `spec-2-8-memory-writes-and-consent-decisions-are-recorded.md`
+severity: low
+reason: The spec's own Boundaries text is explicit that `ReflectionStore.write()` -- durable, gating, already `conn`-joinable -- is the ONE SQLite memory write this story instruments as `memory.reflection_recorded`, and names these two as the reasons why NOT them: `SqliteMemoryBridge.stage()` writes `staged_facts`, a short-term buffer rather than curated knowledge; `SqliteLessonsStore.publish()` is an explicitly best-effort, non-gating derived search index. Neither matches the durable/gating/joinable shape the story's own Approach text requires. This is a deliberate exclusion argued in the spec, not an oversight -- logged here for the same future-traceability reason DW-24/DW-25 already got entries, since the diff itself never named it. What would settle it: a future story that decides whether either of these deserves its own distinct, lower-severity journal event type (e.g. `memory.staged`/`memory.lesson_published`) once there is a concrete reader that needs it.
+status: open

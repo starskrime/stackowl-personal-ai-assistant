@@ -51,6 +51,17 @@ def test_scheduled_skill_synthesizer_identity_is_auto_trusted() -> None:
     assert _CONSENT_TOOL_NAME_LIVE not in tiers
 
 
+def test_db_pool_is_threaded_into_the_policy() -> None:
+    """Story 2.8 -- the seam's whole point for `db_pool`: if `build()` ever
+    stopped passing `db_pool=db_pool` into `ConsentPolicy(...)`, every
+    production consent decision would silently stop being journaled with a
+    fully green suite everywhere else (the `None` default degrades to a
+    silent no-op, never an error). This is the one test that would catch it."""
+    dummy_db_pool = MagicMock()
+    components = ConsentAssembly.build(MagicMock(), dummy_db_pool)
+    assert components.consent_gate.policy.db_pool is dummy_db_pool
+
+
 def test_scheduled_failure_outcome_miner_identity_is_auto_trusted() -> None:
     """Whole-branch review finding (same user decision as Task 4): the
     FailureOutcomeMiner is ALSO genuinely unattended (only ever invoked from

@@ -1122,6 +1122,15 @@ class StartupOrchestrator:
         register_job_name_resolver(db_pool)
         register_subsystem_name_resolver()
 
+        # Story 2.8 -- wire the module-global DbPool every `CuratedMemory`
+        # instance journals writes through (mirrors `providers/registry.py`'s
+        # own `set_db_pool` seam). Early, alongside the other db_pool-
+        # dependent wiring above, so the FIRST curated write of this boot is
+        # already journaled.
+        from stackowl.memory.curated import set_db_pool as set_curated_memory_db_pool
+
+        set_curated_memory_db_pool(db_pool)
+
         # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
         # "everything in md or sqlite. No data duplication."
         #
@@ -1582,7 +1591,7 @@ class StartupOrchestrator:
         # monolith so the consent boundary has a unit-testable assembly.
         from stackowl.tools.consent_assembly import ConsentAssembly
 
-        consent_components = ConsentAssembly.build(audit_logger)
+        consent_components = ConsentAssembly.build(audit_logger, db_pool)
         consent_routing = consent_components.routing_prompter
         consent_gate = consent_components.consent_gate
 
