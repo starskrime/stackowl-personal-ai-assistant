@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from stackowl.infra.observability import log
 from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 from stackowl.journal.records import (
@@ -184,8 +185,16 @@ async def read_task_record(
     refuse_unless_owner(RecordKind.TASK, owner_id)
     row = None
     if db_pool is not None:
+        task_id = locator.get("task_id", "")
+        if not task_id:
+            log.journal.debug(
+                "[journal] read_task_record: locator was missing its "
+                "task_id -- looking up an empty-string row, "
+                "indistinguishable from a genuinely pruned one",
+                extra={"_fields": {"owner_id": owner_id}},
+            )
         rows = await db_pool.fetch_all(
-            _SELECT_TASK_SQL, (locator.get("task_id", ""), owner_id),
+            _SELECT_TASK_SQL, (task_id, owner_id),
         )
         if rows:
             row = TaskRecordView.model_validate(dict(rows[0]))

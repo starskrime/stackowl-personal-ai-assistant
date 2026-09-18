@@ -208,6 +208,13 @@ async def read_sqlite_record(
     """
     if db_pool is None:
         return None
+    if not id_value:
+        log.journal.debug(
+            "[journal] read_sqlite_record: locator was missing its id "
+            "value -- looking up an empty-string row, indistinguishable "
+            "from a genuinely pruned one",
+            extra={"_fields": {"table": table, "id_column": id_column}},
+        )
     rows = await db_pool.fetch_all(
         f"SELECT * FROM {table} WHERE {id_column} = ?",  # noqa: S608 -- caller-constant table/column, never request input
         (id_value,),

@@ -141,6 +141,13 @@ UNJOURNALED_TABLES: dict[str, str] = {
     "task_outcomes": _REASON_PRE_EPOCH,
     "thread_registry": _REASON_PRE_EPOCH,
     "tool_heuristics": _REASON_PRE_EPOCH,
+    # DW-20: a pre-existing, unrelated table (migration 0071) actively read
+    # by `pipeline/decision_store.py::TurnDecisionStore` for the ADR-7
+    # `/explain` surface -- a completely different schema from the
+    # registry-covered `turn_action_records` (Story 2.7, `turn_events.py`),
+    # which spec-2-7's own Code Map originally, and mistakenly, also called
+    # `turn_decisions` before DW-20's rename. Distinct from that near-name
+    # collision.
     "turn_decisions": _REASON_PRE_EPOCH,
     "undelivered_outbox": _REASON_PRE_EPOCH,
     "user_preferences": _REASON_PRE_EPOCH,

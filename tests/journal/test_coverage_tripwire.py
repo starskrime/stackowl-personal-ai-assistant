@@ -80,6 +80,30 @@ def test_no_table_is_both_covered_and_excused() -> None:
 
 
 @pytest.mark.tripwire
+def test_no_excused_table_is_stale(tmp_path) -> None:  # noqa: ANN001
+    """The other direction ``test_no_table_is_both_covered_and_excused``
+    above does not check: every ``UNJOURNALED_TABLES`` entry must still name
+    a table the live, freshly-migrated schema actually has -- a table a
+    later migration drops would otherwise leave a permanently stale excuse
+    with nothing to catch it. The exact "both directions matter" pattern
+    ``health/store_cadence.py``'s own test (this module's cited design
+    precedent) enforces for its own declarations."""
+    from tests._schema_template import seed_schema
+
+    path = tmp_path / "schema.db"
+    seed_schema(path)
+    live_tables = _schema_tables(path)
+
+    stale = UNJOURNALED_TABLES.keys() - live_tables
+
+    assert stale == set(), (
+        "these UNJOURNALED_TABLES entries name a table the live schema no "
+        "longer has -- delete the stale excuse from journal/coverage.py:\n  "
+        + "\n  ".join(sorted(stale))
+    )
+
+
+@pytest.mark.tripwire
 def test_an_injected_uncovered_table_is_named_in_the_gap(tmp_path) -> None:  # noqa: ANN001
     """THE CONTROL (AC4): a migration adding a table with no registration and
     no excuse must make the tripwire fail, and name exactly that table --

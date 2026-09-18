@@ -208,8 +208,31 @@ class EventRegistry:
             "[journal] EventRegistry.register_upcaster: entry",
             extra={"_fields": {"type": type_name, "version": version}},
         )
+        # 2. DECISION -- model must actually be a JournalAttrsBase subclass,
+        # the same cross-field invariant EventTypeSpec.__post_init__ enforces
+        # for attrs_model at construction (AD-3: attrs are always this shape).
+        if not (isinstance(model, builtins.type) and issubclass(model, JournalAttrsBase)):
+            log.journal.error(
+                "[journal] EventRegistry.register_upcaster: refused -- "
+                "model is not a JournalAttrsBase subclass",
+                extra={"_fields": {"type": type_name, "version": version}},
+            )
+            raise ValueError(
+                f"journal event type {type_name!r}: register_upcaster() "
+                f"model must be a JournalAttrsBase subclass, got {model!r}"
+            )
+        if version < 1:
+            log.journal.error(
+                "[journal] EventRegistry.register_upcaster: refused -- "
+                "version is below 1",
+                extra={"_fields": {"type": type_name, "version": version}},
+            )
+            raise ValueError(
+                f"journal event type {type_name!r}: version {version} is "
+                "not a valid schema_version -- versions start at 1"
+            )
         with self._lock:
-            # 2. DECISION -- the type must already be registered.
+            # 3. DECISION -- the type must already be registered.
             spec = self._specs.get(type_name)
             if spec is None:
                 log.journal.error(
@@ -221,7 +244,7 @@ class EventRegistry:
                     f"journal event type {type_name!r} is not registered -- "
                     "register() it before declaring an older kept version for it"
                 )
-            # 3. STEP -- version must be strictly older than current.
+            # 4. STEP -- version must be strictly older than current.
             if version >= spec.schema_version:
                 log.journal.error(
                     "[journal] EventRegistry.register_upcaster: refused -- "
@@ -249,7 +272,7 @@ class EventRegistry:
                     "already registered -- one declaration per kept version"
                 )
             kept[version] = VersionEntry(model=model, upcaster=upcaster)
-        # 4. EXIT
+        # 5. EXIT
         log.journal.info(
             "[journal] EventRegistry.register_upcaster: exit -- registered",
             extra={"_fields": {"type": type_name, "version": version}},

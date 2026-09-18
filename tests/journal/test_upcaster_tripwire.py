@@ -18,10 +18,18 @@ from pydantic import Field
 
 # Importing `stackowl.journal` registers every real `*_events.py` type as a
 # side effect, so `get_registry()` below reflects the real, live registry.
-from stackowl.journal import get_registry
+from stackowl.journal import (
+    ActorKind,
+    JournalEvent,
+    Outcome,
+    RecordRef,
+    get_registry,
+    record,
+)
 from stackowl.journal.enums import AttentionClass, RecordKind
 from stackowl.journal.models import JournalAttrsBase
 from stackowl.journal.registry import EventRegistry, EventTypeSpec, VersionEntry
+from stackowl.journal.task_events import TaskEnqueuedAttrs
 
 pytestmark = pytest.mark.tripwire
 
@@ -72,6 +80,54 @@ class TestRealRegistryEveryTypeIsVOnly:
         }
 
         missing = _missing_versions(registry, live_versions_by_type)
+
+        assert missing == []
+
+
+class TestRealDataQueriedFromJournalEvents:
+    """The other real-data half AC2 literally names: "the version ... checked
+    against ``MIN(cursor)``" must come from an actual ``SELECT type,
+    schema_version, MIN(cursor) FROM journal_events GROUP BY type,
+    schema_version`` query against real rows -- not a dict built from the
+    registry's own current ``schema_version`` (that construction can only
+    ever agree with itself; see ``TestRealRegistryEveryTypeIsVOnly`` above,
+    which is the by-construction half AC2 is not about). Additive only: the
+    synthetic/control tests elsewhere in this module are unchanged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_versions_live_in_journal_events_are_all_registered(
+        self, tmp_db,  # noqa: ANN001
+    ) -> None:
+        async with tmp_db.transaction() as conn:
+            for target_id in ("real-data-1", "real-data-2"):
+                await record(conn, JournalEvent(
+                    type="task.enqueued",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id="principal-default",
+                    target_kind=ActorKind.OWNER,
+                    target_id=target_id,
+                    outcome=Outcome.PENDING,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": "tasks", "task_id": target_id},
+                    ),
+                    attrs=TaskEnqueuedAttrs(
+                        trigger_kind="chat", depends_on_count=0, max_attempts=30,
+                    ),
+                ))
+
+        rows = await tmp_db.fetch_all(
+            "SELECT type, schema_version, MIN(cursor) AS min_cursor "
+            "FROM journal_events GROUP BY type, schema_version"
+        )
+        live_versions_by_type: dict[str, set[int]] = {}
+        for row in rows:
+            live_versions_by_type.setdefault(row["type"], set()).add(row["schema_version"])
+        # The real rows just recorded are actually in the real query's result.
+        assert live_versions_by_type["task.enqueued"] == {1}
+
+        missing = _missing_versions(get_registry(), live_versions_by_type)
 
         assert missing == []
 
@@ -132,6 +188,20 @@ class TestRegisterUpcasterValidation:
         registry = EventRegistry()
         with pytest.raises(ValueError, match="not registered"):
             registry.register_upcaster("no.such.type", 1, _FakeAttrsV1, None)
+
+    def test_a_model_that_is_not_a_journal_attrs_base_subclass_is_refused(self) -> None:
+        registry = self._registry_with_fake_v2()
+
+        class _NotAJournalAttrsModel:
+            pass
+
+        with pytest.raises(ValueError, match="JournalAttrsBase subclass"):
+            registry.register_upcaster("fake.type", 1, _NotAJournalAttrsModel, None)  # type: ignore[arg-type]
+
+    def test_a_version_below_one_is_refused(self) -> None:
+        registry = self._registry_with_fake_v2()
+        with pytest.raises(ValueError, match="not a valid schema_version"):
+            registry.register_upcaster("fake.type", 0, _FakeAttrsV1, None)
 
     def test_a_version_not_older_than_current_is_refused(self) -> None:
         registry = self._registry_with_fake_v2()
