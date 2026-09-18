@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+from stackowl.infra.observability import log
 from stackowl.ipc.codec import FrameDecodeError, decode_frame, encode_frame
 from stackowl.ipc.frames import Frame
 
@@ -56,8 +57,16 @@ class FrameConnection:
         while True:
             try:
                 frame = await self.recv()
-            except FrameDecodeError:
-                # Skip a single corrupt line rather than killing the stream.
+            except FrameDecodeError as exc:
+                # Spec 2.3 — a corrupt/unknown-type line is skipped (never kills
+                # the stream) but is never SILENT either: an unknown frame type
+                # or a half-upgraded install now says so, naming the type
+                # best-effort-extracted from the line (None when the line isn't
+                # even valid JSON).
+                log.ipc.warning(
+                    "[ipc] frame connection: undecodable line — skipping",
+                    extra={"_fields": {"frame_type": exc.frame_type, "error": str(exc)}},
+                )
                 continue
             if frame is None:
                 return

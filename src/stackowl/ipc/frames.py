@@ -5,10 +5,10 @@ The set mirrors the existing in-process seams so the live-path code (``backend.r
 writing chunks, the receive loops dispatching ``IngressMessage``) maps onto frames
 with no semantic change:
 
-  gateway -> core : ingress, steer, stop, clarify_reply, query_running
+  gateway -> core : ingress, clarify_reply
   core -> gateway : chunk, send_text, progress_event, clarify_ask,
-                    running_state, hello, restart_notice, goodbye
-  either way      : ack
+                    restart_notice, goodbye
+  either way      : hello, ack
 
 Frames carry only JSON-serialisable scalars (mirroring ``IngressMessage`` /
 ``ResponseChunk``, which already hold no callables or asyncio objects), so a
@@ -24,6 +24,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.commands.response import Action
 
+#: Spec 2.3 — bumped from 1. Both sides refuse to talk when their Hello's
+#: ``protocol_version`` disagrees (``runtime.hello.evaluate_hello``); this is the
+#: ONE place that number is declared, so a future wire-shape change need only
+#: change this constant.
+PROTOCOL_VERSION = 2
+
 
 class _Frame(BaseModel):
     """Base for all wire frames — frozen, reject unknown keys."""
@@ -32,11 +38,20 @@ class _Frame(BaseModel):
 
 
 class HelloFrame(_Frame):
-    """Core -> gateway on (re)connect: announces a fresh core is ready."""
+    """Either direction, on (re)connect: announces a fresh peer is ready.
+
+    Spec 2.3 — travels BOTH ways (gateway sends on accept, core sends after its
+    DB pool opens), not core-only as before. Carries everything
+    ``runtime.hello.evaluate_hello`` needs to refuse a half-upgraded link:
+    ``protocol_version``, the highest applied migration number, and a digest of
+    the registered journal event types (+ the attention-policy version).
+    """
 
     type: Literal["hello"] = "hello"
-    core_pid: int
-    protocol_version: int = 1
+    sender_pid: int
+    protocol_version: int = PROTOCOL_VERSION
+    highest_migration: int
+    registry_digest: str
 
 
 class GoodbyeFrame(_Frame):
@@ -92,38 +107,6 @@ class ChunkFrame(_Frame):
     actions: tuple[Action, ...] = ()
     raw_keyboard: dict[str, object] | None = None
     display_suffix: str | None = None
-
-
-class SteerFrame(_Frame):
-    """Gateway -> core: fold a mid-turn steering message into a running turn."""
-
-    type: Literal["steer"] = "steer"
-    request_id: str
-    text: str
-
-
-class StopFrame(_Frame):
-    """Gateway -> core: request cooperative stop of a running turn."""
-
-    type: Literal["stop"] = "stop"
-    request_id: str
-
-
-class QueryRunningFrame(_Frame):
-    """Gateway -> core: is a turn running for this session? (authoritative check)."""
-
-    type: Literal["query_running"] = "query_running"
-    session_key: str
-    query_id: str
-
-
-class RunningStateFrame(_Frame):
-    """Core -> gateway: answer to a QueryRunningFrame."""
-
-    type: Literal["running_state"] = "running_state"
-    query_id: str
-    running: bool
-    request_id: str | None = None
 
 
 class SendTextFrame(_Frame):
@@ -269,10 +252,6 @@ Frame = Annotated[
     | RestartNoticeFrame
     | IngressFrame
     | ChunkFrame
-    | SteerFrame
-    | StopFrame
-    | QueryRunningFrame
-    | RunningStateFrame
     | SendTextFrame
     | SendFileFrame
     | SendEphemeralFrame

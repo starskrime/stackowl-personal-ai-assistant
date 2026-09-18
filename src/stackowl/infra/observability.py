@@ -459,6 +459,7 @@ class _Loggers:
     tasks = logging.getLogger("stackowl.tasks")
     owls = logging.getLogger("stackowl.owls")
     journal = logging.getLogger("stackowl.journal")
+    ipc = logging.getLogger("stackowl.ipc")
 
 
 log = _Loggers()
