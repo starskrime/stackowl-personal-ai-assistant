@@ -6,7 +6,7 @@ writing chunks, the receive loops dispatching ``IngressMessage``) maps onto fram
 with no semantic change:
 
   gateway -> core : ingress, clarify_reply
-  core -> gateway : chunk, send_text, progress_event, clarify_ask,
+  core -> gateway : chunk, send_text, journal_event, clarify_ask,
                     restart_notice, goodbye
   either way      : hello, ack
 
@@ -24,12 +24,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.commands.response import Action
 
-#: Spec 2.4 — bumped from 2 (Spec 2.3's own precedent: any HelloFrame shape
-#: change bumps this). Both sides refuse to talk when their Hello's
+#: Spec 2.5 — bumped from 3 (Spec 2.3/2.4's own precedent: any frame-shape
+#: change bumps this). ``ProgressEventFrame`` is deleted and ``JournalEventFrame``
+#: takes its place on the union. Both sides refuse to talk when their Hello's
 #: ``protocol_version`` disagrees (``runtime.hello.evaluate_hello``); this is the
 #: ONE place that number is declared, so a future wire-shape change need only
 #: change this constant.
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 
 class _Frame(BaseModel):
@@ -181,16 +182,44 @@ class DeleteMessageFrame(_Frame):
     message_id: int
 
 
-class ProgressEventFrame(_Frame):
-    """Core -> gateway: a UI progress event (e.g. pipeline_step_changed) as a dict.
+class JournalEventFrame(_Frame):
+    """Core -> gateway: one committed journal row, pushed after commit (Spec 2.5).
 
-    The payload is the same dict the in-process EventBus carries to the TUI
-    coordinator; the gateway re-emits it on its local bus for rendering.
+    Replaces the dead ``ProgressEventFrame`` (nothing ever constructed one —
+    Spec 2.5's Intent). Carries the full row rather than a bare cursor
+    watermark (Design Notes: AC1 reads "core pushes THE EVENT", and carrying
+    the row avoids a second DB round-trip on the gateway's hot/live path —
+    only the catch-up path re-reads via ``journal.fanout.read_since``).
+
+    The gateway reconstructs the typed ``attrs`` model via
+    ``get_registry().get(frame.event_type).attrs_model.model_validate(frame.attrs)``
+    before calling ``journal.narrate()`` — safe ONLY because Story 2.3's Hello
+    registry-digest check already guarantees gateway and core share one
+    identical registry (Boundaries & Constraints).
     """
 
-    type: Literal["progress_event"] = "progress_event"
-    event: str
-    payload: dict[str, object] = Field(default_factory=dict)
+    type: Literal["journal_event"] = "journal_event"
+    cursor: int
+    event_id: str
+    event_type: str
+    schema_version: int
+    occurred_at: str
+    actor_kind: str
+    actor_id: str
+    device_id: str | None = None
+    target_kind: str
+    target_id: str
+    outcome: str
+    attention: str | None = None
+    intensity: str | None = None
+    record_ref: dict[str, object] | None = None
+    # Review fix — every sibling field on this frame is required; `attrs` had
+    # been the one exception with a default, so a future core-side caller
+    # that forgets `attrs=` would fail LATE at the gateway's
+    # `model_validate({})` call instead of failing FAST at construction here.
+    attrs: dict[str, object]
+    trace_id: str | None = None
+    duration_ms: int | None = None
 
 
 class ClarifyAskFrame(_Frame):
@@ -269,7 +298,7 @@ Frame = Annotated[
     | SendEphemeralFrame
     | EphemeralSentFrame
     | DeleteMessageFrame
-    | ProgressEventFrame
+    | JournalEventFrame
     | ClarifyAskFrame
     | ClarifyReplyFrame
     | ConsentRequestFrame

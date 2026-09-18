@@ -28,6 +28,14 @@ from stackowl.journal import task_events as _task_events  # noqa: F401 -- regist
 from stackowl.journal.attention import ATTENTION_POLICY_VERSION, classify
 from stackowl.journal.digest import compute_registry_digest
 from stackowl.journal.enums import ActorKind, AttentionClass, Intensity, Outcome, RecordKind
+from stackowl.journal.fanout import (
+    JournalRow,
+    RowFetcher,
+    current_max_cursor,
+    notify_committed,
+    read_since,
+    wait_for_commit,
+)
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
 from stackowl.journal.narrator import (
@@ -53,23 +61,29 @@ __all__ = [
     "Intensity",
     "JournalAttrsBase",
     "JournalEvent",
+    "JournalRow",
     "NameResolver",
     "NarrationResult",
     "Outcome",
     "RecordKind",
     "RecordRef",
+    "RowFetcher",
     "classify",
     "compute_registry_digest",
+    "current_max_cursor",
     "get_registry",
     "narrate",
     "narrate_full",
     "narrate_public",
     "new_event_id",
+    "notify_committed",
     "pause_writes",
+    "read_since",
     "record",
     "register_name_resolver",
     "reset_name_resolvers_for_tests",
     "reset_write_gate_for_tests",
     "resume_writes",
+    "wait_for_commit",
     "writes_paused",
 ]

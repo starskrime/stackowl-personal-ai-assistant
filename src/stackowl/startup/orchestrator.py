@@ -139,6 +139,14 @@ def _log_pipeline_crash(task: asyncio.Task) -> None:  # type: ignore[type-arg]
 # (providers/memory/skills/MCP/browser) before it connects.
 _CORE_BOOT_TIMEOUT_S = 120.0
 
+#: Spec 2.5 review fix — the page size `_journal_push_loop` requests per
+#: `read_since` call. Explicit (not just inherited from `read_since`'s own
+#: default) so the loop's drain-every-page logic knows exactly what "a full
+#: page" means: it keeps reading while a page comes back exactly this size,
+#: and stops once one comes back smaller — so a gap wider than one page (a
+#: real outage, not just a single commit) is never left under-delivered.
+_JOURNAL_PUSH_PAGE_LIMIT = 200
+
 #: How often the gateway asks whether the core is still turning. Well under the stall
 #: budget, which is measured in tens of minutes — this only bounds how late a verdict
 #: is, never how patient it is.
@@ -961,10 +969,12 @@ class StartupOrchestrator:
             EphemeralSentFrame,
             HelloFrame,
             IngressFrame,
+            JournalEventFrame,
             RestartNoticeFrame,
         )
         from stackowl.ipc.server import IpcServer
         from stackowl.ipc.stream_bridge import SocketStreamRegistry
+        from stackowl.journal import fanout as journal_fanout
         from stackowl.owls.registry import OwlRegistry
         from stackowl.parliament.convergence import ConvergenceDetector
         from stackowl.parliament.orchestrator import ParliamentOrchestrator
@@ -3438,8 +3448,17 @@ class StartupOrchestrator:
                 event_bus=event_bus,
                 consent_router=consent_routing,
                 link_secret=link_secret,
+                # Spec 2.5 — the gateway's own DbPool, so a Hello (re)connect
+                # can run a bounded catch-up `read_since` from the gateway's
+                # last delivered cursor (AC3).
+                journal_fetcher=db_pool,
             )
             turn_client = gateway_link
+            # Spec 2.5 — the gateway's own watermark starts at the CURRENT high
+            # cursor at boot (own process start), never floods a fresh
+            # connection with full history (Boundaries & Constraints) — mirrors
+            # the core push loop's own boot-time initialization below.
+            gateway_link.set_initial_cursor(await journal_fanout.current_max_cursor(db_pool))
 
             async def _accept_core(conn: FrameConnection) -> None:
                 # One call per accepted core connection. The FIRST establishes the
@@ -3724,6 +3743,98 @@ class StartupOrchestrator:
                 raise
             finally:
                 log.info("[startup] core: frame loop ended (gateway disconnected)")
+
+        # Review fix — persisted OUTSIDE `_journal_push_loop` (nonlocal, not a
+        # local variable) so a Supervisor-driven restart of the loop (a
+        # transient failure, e.g. `OperationalError("database is locked")`)
+        # resumes from where it left off instead of re-initializing to
+        # `current_max_cursor` and silently skipping every row committed
+        # between the crash and the restart. `None` means "never initialized
+        # yet" (first-ever start); every value after that is a real cursor.
+        _journal_push_cursor: int | None = None
+
+        async def _journal_push_loop() -> None:
+            """CORE-role sibling of ``_core_frame_loop``: push every committed
+            journal row to the gateway, in cursor order, as a
+            ``JournalEventFrame`` (Spec 2.5 — split-mode TUI progress, from
+            the journal).
+
+            Woken ONLY by ``journal.fanout.wait_for_commit()`` (never a
+            timer — Boundaries & Constraints: "Do not poll"). Reads its own
+            new rows via a bounded ``fetch_all`` (``journal.fanout.read_since``)
+            with no held-open transaction (AD-38); by construction a row only
+            ever exists here once its transaction committed (AD-24), so a
+            rolled-back event is never read, let alone pushed. Drains every
+            available page (not just the first) before going back to sleep,
+            so a gap wider than one page — a real outage, not just one
+            commit — is never left under-delivered (AC3). Supervised via
+            `_supervise_channel` (registered below, alongside the
+            channel-receive loops) rather than a bare task: an exception
+            escaping this loop's body is caught by the Supervisor's own
+            backoff-restart, never left to kill it silently and permanently.
+            """
+            # 1. ENTRY
+            nonlocal _journal_push_cursor
+            assert core_conn is not None
+            if _journal_push_cursor is None:
+                _journal_push_cursor = await journal_fanout.current_max_cursor(db_pool)
+            log.info(
+                "[startup] core: journal push loop started",
+                extra={"_fields": {"from_cursor": _journal_push_cursor}},
+            )
+            try:
+                while True:
+                    # 2. DECISION — block until woken by a real commit, never a timer.
+                    await journal_fanout.wait_for_commit()
+                    # 3. STEP — drain every full page before sleeping again.
+                    while True:
+                        rows = await journal_fanout.read_since(
+                            db_pool, _journal_push_cursor, limit=_JOURNAL_PUSH_PAGE_LIMIT,
+                        )
+                        if not rows:
+                            break
+                        for row in rows:
+                            try:
+                                await core_conn.send(JournalEventFrame(
+                                    cursor=row.cursor,
+                                    event_id=row.event_id,
+                                    event_type=row.type,
+                                    schema_version=row.schema_version,
+                                    occurred_at=row.occurred_at,
+                                    actor_kind=row.actor_kind,
+                                    actor_id=row.actor_id,
+                                    device_id=row.device_id,
+                                    target_kind=row.target_kind,
+                                    target_id=row.target_id,
+                                    outcome=row.outcome,
+                                    attention=row.attention,
+                                    intensity=row.intensity,
+                                    record_ref=row.record_ref,
+                                    attrs=row.attrs,
+                                    trace_id=row.trace_id,
+                                    duration_ms=row.duration_ms,
+                                ))
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — one bad send must not wedge the rest
+                                log.error(
+                                    "[startup] core: journal push failed for one row — "
+                                    "continuing (the gateway's own catch-up on the next "
+                                    "Hello recovers it)",
+                                    exc_info=exc,
+                                    extra={"_fields": {"cursor": row.cursor}},
+                                )
+                            # Advance regardless of send success: a lost live push
+                            # self-heals on the gateway's next reconnect catch-up
+                            # (Boundaries & Constraints) — this loop must never
+                            # re-send the same row forever on a persistent failure.
+                            _journal_push_cursor = row.cursor
+                        if len(rows) < _JOURNAL_PUSH_PAGE_LIMIT:
+                            break
+            except asyncio.CancelledError:
+                # 4. EXIT (cancellation path)
+                log.info("[startup] core: journal push loop cancelled")
+                raise
 
         # 3. STEP — start Telegram adapter if configured
         from stackowl.config.secret_resolver import SecretResolver
@@ -4527,6 +4638,20 @@ class StartupOrchestrator:
         else:
             log.info("[startup] gateway: WhatsApp not enabled — skipping")
 
+        # Spec 2.5 — CORE-role only: push every committed journal row to the
+        # gateway as it happens. mono/gateway never construct this (mono has
+        # no split link to push over; the gateway is the RECEIVING side).
+        # Review fix — wired through the SAME Supervisor/make_supervised_task
+        # mechanism as the four channel-receive loops just above (backoff
+        # restart, a consecutive-failure ceiling, a stuck-task watchdog) rather
+        # than a bare `asyncio.create_task`: an unhandled exception escaping
+        # this loop (e.g. a transient `OperationalError("database is locked")`)
+        # would otherwise kill it silently and permanently — the exact failure
+        # shape the comment above this method's sibling loops already measured
+        # and fixed for Telegram/Slack/Discord/WhatsApp.
+        if self._role == "core":
+            _supervise_channel("journal_push", _journal_push_loop)
+
         # Start every supervised channel loop. After registration so a channel
         # configured later in this function is included.
         for _sup in channel_supervisors:
@@ -5175,6 +5300,12 @@ class StartupOrchestrator:
             if _gw_proc is not None and _gw_proc.returncode is None:
                 with contextlib.suppress(Exception):
                     _gw_proc.terminate()
+            # Spec 2.5 — CORE-role journal push loop: now supervised alongside
+            # the channel-receive loops (registered via `_supervise_channel`
+            # above) and already stopped by the `channel_supervisors` loop
+            # earlier in this block, BEFORE core_conn closes below (it sends
+            # over that connection, so it must stop before the socket it
+            # writes to does) — no separate teardown needed here.
             # CORE's connection to the gateway (None in mono/gateway).
             if core_conn is not None:
                 with contextlib.suppress(Exception):

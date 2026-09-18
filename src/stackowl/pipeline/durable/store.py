@@ -27,6 +27,7 @@ from stackowl.journal import (
     Outcome,
     RecordRef,
 )
+from stackowl.journal import fanout as journal_fanout
 from stackowl.journal import record as journal_record
 from stackowl.journal.task_events import (
     TaskClaimedAttrs,
@@ -1276,6 +1277,10 @@ class DurableTaskStore(OwnedRepository):
                     max_attempts=int(task.max_attempts),
                 ),
             ))
+        # Spec 2.5 — wake the core push loop AFTER the transaction above
+        # committed (never inside it): the row is only visible to a fan-out
+        # reader once committed, so this call is the earliest safe point.
+        journal_fanout.notify_committed()
         # 4. EXIT
         log.tasks.info(
             "[loop] task enqueued",
@@ -1376,6 +1381,8 @@ class DurableTaskStore(OwnedRepository):
                             dependency_ids=",".join(failed_deps),
                         ),
                     ))
+            # Spec 2.5 — wake the core push loop after commit (see `create()`).
+            journal_fanout.notify_committed()
             log.tasks.warning(
                 "[loop] task dead-lettered — a dependency failed permanently",
                 extra={"_fields": {"task_id": task_id, "depends_on": list(deps)}},
@@ -1425,6 +1432,8 @@ class DurableTaskStore(OwnedRepository):
                         lease_owner=worker, lease_seconds=int(lease_seconds),
                     ),
                 ))
+        # Spec 2.5 — wake the core push loop after commit (see `create()`).
+        journal_fanout.notify_committed()
         log.tasks.info(
             "[loop] claim",
             extra={"_fields": {"task_id": task_id, "worker": worker, "won": won}},
@@ -1964,6 +1973,8 @@ class DurableTaskStore(OwnedRepository):
                             dependency_ids=None,
                         ),
                     ))
+            # Spec 2.5 — wake the core push loop after commit (see `create()`).
+            journal_fanout.notify_committed()
             log.tasks.error(
                 "[loop] task DEAD-LETTERED — it will not be retried",
                 extra={"_fields": {"task_id": task_id, "attempts": attempts,
@@ -2104,6 +2115,8 @@ class DurableTaskStore(OwnedRepository):
                     ),
                     attrs=TaskFinishedAttrs(completion_mode="delivered"),
                 ))
+        # Spec 2.5 — wake the core push loop after commit (see `create()`).
+        journal_fanout.notify_committed()
         if not affected:
             # Never raises: the answer HAS reached the user by the time this runs, and
             # a bookkeeping failure must not cost a delivered turn. But it is an ERROR,
@@ -2162,6 +2175,8 @@ class DurableTaskStore(OwnedRepository):
                     ),
                     attrs=TaskFinishedAttrs(completion_mode="unaddressed"),
                 ))
+        # Spec 2.5 — wake the core push loop after commit (see `create()`).
+        journal_fanout.notify_committed()
         if not affected:
             # Same reasoning as mark_delivered: measure the effect, never trust
             # the call, and never raise into the loop over bookkeeping.

@@ -9,8 +9,10 @@ outbound frames back to the channel adapters:
 * ChunkFrame      -> StreamDemux (-> the turn's reader -> adapter.send)
 * SendTextFrame   -> adapter.send_text (proactive/out-of-band)
 * ClarifyAskFrame -> adapter clarify delivery
-* ProgressEventFrame -> the gateway EventBus (TUI render)
-* Hello           -> a (re)connected, ready core: flush any buffered submits
+* JournalEventFrame -> narrate + re-emit ``pipeline_step_changed`` on the
+  gateway EventBus (Spec 2.5 — split-mode TUI progress, from the journal)
+* Hello           -> a (re)connected, ready core: catch up the journal from
+  the last delivered cursor, THEN flush any buffered submits
 * RestartNotice   -> the core is about to exec-replace: start buffering
 * Goodbye         -> core lifecycle
 
@@ -43,14 +45,19 @@ from stackowl.ipc.frames import (
     EphemeralSentFrame,
     GoodbyeFrame,
     HelloFrame,
-    ProgressEventFrame,
+    JournalEventFrame,
     RestartNoticeFrame,
     SendEphemeralFrame,
     SendFileFrame,
     SendTextFrame,
 )
 from stackowl.ipc.stream_bridge import StreamDemux
+from stackowl.journal import fanout as journal_fanout
 from stackowl.journal import write_gate
+from stackowl.journal.enums import ActorKind, Outcome
+from stackowl.journal.models import JournalEvent, RecordRef
+from stackowl.journal.narrator import narrate
+from stackowl.journal.registry import get_registry
 from stackowl.runtime import link_auth, link_health
 from stackowl.runtime.hello import evaluate_hello
 from stackowl.runtime.message_bridge import ingress_to_frame
@@ -58,6 +65,7 @@ from stackowl.runtime.message_bridge import ingress_to_frame
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from collections.abc import AsyncIterator
 
+    from stackowl.journal.fanout import RowFetcher
     from stackowl.pipeline.streaming import ResponseChunk
     from stackowl.tools.consent import ConsentRequest, ConsentScope
 
@@ -102,6 +110,24 @@ _REPLAY_FAILURE_NOTICE = (
     "go through. Please send it again."
 )
 
+# Spec 2.5 — journal fan-out's ``pipeline_step_changed`` re-emission needs a
+# bounded "train" width for ``PipelineStrip`` (``tui/widgets/pipeline_strip.py``),
+# the same nominal value ``pipeline/progress/emitter.py``'s ``_NOMINAL_TOTAL_STEPS``
+# uses for the mono-mode path — duplicated here rather than imported, matching
+# this diff's own choice to duplicate the ``"pipeline_step_changed"`` event name
+# literal too, rather than adding a runtime/ -> pipeline/ cross-subsystem import
+# for two small UI constants.
+_NOMINAL_TOTAL_STEPS = 8
+
+# Review fix — the page size `_catch_up_journal` requests per `read_since`
+# call. Explicit (not just inherited from `read_since`'s own default) so the
+# catch-up loop's drain-every-page logic knows exactly what "a full page"
+# means: it keeps reading while a page comes back exactly this size, and
+# stops once one comes back smaller — so a gap wider than one page (a real
+# outage, not just a single reconnect racing one commit) is never left
+# under-delivered (AC3: "no loss ... across a real restart").
+_JOURNAL_CATCH_UP_PAGE_LIMIT = 200
+
 
 def _unify_gateway_enabled() -> bool:
     """ADR-2 flag read (``unify_gateway_recovery``). Fail-safe to True (the owner-approved
@@ -131,6 +157,7 @@ class GatewayLink:
         recovery: object | None = None,
         *,
         link_secret: str,
+        journal_fetcher: RowFetcher | None = None,
     ) -> None:
         # Spec 2.4 — this gateway boot's per-boot secret (runtime.link_auth),
         # verified against every connected core's real Hello in `_route`
@@ -176,6 +203,43 @@ class GatewayLink:
         # turn whose replay raises is re-queued and retried on the next Hello up
         # to ``_MAX_REPLAY_ATTEMPTS``; cleared on success or after surfacing.
         self._replay_attempts: dict[str, int] = {}
+        # Spec 2.5 — the ONLY de-dup authority for journal fan-out (Boundaries
+        # & Constraints): a pushed frame or a catch-up row whose cursor is
+        # <= this watermark is silently dropped; a higher one is delivered and
+        # advances it. Initializes to 0 (a fresh gateway boot's default: skip
+        # history, disclosed in Design Notes) and is re-based to
+        # ``current_max_cursor`` by the caller at boot in the real orchestrator
+        # wiring, mirroring the core push loop's own boot-time initialization.
+        self._last_delivered_cursor = 0
+        # Spec 2.5 — verification fix: the journal `cursor` is a GLOBAL,
+        # ever-growing counter across every table row, never a per-turn step
+        # count. Emitting it as BOTH `step_index` and `total_steps` (an
+        # earlier draft of this wiring) made ``PipelineStrip`` — which renders
+        # ``for i in range(total_steps): filled if i < step_index`` — always
+        # show every glyph filled on an unboundedly-growing strip (step_index
+        # == total_steps on every single delivery). A small local counter,
+        # wrapped at the SAME nominal width ``pipeline/progress/emitter.py``
+        # already uses for the mono-mode path, keeps the widget's bounded
+        # "train" contract instead.
+        self._progress_step_index = 0
+        # Spec 2.5 — the gateway's own DbPool, injected so ``_catch_up_journal``
+        # can run a bounded ``read_since`` on a Hello (re)connect. ``None`` in
+        # tests that never exercise catch-up (mirrors ``recovery``/``event_bus``'s
+        # own optional-injection shape above).
+        self._journal_fetcher = journal_fetcher
+
+    def set_initial_cursor(self, cursor: int) -> None:
+        """Seed the journal watermark at boot (own process start).
+
+        Called once by the real orchestrator wiring, right after construction
+        and before any Hello can arrive, with ``journal.fanout.current_max_cursor``
+        (Boundaries & Constraints: "Both loops' cursor watermark initializes to
+        ``SELECT MAX(cursor)`` at boot ... neither process ever floods a fresh
+        connection with full history"). The constructor itself still defaults
+        the watermark to 0 so a bare ``GatewayLink()`` in a unit test needs no
+        DB at all.
+        """
+        self._last_delivered_cursor = cursor
 
     def register_adapter(self, channel_name: str, adapter: _Adapter) -> None:
         """Add a channel adapter so its turns route over the split (gateway role).
@@ -489,9 +553,8 @@ class GatewayLink:
             if adapter is not None:
                 with contextlib.suppress(Exception):
                     await adapter.delete_message(frame.target, frame.message_id)
-        elif isinstance(frame, ProgressEventFrame):
-            if self._event_bus is not None:
-                self._event_bus.emit(frame.event, frame.payload)
+        elif isinstance(frame, JournalEventFrame):
+            await self._deliver_journal_event(frame)
         elif isinstance(frame, HelloFrame):
             # Spec 2.4 — the per-boot link secret is verified FIRST, before the
             # Spec 2.3 compatibility check below: a peer that already passed the
@@ -559,6 +622,30 @@ class GatewayLink:
                 return
             link_health.note_match()
             write_gate.resume_writes()
+            # Spec 2.5, AC3 — a core os.execv restart or a lost link never loses
+            # or duplicates a journal row: BEFORE anything else resumes, catch
+            # up every row committed during the gap from this gateway's own
+            # last delivered cursor. Runs before `_flush_pending` so a replayed
+            # turn's own progress events land in the right order relative to
+            # the catch-up rows already ahead of them.
+            #
+            # Review fix — a raise out of `_catch_up_journal` (a transient DB
+            # error, a poisoned row escaping its own inner guard) must NEVER
+            # propagate out of this `HelloFrame` branch: `run()`'s per-frame
+            # wrapper swallows any non-`LinkAuthenticationError` SILENTLY, which
+            # would skip `self._buffering = False` / `_flush_pending()` below and
+            # leave every buffered turn stuck with no user-visible error. Logged
+            # loudly here instead, and the reconnect still completes — a missed
+            # catch-up row still self-heals on the NEXT reconnect or live push.
+            try:
+                await self._catch_up_journal()
+            except Exception as exc:  # noqa: BLE001 — must never block the reconnect below
+                log.gateway.error(
+                    "[ipc] gateway link: journal catch-up failed — reconnect "
+                    "continues anyway (a missed row self-heals on the next "
+                    "reconnect or live push)",
+                    exc_info=exc,
+                )
             # A (re)connected core that has finished booting: it can receive now,
             # so stop buffering and flush anything queued during the gap.
             log.gateway.info(
@@ -577,6 +664,204 @@ class GatewayLink:
             self._buffering = True
         elif isinstance(frame, GoodbyeFrame):
             log.gateway.info("[ipc] gateway link: core said goodbye")
+
+    # --- Spec 2.5 — journal fan-out (split-mode TUI progress) --------------
+
+    async def _deliver_journal_event(self, frame: JournalEventFrame) -> None:
+        """One pushed ``JournalEventFrame`` on the LIVE path (after commit).
+
+        Dedup/ordering share :meth:`_deliver_journal_row` with the catch-up
+        path below — the ``last_delivered_cursor`` watermark is the ONE
+        authority (Boundaries & Constraints), so a live push racing a
+        reconnect catch-up read is absorbed the same way a genuine wire
+        duplicate is.
+        """
+        await self._deliver_journal_row(
+            cursor=frame.cursor,
+            event_id=frame.event_id,
+            event_type=frame.event_type,
+            schema_version=frame.schema_version,
+            occurred_at=frame.occurred_at,
+            actor_kind=frame.actor_kind,
+            actor_id=frame.actor_id,
+            device_id=frame.device_id,
+            target_kind=frame.target_kind,
+            target_id=frame.target_id,
+            outcome=frame.outcome,
+            attention=frame.attention,
+            intensity=frame.intensity,
+            record_ref=frame.record_ref,
+            attrs=frame.attrs,
+            trace_id=frame.trace_id,
+            duration_ms=frame.duration_ms,
+        )
+
+    async def _catch_up_journal(self) -> None:
+        """A (re)connected core's Hello: read every row committed during the
+        gap (core ``os.execv`` restart or a lost link) BEFORE live frame
+        delivery resumes (Spec 2.5, AC3).
+
+        ``self._journal_fetcher is None`` (no DbPool injected — e.g. most
+        unit tests) is a no-op: there is nothing to catch up FROM, and the
+        live push path alone still delivers everything from here on.
+
+        Review fix — drains EVERY page, not just the first: a single
+        ``read_since`` call is capped at ``_JOURNAL_CATCH_UP_PAGE_LIMIT``
+        rows, so a gap wider than that (a real outage, not a brief
+        disconnect) would otherwise be silently, permanently
+        under-delivered. Keeps reading while a page comes back full-size and
+        stops once one comes back smaller.
+        """
+        if self._journal_fetcher is None:
+            log.gateway.debug(
+                "[ipc] gateway link: journal catch-up skipped — no fetcher injected",
+            )
+            return
+        total_delivered = 0
+        while True:
+            rows = await journal_fanout.read_since(
+                self._journal_fetcher, self._last_delivered_cursor,
+                limit=_JOURNAL_CATCH_UP_PAGE_LIMIT,
+            )
+            if not rows:
+                break
+            for row in rows:
+                await self._deliver_journal_row(
+                    cursor=row.cursor,
+                    event_id=row.event_id,
+                    event_type=row.type,
+                    schema_version=row.schema_version,
+                    occurred_at=row.occurred_at,
+                    actor_kind=row.actor_kind,
+                    actor_id=row.actor_id,
+                    device_id=row.device_id,
+                    target_kind=row.target_kind,
+                    target_id=row.target_id,
+                    outcome=row.outcome,
+                    attention=row.attention,
+                    intensity=row.intensity,
+                    record_ref=row.record_ref,
+                    attrs=row.attrs,
+                    trace_id=row.trace_id,
+                    duration_ms=row.duration_ms,
+                )
+            total_delivered += len(rows)
+            if len(rows) < _JOURNAL_CATCH_UP_PAGE_LIMIT:
+                break
+        log.gateway.info(
+            "[ipc] gateway link: journal catch-up",
+            extra={"_fields": {"row_count": total_delivered}},
+        )
+
+    async def _deliver_journal_row(
+        self,
+        *,
+        cursor: int,
+        event_id: str,
+        event_type: str,
+        schema_version: int,
+        occurred_at: str,
+        actor_kind: str,
+        actor_id: str,
+        device_id: str | None,
+        target_kind: str,
+        target_id: str,
+        outcome: str,
+        attention: str | None,
+        intensity: str | None,
+        record_ref: dict[str, object] | None,
+        attrs: dict[str, object],
+        trace_id: str | None,
+        duration_ms: int | None,
+    ) -> None:
+        """Narrate one journal row and re-emit ``pipeline_step_changed`` —
+        shared by both the live push path and the reconnect catch-up path.
+
+        Dedup: the ``last_delivered_cursor`` watermark is the ONLY authority
+        (Boundaries & Constraints) — a ``cursor <= last_delivered_cursor`` is
+        silently dropped; a higher one is delivered and advances it.
+
+        The typed ``attrs`` model is reconstructed from the wire dict via the
+        registry BEFORE calling ``journal.narrate()`` — safe only because
+        Story 2.3's Hello registry-digest check already guarantees the
+        gateway and core share one identical registry (Design Notes).
+        """
+        # 1. ENTRY
+        log.gateway.debug(
+            "[ipc] gateway link: _deliver_journal_row: entry",
+            extra={"_fields": {
+                "cursor": cursor, "event_id": event_id, "event_type": event_type,
+            }},
+        )
+        # 2. DECISION — the watermark is the one de-dup authority.
+        if cursor <= self._last_delivered_cursor:
+            log.gateway.debug(
+                "[ipc] gateway link: journal row dropped — at or below watermark",
+                extra={"_fields": {
+                    "cursor": cursor, "event_id": event_id,
+                    "last_delivered_cursor": self._last_delivered_cursor,
+                }},
+            )
+            return
+        try:
+            spec = get_registry().get(event_type)
+            typed_attrs = spec.attrs_model.model_validate(attrs)
+            event = JournalEvent(
+                type=event_type,
+                schema_version=schema_version,
+                occurred_at=occurred_at,
+                actor_kind=ActorKind(actor_kind),
+                actor_id=actor_id,
+                device_id=device_id,
+                target_kind=ActorKind(target_kind),
+                target_id=target_id,
+                outcome=Outcome(outcome),
+                attention=attention,
+                intensity=intensity,
+                record_ref=RecordRef.model_validate(record_ref) if record_ref else None,
+                attrs=typed_attrs,
+                trace_id=trace_id,
+                duration_ms=duration_ms,
+            )
+            narration = await narrate(event)
+        except Exception as exc:
+            # Never expected in real wiring (the Hello registry-digest check
+            # guarantees a shared registry) — but a poisoned single row must
+            # not wedge fan-out forever behind it (AD-9: never block on a
+            # hole). Logged loudly, watermark still advances past it.
+            log.gateway.error(
+                "[ipc] gateway link: journal row could not be narrated — "
+                "skipped, watermark still advances",
+                exc_info=exc,
+                extra={"_fields": {
+                    "cursor": cursor, "event_id": event_id, "event_type": event_type,
+                }},
+            )
+            self._last_delivered_cursor = cursor
+            return
+        self._last_delivered_cursor = cursor
+        if self._event_bus is not None:
+            # `cursor` is a global, ever-growing counter — never a per-turn
+            # step count — so it must not be emitted as `step_index`/
+            # `total_steps` directly (see `__init__`'s comment on
+            # `_progress_step_index`). Wrap a small local counter at the same
+            # nominal width `pipeline/progress/emitter.py` uses for the
+            # mono-mode path, so `PipelineStrip`'s bounded "train" contract
+            # (`i < step_index` over `range(total_steps)`) still holds.
+            self._progress_step_index = (self._progress_step_index % _NOMINAL_TOTAL_STEPS) + 1
+            self._event_bus.emit(
+                "pipeline_step_changed",
+                {
+                    "step_name": narration.full,
+                    "step_index": self._progress_step_index,
+                    "total_steps": _NOMINAL_TOTAL_STEPS,
+                },
+            )
+        # 4. EXIT
+        log.gateway.debug(
+            "[ipc] gateway link: _deliver_journal_row: exit — delivered",
+            extra={"_fields": {"cursor": cursor, "event_id": event_id}},
+        )
 
     async def _deliver_clarify(self, frame: ClarifyAskFrame) -> None:
         # Route by the originating channel (falls back to the only adapter for the

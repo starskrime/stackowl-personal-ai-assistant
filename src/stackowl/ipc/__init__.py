@@ -24,7 +24,7 @@ from stackowl.ipc.frames import (
     GoodbyeFrame,
     HelloFrame,
     IngressFrame,
-    ProgressEventFrame,
+    JournalEventFrame,
     RestartNoticeFrame,
     SendTextFrame,
 )
@@ -51,7 +51,7 @@ __all__ = [
     "IngressFrame",
     "IpcClient",
     "IpcServer",
-    "ProgressEventFrame",
+    "JournalEventFrame",
     "RestartNoticeFrame",
     "SendTextFrame",
     "SocketStreamWriter",
