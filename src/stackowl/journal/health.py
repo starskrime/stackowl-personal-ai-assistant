@@ -23,11 +23,24 @@ class JournalHealthState:
     A success resets the streak -- this answers "is the journal failing RIGHT
     NOW", not "has it ever failed", matching D14.4's remedy contract: a
     ``remedy`` that is always populated is a field readers learn to skim.
+
+    Story 2.7 (AD-38) adds a SECOND, independent degrade signal alongside the
+    consecutive-failure streak: a per-turn write-budget overflow. The two
+    never interact -- a budget overflow is not a `record()` failure (the
+    event still gets recorded), and `note_success()` must not silently clear
+    it, or a healthy `record()` right after a runaway turn would mask the
+    warning ``JournalHealthContributor.health_check()`` is supposed to keep
+    surfacing until a human clears it via `reset_for_tests()`/a fresh boot.
     """
 
     consecutive_failures: int = 0
     last_remedy: str | None = None
     last_error: str | None = None
+    #: How many DISTINCT traces have crossed the write budget this process
+    #: lifetime -- a count, not a streak, since a budget overflow says
+    #: nothing about the NEXT turn the way a `record()` failure does.
+    budget_exceeded_count: int = 0
+    last_budget_trace_id: str | None = None
 
     def note_failure(self, remedy: str) -> None:
         self.consecutive_failures += 1
@@ -38,6 +51,10 @@ class JournalHealthState:
         self.consecutive_failures = 0
         self.last_remedy = None
         self.last_error = None
+
+    def note_budget_exceeded(self, trace_id: str) -> None:
+        self.budget_exceeded_count += 1
+        self.last_budget_trace_id = trace_id
 
 
 _state = JournalHealthState()
@@ -56,12 +73,25 @@ def note_success() -> None:
         _state.note_success()
 
 
+def note_budget_exceeded(trace_id: str) -> None:
+    """Record that ``trace_id`` crossed the per-turn write budget (AD-38).
+
+    Called only from ``turn_budget.py``. Independent of the consecutive-
+    failure streak above -- degrades health without implying ``record()``
+    itself is failing.
+    """
+    with _state_lock:
+        _state.note_budget_exceeded(trace_id)
+
+
 def _snapshot() -> JournalHealthState:
     with _state_lock:
         return JournalHealthState(
             consecutive_failures=_state.consecutive_failures,
             last_remedy=_state.last_remedy,
             last_error=_state.last_error,
+            budget_exceeded_count=_state.budget_exceeded_count,
+            last_budget_trace_id=_state.last_budget_trace_id,
         )
 
 
@@ -71,6 +101,8 @@ def reset_for_tests() -> None:
         _state.consecutive_failures = 0
         _state.last_remedy = None
         _state.last_error = None
+        _state.budget_exceeded_count = 0
+        _state.last_budget_trace_id = None
 
 
 class JournalHealthContributor:
@@ -82,6 +114,10 @@ class JournalHealthContributor:
 
     async def health_check(self) -> HealthStatus:
         snap = _snapshot()
+        # The consecutive-failure streak takes priority when both are set --
+        # a `record()` failure means events may be MISSING, a budget
+        # overflow means every event is still present (AD-38) with only a
+        # WARNING logged. The more serious signal wins the message.
         if snap.consecutive_failures > 0:
             return HealthStatus(
                 name=self.contributor_name,
@@ -91,6 +127,22 @@ class JournalHealthContributor:
                     f"time(s) in a row: {snap.last_error}"
                 ),
                 remedy=snap.last_remedy,
+                latency_ms=0.0,
+            )
+        if snap.budget_exceeded_count > 0:
+            return HealthStatus(
+                name=self.contributor_name,
+                status="degraded",
+                message=(
+                    f"the per-turn journal write budget has been exceeded "
+                    f"{snap.budget_exceeded_count} time(s) this process "
+                    f"lifetime, most recently on trace {snap.last_budget_trace_id!r} "
+                    "-- every event is still recorded (AD-38)"
+                ),
+                remedy=(
+                    "investigate the offending trace for a runaway tool/"
+                    "delegation loop; Story 2.12 sets the real budget"
+                ),
                 latency_ms=0.0,
             )
         return HealthStatus(

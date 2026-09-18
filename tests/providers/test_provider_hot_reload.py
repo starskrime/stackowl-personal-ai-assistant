@@ -161,6 +161,54 @@ def test_apply_settings_injects_cost_tracker_into_new_provider(_isolated_config:
     assert getattr(new_provider, "_cost_tracker", None) is tracker
 
 
+def test_apply_settings_injects_db_pool_into_new_provider(_isolated_config: Path) -> None:
+    """Mirrors test_apply_settings_injects_cost_tracker_into_new_provider: a
+    provider added AFTER the one set_db_pool() call (startup/orchestrator.py)
+    must still inherit it, else it silently never records model.called."""
+    cfg = _isolated_config
+    registry = ProviderRegistry.from_settings(_write_settings(cfg, _provider("a")))
+    pool = object()  # sentinel; identity-only check
+    registry.set_db_pool(pool)  # type: ignore[arg-type]
+
+    registry.apply_settings(_write_settings(cfg, _provider("a"), _provider("b")))
+
+    new_provider = registry._providers["b"]
+    assert getattr(new_provider, "_db_pool", None) is pool
+
+
+def test_register_mock_injects_previously_set_db_pool(_isolated_config: Path) -> None:
+    """A mock registered AFTER set_db_pool() was already called must still
+    inherit it (register_mock mirrors _build_into's injection)."""
+    from stackowl.providers.base import CompletionResult, ModelProvider
+
+    class _Mock(ModelProvider):
+        @property
+        def name(self) -> str:
+            return "mock"
+
+        @property
+        def protocol(self):  # noqa: ANN201
+            return "openai"
+
+        async def complete(self, messages, model, **kwargs):  # noqa: ANN001,ANN003,ANN201
+            return CompletionResult(
+                content="x", input_tokens=1, output_tokens=1,
+                model="m", provider_name=self.name, duration_ms=1.0,
+            )
+
+        def stream(self, messages, model, **kwargs):  # noqa: ANN001,ANN003,ANN201
+            raise NotImplementedError
+
+    registry = ProviderRegistry.from_settings(_write_settings(_isolated_config, _provider("a")))
+    pool = object()  # sentinel; identity-only check
+    registry.set_db_pool(pool)  # type: ignore[arg-type]
+
+    mock = _Mock()
+    registry.register_mock("m", mock)
+
+    assert getattr(mock, "_db_pool", None) is pool
+
+
 # ---------------------------------------------------------------------------
 # Part 1b — secret ROTATION (yaml ref unchanged, underlying secret changed)
 # ---------------------------------------------------------------------------

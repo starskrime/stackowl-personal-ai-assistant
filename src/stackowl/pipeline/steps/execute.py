@@ -43,6 +43,9 @@ from stackowl.interaction.reversibility_resolver import (
     ReversibilityResolver,
     reversibility_resolver_enabled,
 )
+from stackowl.journal import Outcome
+from stackowl.journal.enums import ToolCallErrorCode
+from stackowl.journal.turn_events import record_tool_call
 from stackowl.memory.provider_surface import (
     dispatch_provider_tool,
     provider_schemas,
@@ -2469,6 +2472,16 @@ async def _run_with_tools(
                     name=name, action_severity=t.manifest.action_severity, success=False,
                     effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
                 )
+                # Story 2.7 — a REAL dispatch that timed out is journaled
+                # (unlike the pre-execution refusals above `_guarded_dispatch`,
+                # which record nothing).
+                await record_tool_call(
+                    get_services().db_pool, tool_name=name,
+                    action_severity=t.manifest.action_severity,
+                    effect_class=t.manifest.effect_class,
+                    duration_ms=(time.monotonic() - _dispatch_t0) * 1000,
+                    outcome=Outcome.FAILED, error_code=ToolCallErrorCode.TIMEOUT.value,
+                )
                 # G1 — a timeout is zero-progress: advance the streak so a tool that
                 # keeps timing out gets bounced rather than spiralling the budget. A
                 # timeout is a TRANSIENT shape (a stronger tier / retry can self-heal it),
@@ -2497,6 +2510,25 @@ async def _run_with_tools(
                 verified=r.verified,
                 effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
                 error=r.error,
+            )
+            # Story 2.7 — the same REAL dispatch, journaled. `error_code` is
+            # derived from BRANCH SHAPE (never `r.error`, which is free-form
+            # tool-author prose — AD-4): a claimed-but-unverified effect gets
+            # its own code distinct from a plain failure, a trustworthy
+            # success gets none.
+            await record_tool_call(
+                get_services().db_pool, tool_name=name,
+                action_severity=t.manifest.action_severity,
+                effect_class=t.manifest.effect_class,
+                duration_ms=(time.monotonic() - _dispatch_t0) * 1000,
+                outcome=Outcome.OK if r.success else Outcome.FAILED,
+                error_code=(
+                    None if (r.success and r.verified is not False)
+                    else (
+                        ToolCallErrorCode.UNVERIFIED_EFFECT.value if r.success
+                        else ToolCallErrorCode.TOOL_FAILED.value
+                    )
+                ),
             )
             # TurnProgressTracker — update from this REAL completed dispatch. A
             # TRUSTWORTHY success resets the streak; ANY non-trustworthy result (a

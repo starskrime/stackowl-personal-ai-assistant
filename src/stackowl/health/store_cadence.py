@@ -323,6 +323,13 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
         "health_status_changes", "occurred_at",
         "written only on a real health-status transition",
     ),
+    # Story 2.7 -- `turn_action_records` backs `model.called`/`tool.called`/
+    # `delegation.hopped`'s `record_ref` (migration 0146). Unlike
+    # `heal_attempts`/`health_status_changes` above, this is written on
+    # EVERY model round, real tool dispatch and delegation hop of ordinary
+    # turn traffic -- the same HOT cadence as `journal_events` itself, which
+    # every one of these calls also writes to in the same transaction.
+    _hot("turn_action_records", "occurred_at"),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}

@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict
 
 from stackowl.exceptions import A2ATimeoutError, StackOwlError
 from stackowl.infra.observability import log
+from stackowl.journal.turn_events import record_delegation_hop
 from stackowl.mcp._tool import sanitize_mcp_text as _sanitize
 from stackowl.messaging.a2a import A2AMessage, A2AQueue
 from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
@@ -235,6 +236,10 @@ class A2ADelegator:
                     }
                 },
             )
+            await record_delegation_hop(
+                self._services.db_pool, from_owl=from_owl, to_owl=to_owl,
+                status="timeout", duration_ms=(time.monotonic() - t0) * 1000,
+            )
             return A2AResult(status="timeout", resolved_owl=to_owl)
         except StackOwlError as exc:
             specialist_task.cancel()
@@ -242,6 +247,10 @@ class A2ADelegator:
                 "[a2a-delegator] delegate: receive failed",
                 exc_info=exc,
                 extra={"_fields": {"trace_id": parent_state.trace_id, "from": from_owl, "to": to_owl}},
+            )
+            await record_delegation_hop(
+                self._services.db_pool, from_owl=from_owl, to_owl=to_owl,
+                status="child_error", duration_ms=(time.monotonic() - t0) * 1000,
             )
             return A2AResult(status="child_error", resolved_owl=to_owl, child_detail=_sanitize(str(exc)))
 
@@ -271,6 +280,10 @@ class A2ADelegator:
                     "trace_id_match": response.trace_id == parent_state.trace_id,
                 }
             },
+        )
+        await record_delegation_hop(
+            self._services.db_pool, from_owl=from_owl, to_owl=to_owl,
+            status=status, duration_ms=duration_ms,
         )
         return A2AResult(
             status=status,

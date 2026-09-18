@@ -13,10 +13,13 @@ from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.infra import prompt_metrics
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.journal.enums import classify_health_error
+from stackowl.journal.turn_events import record_model_call
 from stackowl.plugins import hooks
 from stackowl.providers.react_callback import IterationCallback
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.db.pool import DbPool
     from stackowl.providers.circuit_breaker import CircuitBreaker
     from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.rate_limiter import RateLimiter
@@ -166,6 +169,11 @@ class ModelProvider(ABC):
     # injected by ProviderRegistry alongside breaker/limiter. None (default)
     # → the RATE_LIMIT branch in _resilient_round has no config fallback.
     _cooldown_hours: float | None = None
+    # Story 2.7 — the shared DbPool, injected by ProviderRegistry.set_db_pool
+    # exactly like _cost_tracker. None by default (tests / standalone
+    # providers) → journal.turn_events.record_model_call is a no-op, same
+    # shape as an unwired _cost_tracker.
+    _db_pool: DbPool | None = None
 
     def set_cache_probe_store(self, store: object | None) -> None:
         """Inject the D01.2 cache-probe store (optional, injected after construction).
@@ -180,6 +188,14 @@ class ModelProvider(ABC):
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker (idempotent; ProviderRegistry calls this)."""
         self._cost_tracker = cost_tracker
+
+    def set_db_pool(self, db_pool: DbPool | None) -> None:
+        """Inject the shared DbPool (idempotent; ProviderRegistry calls this).
+
+        Story 2.7 — the recording site for ``model.called``. Mirrors
+        ``set_cost_tracker``'s shape exactly.
+        """
+        self._db_pool = db_pool
 
     def set_resilience(
         self,
@@ -258,7 +274,7 @@ class ModelProvider(ABC):
                     # caller's exception is re-raised unchanged — an observer that
                     # swallowed a provider fault would turn a visible outage into a
                     # silent one.
-                    await self._dispatch_post_llm(started, ok=False)
+                    await self._dispatch_post_llm(started, ok=False, exc=exc)
                     raise
                 if attempt >= _MAX_COMPRESS_ATTEMPTS:
                     log.engine.error(
@@ -268,7 +284,7 @@ class ModelProvider(ABC):
                             "provider": self.name, "attempts": attempt,
                         }},
                     )
-                    await self._dispatch_post_llm(started, ok=False)
+                    await self._dispatch_post_llm(started, ok=False, exc=exc)
                     raise
                 attempt += 1
                 smaller = shrink(attempt)
@@ -278,7 +294,7 @@ class ModelProvider(ABC):
                         "to compress — surfacing honestly",
                         extra={"_fields": {"provider": self.name, "attempts": attempt}},
                     )
-                    await self._dispatch_post_llm(started, ok=False)
+                    await self._dispatch_post_llm(started, ok=False, exc=exc)
                     raise
                 log.engine.warning(
                     "[provider] payload too large — compressed and retrying "
@@ -290,20 +306,46 @@ class ModelProvider(ABC):
                         "exc_type": type(exc).__name__,
                     }},
                 )
+                # This attempt failed and is being shrunk-and-retried: record
+                # its own model.called row (else the failed round is silently
+                # unaccounted for), then reset the clock so the NEXT attempt's
+                # duration_ms measures one round, not every compress attempt
+                # combined.
+                await self._dispatch_post_llm(started, ok=False, exc=exc)
+                started = time.monotonic()
                 round_fn = smaller
             else:
                 await self._dispatch_post_llm(started, ok=True)
                 return result
 
-    async def _dispatch_post_llm(self, started: float, *, ok: bool) -> None:
+    async def _dispatch_post_llm(
+        self, started: float, *, ok: bool, exc: BaseException | None = None,
+    ) -> None:
         """Announce that a remote round finished. Latency is measured HERE rather
         than taken from a provider's own report, so every backend is comparable;
         token counts deliberately stay with the cost pipeline (cost_records), which
-        already owns them — a second writer to that fact is how the two disagree."""
+        already owns them — a second writer to that fact is how the two disagree.
+
+        Story 2.7 — also the ``model.called`` recording site. ``exc`` is the
+        caught provider exception on a failed round (every ``ok=False`` call
+        site passes it; the lone ``ok=True`` site at the bottom of
+        ``_resilient_round`` leaves it at its ``None`` default), classified
+        into a bounded :class:`~stackowl.journal.enums.HealthErrorCode` — never
+        stored as exception text (AD-4). Recording is best-effort (B5): any
+        failure inside ``record_model_call`` is already absorbed there and
+        never reaches this method.
+        """
+        duration_ms = (time.monotonic() - started) * 1000
         await hooks.dispatch(hooks.POST_LLM_CALL, {
             "provider": self.name, "protocol": self.protocol, "ok": ok,
-            "duration_ms": (time.monotonic() - started) * 1000,
+            "duration_ms": duration_ms,
         })
+        await record_model_call(
+            self._db_pool, provider=self.name, duration_ms=duration_ms, ok=ok,
+            error_code=(
+                classify_health_error(str(exc)).value if exc is not None else None
+            ),
+        )
 
     def note_payload_limit(self, working_chars: int) -> None:
         """Remember a context size this provider actually ACCEPTED.

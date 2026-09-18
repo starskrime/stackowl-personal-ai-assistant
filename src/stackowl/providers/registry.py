@@ -19,6 +19,7 @@ from stackowl.providers.tier_selector import TierSelector
 if TYPE_CHECKING:
     from stackowl.config.provider import ProviderConfig
     from stackowl.config.settings import Settings
+    from stackowl.db.pool import DbPool
     from stackowl.providers.cost_tracker import CostTracker
 
 
@@ -124,6 +125,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # D01.2 — the ONE shared CacheProbeStore, remembered for the same reason
         # as the tracker above: providers registered later still inherit it.
         self._cache_probe_store: object | None = None
+        # Story 2.7 — the ONE shared DbPool, remembered for the same reason as
+        # the tracker above: a provider added or rebuilt AFTER the one
+        # set_db_pool() call (startup/orchestrator.py) must still inherit it,
+        # else it silently never records model.called (mirrors _cost_tracker).
+        self._db_pool: DbPool | None = None
         # F-multi-tier — round-robin selector for the "which of N healthy
         # providers in this tier" decision (get_with_cascade delegates to it).
         self._tier_selector = TierSelector()
@@ -162,6 +168,21 @@ class ProviderRegistry(RegistryAccessorsMixin):
         log.engine.debug(
             "[registry] set_cost_tracker: injected into providers",
             extra={"_fields": {"provider_count": len(self._providers), "has_tracker": cost_tracker is not None}},
+        )
+
+    def set_db_pool(self, db_pool: DbPool | None) -> None:
+        """Inject the shared DbPool into every provider (Story 2.7's
+        ``model.called`` recording site). Mirrors ``set_cost_tracker``'s shape,
+        including remembering it on ``self._db_pool`` so a provider added or
+        rebuilt LATER (mocks, hot additions) still inherits it."""
+        self._db_pool = db_pool
+        for provider in self._providers.values():
+            setter = getattr(provider, "set_db_pool", None)
+            if callable(setter):
+                setter(db_pool)
+        log.engine.debug(
+            "[registry] set_db_pool: injected into providers",
+            extra={"_fields": {"provider_count": len(self._providers), "has_pool": db_pool is not None}},
         )
 
     @classmethod
@@ -221,6 +242,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
         api_key = SecretResolver.resolve(config.api_key) if config.api_key else ""
         provider = _build_provider(config, api_key)
         inject_cost_tracker(provider, self._cost_tracker)
+        setter = getattr(provider, "set_db_pool", None)
+        if callable(setter):
+            setter(self._db_pool)
         providers[config.name] = provider
         if config.tiers:
             routes = [ModelRoute(model=config.default_model, tiers=config.tiers)]
@@ -366,6 +390,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
                     try:
                         provider = _build_provider(config, new_key)
                         inject_cost_tracker(provider, self._cost_tracker)
+                        rot_db_setter = getattr(provider, "set_db_pool", None)
+                        if callable(rot_db_setter):
+                            rot_db_setter(self._db_pool)
                         new_providers[name] = provider
                         new_tiers[name] = self._tiers.get(
                             name,
@@ -836,6 +863,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
         self._breakers[name] = CircuitBreaker(provider_name=name, clock=self._clock)
         self._limiters[name] = RateLimiter.from_rpm(name, None, clock=self._clock)
         inject_cost_tracker(mock, self._cost_tracker)  # E8-S0cost single recording site
+        db_setter = getattr(mock, "set_db_pool", None)
+        if callable(db_setter):
+            db_setter(self._db_pool)  # Story 2.7 single recording site
         # SP-4 — a mock that subclasses ModelProvider also records onto its breaker
         # via the per-round bracket (the merge-gate journey drives this real path).
         _inject_resilience(mock, self._breakers[name], self._limiters[name])

@@ -32,6 +32,11 @@ class ActorKind(StrEnum):
     DEVICE = "device"
     VOICE_WORKER = "voice_worker"
     AUTONOMOUS = "autonomous"
+    #: Story 2.7 — the owl actually RUNNING a turn is the actor of its own
+    #: model calls, tool calls and delegation hops (AD-2's "the owl as
+    #: actor"). Additive: every existing emitter keeps using OWNER/AUTONOMOUS/
+    #: DEVICE/VOICE_WORKER exactly as before.
+    OWL = "owl"
 
 
 class RecordKind(StrEnum):
@@ -51,6 +56,9 @@ class RecordKind(StrEnum):
     JOB = "job"
     HEAL = "heal"
     HEALTH = "health"
+    #: Story 2.7 — model calls, tool calls and delegation hops: the
+    #: highest-volume consumer the journal will ever have.
+    TURN = "turn"
 
 
 class Outcome(StrEnum):
@@ -127,6 +135,25 @@ _HEALTH_ERROR_PHRASES: tuple[tuple[str, HealthErrorCode], ...] = (
     ("no such table", HealthErrorCode.NOT_FOUND),
     ("unable to open database file", HealthErrorCode.NOT_FOUND),
 )
+
+
+class ToolCallErrorCode(StrEnum):
+    """Closed vocabulary for ``tool.called``'s ``error_code`` (Story 2.7).
+
+    Derived from BRANCH SHAPE at the ``_guarded_dispatch`` call site, never
+    from ``ToolResult.error`` -- that is free-form tool-author prose, not
+    classifiable safely (AD-4: never exception/free text in ``attrs``). Small
+    and closed, matching :class:`HealthErrorCode`'s own "kind of thing went
+    wrong, not a re-hydrated message" shape.
+    """
+
+    #: The tool exceeded ``_TOOL_DEADLINE_S`` and was cancelled.
+    TIMEOUT = "timeout"
+    #: The tool reported success but its claimed effect was not observed
+    #: (``r.success=True, r.verified=False``) -- B4a's reality check.
+    UNVERIFIED_EFFECT = "unverified_effect"
+    #: The tool ran and reported failure (``r.success=False``), verified or not.
+    TOOL_FAILED = "tool_failed"
 
 
 def classify_health_error(message: str | None) -> HealthErrorCode:

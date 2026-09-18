@@ -1795,6 +1795,9 @@ class StartupOrchestrator:
         # db_pool/event_bus built later than the registry). The router + MoA call
         # provider.complete, so they no longer record separately (no double-count).
         provider_registry.set_cost_tracker(cost_tracker)
+        # Story 2.7 — same site, same reason: inject the shared DbPool so
+        # every provider's remote round records `model.called`.
+        provider_registry.set_db_pool(db_pool)
 
         # D01.6 follow-up — correct historical rows that were charged the
         # unknown-cloud fallback while the provider is actually self-hosted.
