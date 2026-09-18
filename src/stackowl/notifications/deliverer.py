@@ -24,12 +24,14 @@ import time as _time
 from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 from stackowl.infra.observability import log
+from stackowl.journal.delivery_events import record_delivery_attempted, record_provider_rerouted
 from stackowl.notifications.router import DeliveryStatus
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.channels.registry import ChannelRegistry
     from stackowl.config.settings import Settings
+    from stackowl.db.pool import DbPool
     from stackowl.notifications.router import Notification, NotificationRouter
     from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
 
@@ -171,10 +173,16 @@ class ProactiveDeliverer:
         outbox: UndeliveredOutbox | None = None,
         conversation_store: _ConversationRecorder | None = None,
         preference_store: _PreferenceReader | None = None,
+        db_pool: DbPool | None = None,
     ) -> None:
         self._router = router
         self._registry = registry
         self._settings = settings
+        # Story 2.9 -- optional and duck-typed, same reason as `outbox`: an
+        # unwired deliverer (every existing test/construction site) behaves
+        # exactly as before, recording nothing. Wired for real at assembly
+        # time (notifications/assembly.py).
+        self._db_pool: DbPool | None = db_pool
         # ESC-20 — the owner's stored OutputStyle, so a SCHEDULED message obeys
         # the same formatting preferences a conversational reply does. Optional
         # and duck-typed for the same reason as the outbox: an unwired deliverer
@@ -250,6 +258,7 @@ class ProactiveDeliverer:
                 "[notifications] deliverer.deliver: no transport (router-handled)",
                 extra={"_fields": {"status": status, "channel": channel}},
             )
+            await self._record_delivery(channel, notification, status)
             self._log_exit(status, channel, t0)
             return status
 
@@ -305,6 +314,7 @@ class ProactiveDeliverer:
             )
         if result == "delivered":
             await self._remember_what_we_said(notification)
+        await self._record_delivery(channel, notification, result)
         self._log_exit(result, channel, t0)
         return result
 
@@ -488,6 +498,40 @@ class ProactiveDeliverer:
                                "category": getattr(notification, "category", None)}},
         )
 
+    async def _record_delivery(
+        self, channel: str, notification: Notification | None, status: DeliveryStatus
+    ) -> None:
+        """Story 2.9 -- record one ``delivery.attempted`` journal event.
+
+        Called from ALL THREE of ``deliver()``'s two return points and
+        ``transport()``'s digest-flush path. ``channel`` is always the
+        ORIGINALLY-addressed channel (never reassigned after a reroute — see
+        ``journal/delivery_events.py``'s own module docstring). ``notification``
+        is ``None`` at the ``transport()`` call site (no ``Notification`` in
+        scope there) — its fields are read only behind an explicit
+        ``is not None`` check, never via a bare attribute access that would
+        raise on the ``None`` case.
+
+        Never raises and never affects the return value — the delivery has
+        already happened by the time this runs (the recording helper itself
+        is B5-safe; this wrapper adds nothing beyond routing the call).
+
+        ``getattr``, not attribute access: several tests build this class via
+        ``ProactiveDeliverer.__new__`` (so ``__init__`` never runs and
+        ``_db_pool`` does not exist) — same guard ``_styled``/
+        ``_remember_what_we_said`` use for their own optional attributes.
+        """
+        await record_delivery_attempted(
+            getattr(self, "_db_pool", None),
+            channel=channel,
+            delivery_status=status,
+            category=notification.category if notification is not None else None,
+            job_id=notification.job_id if notification is not None else None,
+            notification_id=(
+                notification.notification_id if notification is not None else None
+            ),
+        )
+
     async def _maybe_reroute(
         self, failed_channel: str, notification: Notification, status: DeliveryStatus
     ) -> DeliveryStatus:
@@ -530,6 +574,11 @@ class ProactiveDeliverer:
                         "failed_channel": failed_channel, "fallback_channel": fallback,
                     }},
                 )
+                await record_provider_rerouted(
+                    getattr(self, "_db_pool", None),
+                    from_channel=failed_channel, to_channel=fallback,
+                    notification_id=notification.notification_id,
+                )
                 return "delivered"
             return status
         except Exception as exc:  # B5 — reroute must never break delivery
@@ -552,7 +601,9 @@ class ProactiveDeliverer:
             "[notifications] deliverer.transport: entry",
             extra={"_fields": {"channel": channel}},
         )
-        return await self._transport(channel, message, chat_id=None)
+        result = await self._transport(channel, message, chat_id=None)
+        await self._record_delivery(channel, None, result)
+        return result
 
     async def _transport(
         self,

@@ -183,6 +183,11 @@ class NotificationAssembly:
             # output_tables=off had never applied to the 4-5k-char scheduled
             # briefings that are the longest messages he receives.
             preference_store=preference_store,
+            # Story 2.9 -- so `deliver()`/`transport()`/`_maybe_reroute` can
+            # record `delivery.attempted`/`provider.rerouted` journal events.
+            # `db` is already the one DbPool in scope at this, the deliverer's
+            # single construction site.
+            db_pool=db,
         )
 
         # 2) Digest job — register handler + seed 5-minute schedule. The
