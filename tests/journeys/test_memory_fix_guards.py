@@ -22,6 +22,7 @@ mock. We import those helpers rather than re-implement them.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
 from types import SimpleNamespace
 
 import pytest
@@ -46,6 +47,23 @@ from tests.journeys.test_j2_research_and_remember import (  # noqa: F401 — fix
     _live_io,  # autouse fixture: disables TestModeGuard for live I/O
     _turn,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_journal_name_resolvers() -> Generator[None]:
+    """``test_guard_memory_command_registered_via_orchestrator`` below drives
+    the REAL ``_phase_gateway``, which (Story 2.2) registers a real task
+    ``NameResolver`` into ``journal/narrator.py``'s process-global registry --
+    with no orchestrator-side teardown, unlike ``tests/journal/conftest.py``'s
+    own per-test reset. Reset it around EVERY test in this module so that
+    registration can never leak into a later, unrelated test.
+    """
+    from stackowl.journal.narrator import reset_name_resolvers_for_tests
+
+    reset_name_resolvers_for_tests()
+    yield
+    reset_name_resolvers_for_tests()
+
 
 # ===========================================================================
 # GUARD B — recall surfaces a committed fact (P0-1 FTS fallback + P0-3 embed).

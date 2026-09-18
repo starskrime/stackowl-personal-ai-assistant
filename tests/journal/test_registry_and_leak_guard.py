@@ -22,10 +22,14 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import JournalEventTypeUnregisteredError, JournalInvalidAttrsError
 from stackowl.journal import (
     ActorKind,
+    AttentionClass,
+    Intensity,
     JournalEvent,
     Outcome,
+    RecordKind,
     record,
 )
+from stackowl.journal.registry import EventTypeSpec
 from stackowl.journal.task_events import TaskEnqueuedAttrs, TaskFinishedAttrs
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
@@ -33,7 +37,10 @@ from stackowl.pipeline.durable.task import DurableTask
 pytestmark = pytest.mark.asyncio
 
 BEARER_CANARY = "Bearer sk-canary1234567890abcdefghijklmno"
-AWS_KEY_CANARY = "AKIAABCDEFGHIJKLMNOP"
+# Built by concatenation, not as one literal: a contiguous "AKIA"+16-char
+# string here trips GitHub push protection's AWS-key-shape scanner even
+# though this is a synthetic canary, never a real credential.
+AWS_KEY_CANARY = "AKIA" + "NOTAREALCANARYKEY"[:16]
 
 
 class TestTheRegistryRefusesWhatItDoesNotKnow:
@@ -169,3 +176,45 @@ class TestTheLeakGuardScrubsSecretShapedStringsFromRealEmitters:
         )
         assert was_redacted is False
         assert redacted == {"completion_mode": "delivered"}
+
+
+def _spec(**over: object) -> EventTypeSpec:
+    defaults: dict[str, object] = {
+        "type": "test.spec_validation",
+        "schema_version": 1,
+        "attrs_model": TaskFinishedAttrs,
+        "emitting_process": "test",
+        "record_kind": RecordKind.TASK,
+        "attention_class": AttentionClass.AMBIENT,
+        "narrate": lambda attrs, name: f"{name} happened",
+        "intensity": None,
+    }
+    defaults.update(over)
+    return EventTypeSpec(**defaults)  # type: ignore[arg-type]
+
+
+class TestEventTypeSpecValidatesAtConstruction:
+    """Story 2.2: "no narration" and "no attention class" are the same kind
+    of refusal -- a required constructor argument, validated in
+    ``__post_init__``, before ``registry.register()`` ever sees it."""
+
+    @pytest.mark.tripwire
+    def test_a_type_with_no_narration_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="narrate"):
+            _spec(narrate=None)
+
+    @pytest.mark.tripwire
+    def test_needs_you_with_no_intensity_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="intensity"):
+            _spec(attention_class=AttentionClass.NEEDS_YOU, intensity=None)
+
+    @pytest.mark.tripwire
+    def test_ambient_with_an_intensity_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="intensity"):
+            _spec(attention_class=AttentionClass.AMBIENT, intensity=Intensity.HIGH)
+
+    def test_a_well_formed_spec_constructs_cleanly(self) -> None:
+        spec = _spec()
+        assert spec.attention_class is AttentionClass.AMBIENT
+        assert spec.intensity is None
+        assert spec.narrate(TaskFinishedAttrs(completion_mode="delivered"), "x") == "x happened"

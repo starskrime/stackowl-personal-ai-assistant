@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.db.pool import DbPool
+from stackowl.exceptions import JournalAttentionSetByEmitterError
 from stackowl.journal import (
     ActorKind,
     JournalEvent,
@@ -20,7 +21,7 @@ from stackowl.journal import (
     RecordRef,
     record,
 )
-from stackowl.journal.task_events import TaskEnqueuedAttrs
+from stackowl.journal.task_events import TaskDeadLetteredAttrs, TaskEnqueuedAttrs
 
 pytestmark = pytest.mark.asyncio
 
@@ -85,7 +86,9 @@ class TestTheJournalRowIsAtomicWithTheChangeItRecords:
         assert row["target_id"] == "commit-1"
         assert row["outcome"] == "pending"
         assert row["record_ref"] is not None
-        assert row["attention"] is None  # Story 2.2 populates this, not 2.1
+        # Story 2.2: attention/intensity are computed by record() itself from
+        # the registry -- task.enqueued is registered AMBIENT/no-intensity.
+        assert row["attention"] == "ambient"
         assert row["intensity"] is None
 
     async def test_two_records_in_the_same_transaction_both_survive_the_commit(
@@ -103,3 +106,58 @@ class TestTheJournalRowIsAtomicWithTheChangeItRecords:
             ("multi-1", "multi-2"),
         )
         assert {r["target_id"] for r in rows} == {"multi-1", "multi-2"}
+
+
+class TestAttentionIsComputedByRecordItselfNeverByTheEmitter:
+    """Story 2.2, AD-5: ``record()`` computes ``attention``/``intensity`` from
+    the registered ``EventTypeSpec`` -- emitters never classify."""
+
+    async def test_an_ambient_type_is_recorded_ambient_with_no_intensity(
+        self, tmp_db: DbPool
+    ) -> None:
+        async with tmp_db.transaction() as conn:
+            await record(conn, _event(target_id="attn-ambient-1"))
+
+        rows = await tmp_db.fetch_all(
+            "SELECT attention, intensity FROM journal_events WHERE target_id = ?",
+            ("attn-ambient-1",),
+        )
+        assert rows[0]["attention"] == "ambient"
+        assert rows[0]["intensity"] is None
+
+    async def test_a_give_up_type_is_recorded_needs_you_high(self, tmp_db: DbPool) -> None:
+        async with tmp_db.transaction() as conn:
+            await record(conn, _event(
+                type="task.dead_lettered",
+                target_id="attn-dl-1",
+                outcome=Outcome.DEAD_LETTERED,
+                attrs=TaskDeadLetteredAttrs(
+                    task_kind="chat", attempt_count=3, max_attempts=3,
+                    lease_owner="w1", failure_class="auth", permanent=True,
+                ),
+            ))
+
+        rows = await tmp_db.fetch_all(
+            "SELECT attention, intensity FROM journal_events WHERE target_id = ?",
+            ("attn-dl-1",),
+        )
+        assert rows[0]["attention"] == "needs_you"
+        assert rows[0]["intensity"] == "high"
+
+    @pytest.mark.tripwire
+    async def test_an_emitter_that_pre_sets_attention_is_refused_before_any_sql_runs(
+        self, tmp_db: DbPool
+    ) -> None:
+        """Cross-cutting invariant, not path-selected -- an emitter making its
+        own ambient/needs-you judgment is exactly the per-surface disagreement
+        this policy exists to prevent."""
+        event = _event(target_id="attn-preset-1", attention="ambient")
+
+        with pytest.raises(JournalAttentionSetByEmitterError):
+            async with tmp_db.transaction() as conn:
+                await record(conn, event)
+
+        rows = await tmp_db.fetch_all(
+            "SELECT * FROM journal_events WHERE target_id = ?", ("attn-preset-1",),
+        )
+        assert rows == []

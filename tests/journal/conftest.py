@@ -7,6 +7,7 @@ from collections.abc import Generator
 import pytest
 
 from stackowl.journal.health import reset_for_tests
+from stackowl.journal.narrator import reset_name_resolvers_for_tests
 
 
 @pytest.fixture(autouse=True)
@@ -20,3 +21,15 @@ def _reset_journal_health() -> Generator[None]:
     reset_for_tests()
     yield
     reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_journal_name_resolvers() -> Generator[None]:
+    """``journal/narrator.py``'s resolver registry is the same kind of
+    process-global, module-level state ``journal/health.py``'s is -- reset it
+    around EVERY test in this package so one test's ``register_name_resolver``
+    call (or a real subsystem wiring test) can never leak a registration into
+    a later, unrelated test."""
+    reset_name_resolvers_for_tests()
+    yield
+    reset_name_resolvers_for_tests()
