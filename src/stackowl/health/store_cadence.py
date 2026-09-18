@@ -330,6 +330,14 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     # turn traffic -- the same HOT cadence as `journal_events` itself, which
     # every one of these calls also writes to in the same transaction.
     _hot("turn_action_records", "occurred_at"),
+    # Story 2.8 -- `consent_decision_records` backs `consent.decided`'s
+    # `record_ref` (migration 0147), same shape as `turn_action_records`
+    # above: written on every consequential-action consent decision of
+    # ordinary turn traffic, HOT cadence, in the same transaction as
+    # `journal_events` itself. `reflections` above already covers
+    # `memory.reflection_recorded`'s table; curated md has no new table
+    # (AD-4: "md- and graph-backed targets never gain mirror tables").
+    _hot("consent_decision_records", "occurred_at"),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}

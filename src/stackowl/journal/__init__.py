@@ -18,16 +18,19 @@ callers. This package depends only on ``infra/`` (logging, the redactor) and
 subsystem.
 
 Importing this module imports ``task_events``, ``job_events``, ``heal_events``,
-``health_events`` and ``turn_events`` for their side effect (registering the
-task, job, heal, health and turn event types), so any importer of ``journal``
-gets a working registry with no separate registration step to remember.
+``health_events``, ``turn_events``, ``memory_events`` and ``consent_events``
+for their side effect (registering the task, job, heal, health, turn, memory
+and consent event types), so any importer of ``journal`` gets a working
+registry with no separate registration step to remember.
 """
 
 from __future__ import annotations
 
+from stackowl.journal import consent_events as _consent_events  # noqa: F401 -- registration side effect
 from stackowl.journal import heal_events as _heal_events  # noqa: F401 -- registration side effect
 from stackowl.journal import health_events as _health_events  # noqa: F401 -- registration side effect
 from stackowl.journal import job_events as _job_events  # noqa: F401 -- registration side effect
+from stackowl.journal import memory_events as _memory_events  # noqa: F401 -- registration side effect
 from stackowl.journal import task_events as _task_events  # noqa: F401 -- registration side effect
 from stackowl.journal import turn_events as _turn_events  # noqa: F401 -- registration side effect
 from stackowl.journal.attention import ATTENTION_POLICY_VERSION, classify

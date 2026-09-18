@@ -59,6 +59,12 @@ class RecordKind(StrEnum):
     #: Story 2.7 — model calls, tool calls and delegation hops: the
     #: highest-volume consumer the journal will ever have.
     TURN = "turn"
+    #: Story 2.8 — curated md writes (``memory.written``) and the SQLite
+    #: reflections learning store (``memory.reflection_recorded``).
+    MEMORY = "memory"
+    #: Story 2.8 — the consequential-action consent gate's decisions
+    #: (``consent.decided``).
+    CONSENT = "consent"
 
 
 class Outcome(StrEnum):
