@@ -34,8 +34,8 @@ def mem(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_an_entry_round_trips(mem):
-    res = mem.add(USER_TARGET, "Bakir prefers root-cause fixes.", "permanent")
+async def test_an_entry_round_trips(mem):
+    res = await mem.add(USER_TARGET, "Bakir prefers root-cause fixes.", "permanent")
 
     assert res.ok is True
     assert res.done is True
@@ -44,9 +44,9 @@ def test_an_entry_round_trips(mem):
     assert entries[0].durability == "permanent"
 
 
-def test_the_file_is_readable_by_a_human(mem, tmp_path):
+async def test_the_file_is_readable_by_a_human(mem, tmp_path):
     """The whole reason this is a file and not a table (D08.1 R7Q27)."""
-    mem.add(USER_TARGET, "Runs on a Jetson.", "permanent")
+    await mem.add(USER_TARGET, "Runs on a Jetson.", "permanent")
 
     text = (tmp_path / "memory" / "USER.md").read_text()
 
@@ -54,28 +54,28 @@ def test_the_file_is_readable_by_a_human(mem, tmp_path):
     assert "[permanent]" in text
 
 
-def test_the_success_response_does_not_echo_the_entries(mem):
+async def test_the_success_response_does_not_echo_the_entries(mem):
     """The reference platform observed the model treating an echoed list as an
     invitation to 'find more to fix' and re-issuing the same write five times."""
-    mem.add(USER_TARGET, "One.", "permanent")
+    await mem.add(USER_TARGET, "One.", "permanent")
 
-    res = mem.add(USER_TARGET, "Two.", "permanent")
+    res = await mem.add(USER_TARGET, "Two.", "permanent")
 
     assert res.entries == []
     assert res.done is True
 
 
-def test_a_duplicate_is_a_no_op_not_an_error(mem):
-    mem.add(USER_TARGET, "Same thing.", "permanent")
+async def test_a_duplicate_is_a_no_op_not_an_error(mem):
+    await mem.add(USER_TARGET, "Same thing.", "permanent")
 
-    res = mem.add(USER_TARGET, "Same thing.", "permanent")
+    res = await mem.add(USER_TARGET, "Same thing.", "permanent")
 
     assert res.ok is True
     assert len(mem.entries(USER_TARGET)) == 1
 
 
-def test_empty_content_is_refused(mem):
-    assert mem.add(USER_TARGET, "   ", "permanent").ok is False
+async def test_empty_content_is_refused(mem):
+    assert (await mem.add(USER_TARGET, "   ", "permanent")).ok is False
 
 
 # --------------------------------------------------------------------------- #
@@ -83,27 +83,27 @@ def test_empty_content_is_refused(mem):
 # --------------------------------------------------------------------------- #
 
 
-def test_transient_is_not_an_accepted_durability(mem):
+async def test_transient_is_not_an_accepted_durability(mem):
     """THE test for the stale-date failure. The most-reinforced entry in the
     88,631-fact store this replaces was "Today's date is 2026-07-15", three
     weeks old and reinforced 157 times. A durability that can express "this
     expires" will accumulate expired things, so there isn't one."""
-    res = mem.add(USER_TARGET, "Today's date is 2026-07-15.", "transient")
+    res = await mem.add(USER_TARGET, "Today's date is 2026-07-15.", "transient")
 
     assert res.ok is False
     assert "transient" in res.message
     assert mem.entries(USER_TARGET) == []
 
 
-def test_an_unknown_durability_is_refused(mem):
-    assert mem.add(USER_TARGET, "x", "forever").ok is False
+async def test_an_unknown_durability_is_refused(mem):
+    assert (await mem.add(USER_TARGET, "x", "forever")).ok is False
 
 
 @pytest.mark.parametrize("durability", DURABILITIES)
-def test_both_real_durabilities_are_stored_in_the_entry(mem, durability):
+async def test_both_real_durabilities_are_stored_in_the_entry(mem, durability):
     """Stored, not merely validated — eviction sorts on it, so it has to survive
     the round trip."""
-    mem.add(USER_TARGET, "A thing.", durability)
+    await mem.add(USER_TARGET, "A thing.", durability)
 
     assert mem.entries(USER_TARGET)[0].durability == durability
 
@@ -127,7 +127,7 @@ def test_a_hand_edited_entry_without_a_marker_still_loads(mem, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def _fill(mem, target=USER_TARGET, durability="permanent"):
+async def _fill(mem, target=USER_TARGET, durability="permanent"):
     """Fill to just under the cap with entries the agent could plausibly write.
 
     Against the ceiling for the DURABILITY being written, not the whole budget.
@@ -142,51 +142,60 @@ def _fill(mem, target=USER_TARGET, durability="permanent"):
         ceiling = mem._effective_budget(target, durability)  # noqa: SLF001
         if mem.used_chars(target) + len(text) + len(ENTRY_DELIMITER) + 14 > ceiling:
             return i
-        assert mem.add(target, text, durability).ok
+        assert (await mem.add(target, text, durability)).ok
         i += 1
 
 
-def test_a_write_over_budget_is_refused(mem):
-    _fill(mem)
+async def test_a_write_over_budget_is_refused(mem):
+    await _fill(mem)
 
-    res = mem.add(USER_TARGET, "One more thing that will not fit at all here.", "permanent")
+    res = await mem.add(
+        USER_TARGET, "One more thing that will not fit at all here.", "permanent"
+    )
 
     assert res.ok is False
     assert mem.used_chars(USER_TARGET) <= USER_BUDGET_CHARS
 
 
-def test_the_refusal_tells_the_model_what_to_do_and_shows_it_the_entries(mem):
+async def test_the_refusal_tells_the_model_what_to_do_and_shows_it_the_entries(mem):
     """Unlike the success path, the over-capacity path MUST echo entries — the
     model needs them to choose what to merge or drop."""
-    _fill(mem)
+    await _fill(mem)
 
-    res = mem.add(USER_TARGET, "Another fact that does not fit in the budget.", "permanent")
+    res = await mem.add(
+        USER_TARGET, "Another fact that does not fit in the budget.", "permanent"
+    )
 
     assert res.done is False, "the model should retry in this turn"
     assert "consolidate" in res.message.lower()
     assert res.entries, "it cannot consolidate what it cannot see"
 
 
-def test_consolidating_then_retrying_succeeds(mem):
+async def test_consolidating_then_retrying_succeeds(mem):
     """The protocol working end to end: refuse, the agent removes, the retry
     lands. This is what makes forgetting the agent's problem."""
-    _fill(mem)
-    blocked = mem.add(USER_TARGET, "A newly learned preference worth keeping.", "permanent")
+    await _fill(mem)
+    blocked = await mem.add(
+        USER_TARGET, "A newly learned preference worth keeping.", "permanent"
+    )
     assert blocked.ok is False
 
-    mem.remove(USER_TARGET, "Fact number 0")
-    mem.remove(USER_TARGET, "Fact number 1")
+    await mem.remove(USER_TARGET, "Fact number 0")
+    await mem.remove(USER_TARGET, "Fact number 1")
 
-    assert mem.add(USER_TARGET, "A newly learned preference worth keeping.", "permanent").ok
+    result = await mem.add(
+        USER_TARGET, "A newly learned preference worth keeping.", "permanent"
+    )
+    assert result.ok
 
 
-def test_repeated_failures_go_terminal_so_the_turn_can_finish(mem):
+async def test_repeated_failures_go_terminal_so_the_turn_can_finish(mem):
     """A failed memory side effect must never suppress the user's reply."""
-    _fill(mem)
+    await _fill(mem)
     text = "Something that will never fit no matter how many times we try it."
 
     results = [
-        mem.add(USER_TARGET, text, "permanent")
+        await mem.add(USER_TARGET, text, "permanent")
         for _ in range(MAX_CONSOLIDATION_FAILURES_PER_TURN + 1)
     ]
 
@@ -195,7 +204,7 @@ def test_repeated_failures_go_terminal_so_the_turn_can_finish(mem):
     assert "skipped" in results[-1].message.lower()
 
 
-def test_a_successful_write_resets_the_failure_budget(mem):
+async def test_a_successful_write_resets_the_failure_budget(mem):
     """The cap counts CONSECUTIVE failures, not lifetime ones — otherwise a
     successful consolidation mid-turn would still be punished.
 
@@ -212,40 +221,41 @@ def test_a_successful_write_resets_the_failure_budget(mem):
     case the consolidation protocol exists for. Verified against the live class:
     ``done`` is still ``False`` here, so the reset invariant holds unchanged.
     """
-    _fill(mem)
-    mem.add(USER_TARGET, "Does not fit here at all, not even close.", "permanent")
-    mem.remove(USER_TARGET, "Fact number 0")
-    assert mem.add(USER_TARGET, "Short one.", "permanent").ok
+    await _fill(mem)
+    await mem.add(USER_TARGET, "Does not fit here at all, not even close.", "permanent")
+    await mem.remove(USER_TARGET, "Fact number 0")
+    short_result = await mem.add(USER_TARGET, "Short one.", "permanent")
+    assert short_result.ok
 
     probe = "y" * 400
     assert len(probe) <= mem._max_entry_chars(USER_TARGET), "probe must clear the ceiling"
-    res = mem.add(USER_TARGET, probe, "permanent")
+    res = await mem.add(USER_TARGET, probe, "permanent")
 
     assert res.ok is False
     assert res.done is False, "the counter should have reset on the success"
 
 
-def test_an_entry_over_the_per_entry_ceiling_is_terminal_not_a_consolidation_ask(mem):
+async def test_an_entry_over_the_per_entry_ceiling_is_terminal_not_a_consolidation_ask(mem):
     """The other half of the split above, pinned so neither drifts.
 
     Consolidation frees space by dropping OTHER entries. It can never make one
     oversized entry fit, so the refusal is terminal and the message tells the model
     to split it rather than to consolidate.
     """
-    res = mem.add(USER_TARGET, "x" * (USER_BUDGET_CHARS + 10), "permanent")
+    res = await mem.add(USER_TARGET, "x" * (USER_BUDGET_CHARS + 10), "permanent")
 
     assert res.ok is False
     assert res.done is True, "consolidation cannot help; do not ask for it"
     assert "consolidat" not in res.message.lower()
 
 
-def test_reset_turn_clears_the_budget(mem):
-    _fill(mem)
+async def test_reset_turn_clears_the_budget(mem):
+    await _fill(mem)
     for _ in range(MAX_CONSOLIDATION_FAILURES_PER_TURN + 1):
-        mem.add(USER_TARGET, "nope, too big to fit in here", "permanent")
+        await mem.add(USER_TARGET, "nope, too big to fit in here", "permanent")
 
     mem.reset_turn()
-    res = mem.add(USER_TARGET, "still too big to fit in here", "permanent")
+    res = await mem.add(USER_TARGET, "still too big to fit in here", "permanent")
 
     assert res.done is False
 
@@ -259,28 +269,29 @@ def test_the_owl_budget_is_larger_than_the_user_budget(mem):
 # --------------------------------------------------------------------------- #
 
 
-def test_replace_swaps_one_entry(mem):
-    mem.add(USER_TARGET, "Bakir uses npm.", "until_changed")
+async def test_replace_swaps_one_entry(mem):
+    await mem.add(USER_TARGET, "Bakir uses npm.", "until_changed")
 
-    res = mem.replace(USER_TARGET, "npm", "Bakir uses uv.", "until_changed")
+    res = await mem.replace(USER_TARGET, "npm", "Bakir uses uv.", "until_changed")
 
     assert res.ok is True
     assert [e.text for e in mem.entries(USER_TARGET)] == ["Bakir uses uv."]
 
 
-def test_replace_reports_a_miss_and_shows_what_is_there(mem):
-    mem.add(USER_TARGET, "Something.", "permanent")
+async def test_replace_reports_a_miss_and_shows_what_is_there(mem):
+    await mem.add(USER_TARGET, "Something.", "permanent")
 
-    res = mem.replace(USER_TARGET, "nothing like this", "New.", "permanent")
+    res = await mem.replace(USER_TARGET, "nothing like this", "New.", "permanent")
 
     assert res.ok is False
     assert res.entries
 
 
-def test_remove_drops_the_entry(mem):
-    mem.add(USER_TARGET, "Temporary interest in X.", "until_changed")
+async def test_remove_drops_the_entry(mem):
+    await mem.add(USER_TARGET, "Temporary interest in X.", "until_changed")
 
-    assert mem.remove(USER_TARGET, "Temporary interest").ok is True
+    result = await mem.remove(USER_TARGET, "Temporary interest")
+    assert result.ok is True
     assert mem.entries(USER_TARGET) == []
 
 
@@ -289,34 +300,34 @@ def test_remove_drops_the_entry(mem):
 # --------------------------------------------------------------------------- #
 
 
-def test_the_snapshot_does_not_move_mid_session(mem):
+async def test_the_snapshot_does_not_move_mid_session(mem):
     """THE prompt-stability test. A write lands on disk immediately and is
     visible to the tool, but the prompt keeps what it started with."""
-    mem.add(USER_TARGET, "First.", "permanent")
+    await mem.add(USER_TARGET, "First.", "permanent")
     before = mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-1")
 
-    mem.add(USER_TARGET, "Second, written mid-session.", "permanent")
+    await mem.add(USER_TARGET, "Second, written mid-session.", "permanent")
 
     assert mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-1") == before
     assert "Second" not in before
     assert any("Second" in e.text for e in mem.entries(USER_TARGET)), "but disk has it"
 
 
-def test_a_new_incarnation_picks_up_the_write(mem):
+async def test_a_new_incarnation_picks_up_the_write(mem):
     """What /new is for. Measured caveat, accepted in R3Q9: the main Telegram
     lane has had two incarnations in its life, so this can be a long wait."""
-    mem.add(USER_TARGET, "First.", "permanent")
+    await mem.add(USER_TARGET, "First.", "permanent")
     mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-1")
-    mem.add(USER_TARGET, "Second.", "permanent")
+    await mem.add(USER_TARGET, "Second.", "permanent")
 
     after = mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-2")
 
     assert "Second." in after
 
 
-def test_the_write_confirmation_says_when_it_takes_effect(mem):
+async def test_the_write_confirmation_says_when_it_takes_effect(mem):
     """Or the agent appears to ignore what it just learned."""
-    res = mem.add(USER_TARGET, "A thing.", "permanent")
+    res = await mem.add(USER_TARGET, "A thing.", "permanent")
 
     assert "/new" in res.message
 
@@ -330,18 +341,18 @@ def test_an_absent_file_snapshots_as_empty(mem):
 # --------------------------------------------------------------------------- #
 
 
-def test_owl_notes_are_separate_from_the_user_profile(mem):
-    mem.add(USER_TARGET, "About the user.", "permanent")
-    mem.add("scout", "About doing my job.", "permanent")
+async def test_owl_notes_are_separate_from_the_user_profile(mem):
+    await mem.add(USER_TARGET, "About the user.", "permanent")
+    await mem.add("scout", "About doing my job.", "permanent")
 
     assert [e.text for e in mem.entries(USER_TARGET)] == ["About the user."]
     assert [e.text for e in mem.entries("scout")] == ["About doing my job."]
 
 
-def test_two_owls_do_not_share_a_budget(mem):
+async def test_two_owls_do_not_share_a_budget(mem):
     """A shared bounded file would have owls silently evicting each other."""
-    mem.add("scout", "Scout's note.", "permanent")
-    mem.add("brain", "Brain's note.", "permanent")
+    await mem.add("scout", "Scout's note.", "permanent")
+    await mem.add("brain", "Brain's note.", "permanent")
 
     assert len(mem.entries("scout")) == 1
     assert len(mem.entries("brain")) == 1
@@ -354,18 +365,18 @@ def test_a_target_that_could_escape_the_directory_is_refused(mem, bad):
         mem.path_for(bad)
 
 
-def test_entries_are_stored_under_the_voted_directory(mem, tmp_path):
-    mem.add(USER_TARGET, "x", "permanent")
-    mem.add("scout", "y", "permanent")
+async def test_entries_are_stored_under_the_voted_directory(mem, tmp_path):
+    await mem.add(USER_TARGET, "x", "permanent")
+    await mem.add("scout", "y", "permanent")
 
     assert (tmp_path / "memory" / "USER.md").exists()
     assert (tmp_path / "memory" / "scout.md").exists()
 
 
-def test_a_partial_write_cannot_truncate_the_profile(mem, tmp_path, monkeypatch):
+async def test_a_partial_write_cannot_truncate_the_profile(mem, tmp_path, monkeypatch):
     """Written via a temp file and replaced, so a crash mid-write cannot leave a
     truncated profile that the next boot reads as the user's whole identity."""
-    mem.add(USER_TARGET, "Important and long-standing fact.", "permanent")
+    await mem.add(USER_TARGET, "Important and long-standing fact.", "permanent")
     original = (tmp_path / "memory" / "USER.md").read_text()
 
     def _boom(*a, **k):
@@ -373,7 +384,7 @@ def test_a_partial_write_cannot_truncate_the_profile(mem, tmp_path, monkeypatch)
 
     monkeypatch.setattr("pathlib.Path.replace", _boom)
     with pytest.raises(OSError):
-        mem.add(USER_TARGET, "Second fact.", "permanent")
+        await mem.add(USER_TARGET, "Second fact.", "permanent")
 
     assert (tmp_path / "memory" / "USER.md").read_text() == original
 

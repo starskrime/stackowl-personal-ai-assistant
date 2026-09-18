@@ -61,9 +61,9 @@ def mem(root: Path) -> CuratedMemory:
 # The confirmation must name its destination — the load-bearing guarantee
 # ---------------------------------------------------------------------------
 
-def test_a_successful_add_names_where_it_landed(mem: CuratedMemory) -> None:
+async def test_a_successful_add_names_where_it_landed(mem: CuratedMemory) -> None:
     """The defect: "Saved." regardless of destination made a misroute invisible."""
-    result = mem.add(USER_TARGET, "Bakir works in Plano.", "permanent")
+    result = await mem.add(USER_TARGET, "Bakir works in Plano.", "permanent")
 
     assert result.ok
     assert "USER.md" in result.message or "user" in result.message.lower(), (
@@ -71,8 +71,8 @@ def test_a_successful_add_names_where_it_landed(mem: CuratedMemory) -> None:
     )
 
 
-def test_an_owl_targeted_add_names_the_owl(mem: CuratedMemory) -> None:
-    result = mem.add("jobmarket", "Prefers remote roles.", "permanent")
+async def test_an_owl_targeted_add_names_the_owl(mem: CuratedMemory) -> None:
+    result = await mem.add("jobmarket", "Prefers remote roles.", "permanent")
 
     assert result.ok
     assert "jobmarket" in result.message, (
@@ -80,10 +80,10 @@ def test_an_owl_targeted_add_names_the_owl(mem: CuratedMemory) -> None:
     )
 
 
-def test_the_two_destinations_do_not_read_the_same(mem: CuratedMemory) -> None:
+async def test_the_two_destinations_do_not_read_the_same(mem: CuratedMemory) -> None:
     """The whole point. If both say the same sentence, naming has bought nothing."""
-    to_user = mem.add(USER_TARGET, "Fact one.", "permanent").message
-    to_owl = mem.add("jobmarket", "Fact two.", "permanent").message
+    to_user = (await mem.add(USER_TARGET, "Fact one.", "permanent")).message
+    to_owl = (await mem.add("jobmarket", "Fact two.", "permanent")).message
 
     assert to_user != to_owl
 

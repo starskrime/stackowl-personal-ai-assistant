@@ -64,7 +64,7 @@ def mem(tmp_path) -> CuratedMemory:  # type: ignore[no-untyped-def]
     return CuratedMemory(root=tmp_path / "memory")
 
 
-def _fill_permanent(mem: CuratedMemory, *, stop_at: int = 80, cap: int = 500) -> int:
+async def _fill_permanent(mem: CuratedMemory, *, stop_at: int = 80, cap: int = 500) -> int:
     """Fill the permanent tier with UNIQUE entries until it is (nearly) full.
 
     UNIQUE, and that is the point of the helper. ``add`` short-circuits a
@@ -82,7 +82,7 @@ def _fill_permanent(mem: CuratedMemory, *, stop_at: int = 80, cap: int = 500) ->
     for i in range(cap):
         if mem.headroom_for(USER_TARGET, "permanent") <= stop_at:
             return written
-        mem.add(USER_TARGET, f"Existing entry number {i} about how I work.", "permanent")
+        await mem.add(USER_TARGET, f"Existing entry number {i} about how I work.", "permanent")
         written += 1
     raise AssertionError(
         f"the permanent tier never filled in {cap} writes — headroom_for is not shrinking"
@@ -94,9 +94,9 @@ def _fill_permanent(mem: CuratedMemory, *, stop_at: int = 80, cap: int = 500) ->
 # --------------------------------------------------------------------------- #
 
 
-def test_a_permanent_fill_loop_terminates(mem: CuratedMemory) -> None:
+async def test_a_permanent_fill_loop_terminates(mem: CuratedMemory) -> None:
     """THE DEFECT. Paced against the tier it actually writes to, the fill ends."""
-    written = _fill_permanent(mem)
+    written = await _fill_permanent(mem)
 
     assert written > 0, "nothing was written at all"
     assert mem.headroom_for(USER_TARGET, "permanent") <= 80
@@ -110,7 +110,7 @@ def test_headroom_is_per_durability_not_whole_file(mem: CuratedMemory) -> None:
     assert mem.headroom_for(USER_TARGET, "permanent") < mem.budget_for(USER_TARGET)
 
 
-def test_headroom_never_goes_negative(mem: CuratedMemory) -> None:
+async def test_headroom_never_goes_negative(mem: CuratedMemory) -> None:
     """A target already OVER its ceiling is a live condition — three were measured
     on 2026-09-01. A negative headroom would make ``while headroom > n`` true
     again and spin exactly as before."""
@@ -120,7 +120,7 @@ def test_headroom_never_goes_negative(mem: CuratedMemory) -> None:
     # gate cannot produce this state, so it is written directly.
     from stackowl.memory.curated import Entry
 
-    mem._write(  # noqa: SLF001 — reproducing a state the gate refuses to create
+    await mem._write(  # noqa: SLF001 — reproducing a state the gate refuses to create
         USER_TARGET,
         [Entry(text="x" * 200, durability="permanent") for _ in range(8)],
     )
@@ -132,32 +132,32 @@ def test_headroom_never_goes_negative(mem: CuratedMemory) -> None:
     )
 
 
-def test_a_write_is_refused_exactly_when_headroom_says_so(mem: CuratedMemory) -> None:
+async def test_a_write_is_refused_exactly_when_headroom_says_so(mem: CuratedMemory) -> None:
     """The number must agree with the gate it describes, or it is a second
     opinion rather than an answer."""
-    _fill_permanent(mem)
+    await _fill_permanent(mem)
 
-    assert mem.add(USER_TARGET, "y" * 300, "permanent").ok is False
+    assert (await mem.add(USER_TARGET, "y" * 300, "permanent")).ok is False
 
 
-def test_the_reserve_still_admits_the_tier_it_protects(mem: CuratedMemory) -> None:
+async def test_the_reserve_still_admits_the_tier_it_protects(mem: CuratedMemory) -> None:
     """The reserve exists so the decaying tier always has somewhere to live. A
     file full to the PERMANENT ceiling must still accept an ``until_changed``
     write, or this fix would have closed the door the reserve holds open."""
-    _fill_permanent(mem)
+    await _fill_permanent(mem)
 
     assert mem.headroom_for(USER_TARGET, "until_changed") > 0
-    assert mem.add(USER_TARGET, "I prefer terse replies", "until_changed").ok is True
+    assert (await mem.add(USER_TARGET, "I prefer terse replies", "until_changed")).ok is True
 
 
-def test_a_duplicate_write_does_not_move_the_headroom(mem: CuratedMemory) -> None:
+async def test_a_duplicate_write_does_not_move_the_headroom(mem: CuratedMemory) -> None:
     """WHY THE HELPER INSISTS ON UNIQUE TEXT, pinned so the next reader does not
     rediscover it by hanging. ``add`` reports success for a duplicate and writes
     nothing, so a fill loop using constant text makes no progress at all."""
-    mem.add(USER_TARGET, "I use uv, not npm", "permanent")
+    await mem.add(USER_TARGET, "I use uv, not npm", "permanent")
     before = mem.headroom_for(USER_TARGET, "permanent")
 
-    result = mem.add(USER_TARGET, "I use uv, not npm", "permanent")
+    result = await mem.add(USER_TARGET, "I use uv, not npm", "permanent")
 
     assert result.ok is True, "a duplicate is reported as success"
     assert mem.headroom_for(USER_TARGET, "permanent") == before, (

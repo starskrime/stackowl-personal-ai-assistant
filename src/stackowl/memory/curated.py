@@ -49,11 +49,17 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from stackowl.infra.bounded_mru import BoundedMRU
 from stackowl.infra.nudge import TurnNudge
 from stackowl.infra.observability import log
+from stackowl.journal import memory_events
+from stackowl.journal.enums import ActorKind
 from stackowl.paths import StackowlHome
+
+if TYPE_CHECKING:  # pragma: no cover -- typing-only
+    from stackowl.db.pool import DbPool
 
 __all__ = [
     "DURABILITIES",
@@ -67,8 +73,28 @@ __all__ = [
     "note_turn",
     "note_write",
     "reset_nudges",
+    "set_db_pool",
     "shared_memory",
 ]
+
+#: Story 2.8 -- module-level DbPool, wired ONCE at startup (mirrors
+#: `shared_memory()`'s own module-global pattern, and
+#: `providers/registry.py::set_db_pool`'s identically-named seam). Writes
+#: through `CuratedMemory` are documented stateless (any caller may
+#: construct its own instance), so the JOURNALING side effect cannot live on
+#: an instance either -- it has to be reachable from any instance,
+#: including ones tests and callers construct fresh. `None` until wired: a
+#: test or standalone construction that never called `set_db_pool` must
+#: still write its file successfully, with nothing journaled.
+_DB_POOL: DbPool | None = None
+
+
+def set_db_pool(db_pool: DbPool) -> None:
+    """Wire the DbPool every `CuratedMemory` instance journals writes
+    through. Called once at startup (`startup/orchestrator.py`), mirroring
+    `providers/registry.py::set_db_pool`'s own seam."""
+    global _DB_POOL  # noqa: PLW0603 -- one process-wide pool, deliberately
+    _DB_POOL = db_pool
 
 #: Separates entries within a file. Adopted from the reference platform: a bare
 #: sentinel on its own line survives a user hand-editing the file in a way that
@@ -716,11 +742,20 @@ class CuratedMemory:
         """Clear the per-turn consolidation-failure budget. Call at turn start."""
         self._consolidation_failures = 0
 
-    def add(self, target: str, text: str, durability: str) -> MemoryResult:
+    async def add(
+        self, target: str, text: str, durability: str,
+        *, actor_kind: ActorKind = ActorKind.OWNER, actor_id: str = "",
+    ) -> MemoryResult:
         """Append an entry, or REFUSE and ask for consolidation.
 
         Refusing is the mechanism, not a failure mode: it is what makes the
         budget bind and forgetting the agent's problem.
+
+        ``async`` since Story 2.8: every real production caller already runs
+        inside an ``async def`` (the memory tool, the slash command, the
+        rollover-summary handler), and `_write` journals a `memory.written`
+        event immediately after the file write (AD-24). ``actor_kind``/
+        ``actor_id`` identify who is writing, for that journal row.
         """
         # 1. ENTRY
         log.memory.debug(
@@ -772,7 +807,13 @@ class CuratedMemory:
                 durability=durability, tier_ceiling=effective_budget,
             )
 
-        self._write(target, candidate)
+        # `add` always appends, so the new entry is the LAST index -- even
+        # after eviction above, which never touches `candidate[-1]` (the
+        # entry just offered, per `_evict_to_fit`'s own docstring).
+        await self._write(
+            target, candidate, op="add", changed_index=len(candidate) - 1,
+            durability=durability, actor_kind=actor_kind, actor_id=actor_id,
+        )
         # 4. EXIT
         log.memory.info(
             "[curated] add: stored",
@@ -816,9 +857,14 @@ class CuratedMemory:
             "with." + note,
         )
 
-    def replace(self, target: str, old_text: str, new_text: str,
-                durability: str) -> MemoryResult:
-        """Swap one entry for another. The verb consolidation actually needs."""
+    async def replace(
+        self, target: str, old_text: str, new_text: str, durability: str,
+        *, actor_kind: ActorKind = ActorKind.OWNER, actor_id: str = "",
+    ) -> MemoryResult:
+        """Swap one entry for another. The verb consolidation actually needs.
+
+        ``async`` since Story 2.8 -- see :meth:`add`'s docstring.
+        """
         log.memory.debug(
             "[curated] replace: entry",
             extra={"_fields": {"target": target, "chars": len(new_text)}},
@@ -863,15 +909,27 @@ class CuratedMemory:
                 target, new_text, budget,
                 durability=durability, tier_ceiling=effective_budget,
             )
-        self._write(target, updated)
+        # The replacement lands at the REPLACED entry's own preserved index --
+        # the list comprehension above keeps every other entry's position.
+        changed_index = existing.index(matched[0])
+        await self._write(
+            target, updated, op="replace", changed_index=changed_index,
+            durability=durability, actor_kind=actor_kind, actor_id=actor_id,
+        )
         log.memory.info(
             "[curated] replace: stored",
             extra={"_fields": {"target": target, "used": projected}},
         )
         return self._success(target, "Replaced.")
 
-    def remove(self, target: str, text: str) -> MemoryResult:
-        """Drop an entry. Destructive, so it matches on substring and reports."""
+    async def remove(
+        self, target: str, text: str,
+        *, actor_kind: ActorKind = ActorKind.OWNER, actor_id: str = "",
+    ) -> MemoryResult:
+        """Drop an entry. Destructive, so it matches on substring and reports.
+
+        ``async`` since Story 2.8 -- see :meth:`add`'s docstring.
+        """
         log.memory.debug("[curated] remove: entry",
                          extra={"_fields": {"target": target}})
         existing = self.entries(target)
@@ -880,7 +938,13 @@ class CuratedMemory:
             return self._failure(
                 target, f"No entry matching {text[:60]!r}.", echo=True,
             )
-        self._write(target, keep)
+        # A removed entry has no post-write position -- the remaining
+        # entries all shift -- so `remove` carries no `changed_index`
+        # (`record_ref.locator` gets `path` only, no `anchor`).
+        await self._write(
+            target, keep, op="remove", changed_index=None,
+            durability=None, actor_kind=actor_kind, actor_id=actor_id,
+        )
         log.memory.info(
             "[curated] remove: dropped",
             extra={"_fields": {"target": target, "removed": len(existing) - len(keep)}},
@@ -892,7 +956,13 @@ class CuratedMemory:
     def _render(self, entries: list[Entry]) -> str:
         return ENTRY_DELIMITER.join(e.rendered() for e in entries)
 
-    def _write(self, target: str, entries: list[Entry]) -> None:
+    async def _write(
+        self, target: str, entries: list[Entry], *,
+        op: Literal["add", "replace", "remove"] = "add",
+        changed_index: int | None = None,
+        durability: str | None = None,
+        actor_kind: ActorKind = ActorKind.OWNER, actor_id: str = "",
+    ) -> None:
         path = self.path_for(target)
         path.parent.mkdir(parents=True, exist_ok=True)
         # Write via a temp file in the same directory then replace, so a crash
@@ -901,6 +971,16 @@ class CuratedMemory:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(self._render(entries) + "\n", encoding="utf-8")
         tmp.replace(path)
+        # Story 2.8 (AD-24) — IMMEDIATELY after the atomic replace, in its
+        # own fresh transaction: curated md has no existing DB mutation of
+        # its own to piggyback a journal write onto. `op`'s Literal type is
+        # enforced by `record_md_memory_write`'s own signature; `add`/
+        # `replace`/`remove` are the only real callers.
+        await memory_events.record_md_memory_write(
+            _DB_POOL, target=target, path=path, op=op,
+            changed_index=changed_index, durability=durability,
+            actor_kind=actor_kind, actor_id=actor_id,
+        )
 
     def _evict_to_fit(
         self, candidate: list[Entry], budget: int,

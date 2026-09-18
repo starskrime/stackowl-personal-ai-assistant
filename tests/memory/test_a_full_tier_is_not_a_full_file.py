@@ -49,7 +49,7 @@ def mem(tmp_path):  # noqa: ANN001, ANN201
     return CuratedMemory(root=tmp_path / "memory")
 
 
-def _fill_permanent_to_ceiling(mem: CuratedMemory) -> str:
+async def _fill_permanent_to_ceiling(mem: CuratedMemory) -> str:
     """Fill ONLY the permanent tier, the way the live user.md is filled.
 
     Returns the text that was REFUSED. Re-offering that exact text is what makes
@@ -58,16 +58,17 @@ def _fill_permanent_to_ceiling(mem: CuratedMemory) -> str:
     """
     for i in range(500):
         text = f"Permanent fact {i} about how the operator works and what he prefers."
-        if not mem.add(USER_TARGET, text, "permanent").ok:
+        result = await mem.add(USER_TARGET, text, "permanent")
+        if not result.ok:
             return text
     raise AssertionError("the permanent tier never hit its ceiling")
 
 
-def test_the_refusal_never_understates_the_budget(mem) -> None:  # noqa: ANN001
+async def test_the_refusal_never_understates_the_budget(mem) -> None:  # noqa: ANN001
     """The defect: "971/1,031" for a file whose budget is 1,375. A model reading
     that consolidates a file with 404 free characters."""
-    refused = _fill_permanent_to_ceiling(mem)
-    r = mem.add(USER_TARGET, refused, "permanent")
+    refused = await _fill_permanent_to_ceiling(mem)
+    r = await mem.add(USER_TARGET, refused, "permanent")
     assert r.ok is False
     full = mem.budget_for(USER_TARGET)
     assert f"{full:,}" in (r.message or ""), (
@@ -77,11 +78,11 @@ def test_the_refusal_never_understates_the_budget(mem) -> None:  # noqa: ANN001
     )
 
 
-def test_used_never_exceeds_the_stated_budget(mem) -> None:  # noqa: ANN001
+async def test_used_never_exceeds_the_stated_budget(mem) -> None:  # noqa: ANN001
     """On the three live targets already over the ceiling this printed a used
     LARGER than its own denominator, which no reader can act on."""
-    refused = _fill_permanent_to_ceiling(mem)
-    r = mem.add(USER_TARGET, refused, "permanent")
+    refused = await _fill_permanent_to_ceiling(mem)
+    r = await mem.add(USER_TARGET, refused, "permanent")
     used = mem.used_chars(USER_TARGET)
     full = mem.budget_for(USER_TARGET)
     assert used <= full
@@ -90,31 +91,31 @@ def test_used_never_exceeds_the_stated_budget(mem) -> None:  # noqa: ANN001
     )
 
 
-def test_the_refusal_names_the_tier_that_is_actually_full(mem) -> None:  # noqa: ANN001
+async def test_the_refusal_names_the_tier_that_is_actually_full(mem) -> None:  # noqa: ANN001
     """Telling a 100%-permanent file to 'remove what is stale' without saying
     WHICH tier is blocking is why jobmarket asked three times in two minutes and
     freed nothing."""
-    refused = _fill_permanent_to_ceiling(mem)
-    r = mem.add(USER_TARGET, refused, "permanent")
+    refused = await _fill_permanent_to_ceiling(mem)
+    r = await mem.add(USER_TARGET, refused, "permanent")
     assert "permanent" in (r.message or "").lower(), (
         f"the refusal does not say which tier is full:\n  {r.message}"
     )
 
 
-def test_it_offers_the_NON_destructive_door(mem) -> None:  # noqa: ANN001
+async def test_it_offers_the_NON_destructive_door(mem) -> None:  # noqa: ANN001
     """The missing rung, and the expensive one. When the permanent tier is full
     but the FILE is not, storing the fact as until_changed costs nothing and
     deletes nothing — and the refusal never mentioned it, so the only door the
     model was shown was the destructive one."""
-    refused = _fill_permanent_to_ceiling(mem)
-    r = mem.add(USER_TARGET, refused, "permanent")
+    refused = await _fill_permanent_to_ceiling(mem)
+    r = await mem.add(USER_TARGET, refused, "permanent")
     assert "until_changed" in (r.message or ""), (
         f"a permanent refusal on a file with room left does not offer the "
         f"non-destructive alternative:\n  {r.message}"
     )
 
 
-def test_a_genuinely_full_file_still_gets_the_consolidation_ask(mem) -> None:  # noqa: ANN001
+async def test_a_genuinely_full_file_still_gets_the_consolidation_ask(mem) -> None:  # noqa: ANN001
     """The expensive direction, and it caught a hole in the fix itself.
 
     "Store it as until_changed instead" is only true while the FILE has room. On
@@ -132,10 +133,10 @@ def test_a_genuinely_full_file_still_gets_the_consolidation_ask(mem) -> None:  #
         text = f"Permanent fact {len(entries)} written before the reserve existed."
         entries.append(Entry(text=text, durability="permanent"))
         total += len(text)
-    mem._write(USER_TARGET, entries)  # noqa: SLF001
+    await mem._write(USER_TARGET, entries)  # noqa: SLF001
     assert mem.used_chars(USER_TARGET) > ceiling
 
-    r = mem.add(USER_TARGET, "A further permanent fact that cannot fit anywhere.",
+    r = await mem.add(USER_TARGET, "A further permanent fact that cannot fit anywhere.",
                 "permanent")
     assert r.ok is False
     assert "Consolidate" in (r.message or ""), (
@@ -144,7 +145,7 @@ def test_a_genuinely_full_file_still_gets_the_consolidation_ask(mem) -> None:  #
     assert "until_changed instead" not in (r.message or "")
 
 
-def _write_state_that_predates_the_gate(mem: CuratedMemory) -> int:
+async def _write_state_that_predates_the_gate(mem: CuratedMemory) -> int:
     """Put the file over the ceiling the way the LIVE files got there — written
     before the reserve existed. Going through `add` could not produce this state,
     which is the whole point: an admission gate cannot create, or repair, it."""
@@ -154,16 +155,16 @@ def _write_state_that_predates_the_gate(mem: CuratedMemory) -> int:
         text = f"Permanent fact {len(entries)} recorded before the reserve existed."
         entries.append(Entry(text=text, durability="permanent"))
         total += len(text)
-    mem._write(USER_TARGET, entries)  # noqa: SLF001
+    await mem._write(USER_TARGET, entries)  # noqa: SLF001
     return total
 
 
-def test_over_ceiling_targets_are_reportable(mem) -> None:  # noqa: ANN001
+async def test_over_ceiling_targets_are_reportable(mem) -> None:  # noqa: ANN001
     """The three live targets are invisible: at_capacity fires only on a write
     attempt and named neither the tier nor the reason, so nothing could ever tell
     the operator that user, jobmarket and owl have zero room for a decaying
     fact."""
-    total = _write_state_that_predates_the_gate(mem)
+    total = await _write_state_that_predates_the_gate(mem)
     over = {t: (perm, ceil, other) for t, perm, ceil, other in mem.over_ceiling_targets()}
     assert USER_TARGET in over, (
         f"a file {total} chars into a "
@@ -175,8 +176,8 @@ def test_over_ceiling_targets_are_reportable(mem) -> None:  # noqa: ANN001
     assert perm > ceil and other == 0
 
 
-def test_a_healthy_target_is_not_reported(mem) -> None:  # noqa: ANN001
+async def test_a_healthy_target_is_not_reported(mem) -> None:  # noqa: ANN001
     """The expensive direction: a false alarm on every target would train the
     operator to ignore the report entirely."""
-    mem.add(USER_TARGET, "One small permanent fact.", "permanent")
+    await mem.add(USER_TARGET, "One small permanent fact.", "permanent")
     assert USER_TARGET not in {t for t, *_ in mem.over_ceiling_targets()}

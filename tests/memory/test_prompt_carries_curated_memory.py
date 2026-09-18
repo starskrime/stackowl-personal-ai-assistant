@@ -22,19 +22,19 @@ def mem(tmp_path):
     return CuratedMemory(root=tmp_path / "memory")
 
 
-def test_the_user_profile_reaches_the_snapshot(mem):
-    mem.add(USER_TARGET, "Bakir builds StackOwl.", "permanent")
+async def test_the_user_profile_reaches_the_snapshot(mem):
+    await mem.add(USER_TARGET, "Bakir builds StackOwl.", "permanent")
 
     assert "Bakir builds StackOwl." in mem.snapshot_for_prompt(
         USER_TARGET, conversation_id="s1",
     )
 
 
-def test_owl_notes_are_separate_from_the_profile_in_the_prompt(mem):
+async def test_owl_notes_are_separate_from_the_profile_in_the_prompt(mem):
     """Two blocks, not one: 'who my user is' and 'what I learned doing my job'
     are different claims and must not be presented as one."""
-    mem.add(USER_TARGET, "Prefers root-cause fixes.", "permanent")
-    mem.add("scout", "Recovery lanes need a retry budget.", "permanent")
+    await mem.add(USER_TARGET, "Prefers root-cause fixes.", "permanent")
+    await mem.add("scout", "Recovery lanes need a retry budget.", "permanent")
 
     user = mem.snapshot_for_prompt(USER_TARGET, conversation_id="s1")
     owl = mem.snapshot_for_prompt("scout", conversation_id="s1")
@@ -49,9 +49,9 @@ def test_a_missing_file_contributes_nothing_rather_than_failing(mem):
     assert mem.snapshot_for_prompt("nobody", conversation_id="s1") == ""
 
 
-def test_an_unreadable_file_degrades_to_empty(mem, tmp_path, monkeypatch):
+async def test_an_unreadable_file_degrades_to_empty(mem, tmp_path, monkeypatch):
     """A profile that cannot be read must cost context, never a reply."""
-    mem.add(USER_TARGET, "Something.", "permanent")
+    await mem.add(USER_TARGET, "Something.", "permanent")
 
     def _boom(*a, **k):
         raise OSError("permission denied")
@@ -61,10 +61,10 @@ def test_an_unreadable_file_degrades_to_empty(mem, tmp_path, monkeypatch):
     assert mem.snapshot_for_prompt(USER_TARGET, conversation_id="fresh") == ""
 
 
-def test_the_entry_text_is_returned_verbatim(mem):
+async def test_the_entry_text_is_returned_verbatim(mem):
     """The user can open the file and correct it, so what they wrote is what the
     model is told — reformatting would quietly break that contract."""
     text = "Runs on a Jetson; never pull models locally."
-    mem.add(USER_TARGET, text, "permanent")
+    await mem.add(USER_TARGET, text, "permanent")
 
     assert text in mem.snapshot_for_prompt(USER_TARGET, conversation_id="s1")

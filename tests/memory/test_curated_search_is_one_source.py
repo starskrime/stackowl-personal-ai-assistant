@@ -30,11 +30,11 @@ def _curated(tmp_path: Path):
     return CuratedMemory(root=tmp_path)
 
 
-def test_search_finds_an_entry_in_the_user_profile(tmp_path: Path) -> None:
+async def test_search_finds_an_entry_in_the_user_profile(tmp_path: Path) -> None:
     from stackowl.memory.curated import USER_TARGET
 
     mem = _curated(tmp_path)
-    mem.add(USER_TARGET, "Bakir's dashboard lives at grafana.internal", "permanent")
+    await mem.add(USER_TARGET, "Bakir's dashboard lives at grafana.internal", "permanent")
 
     hits = mem.search("grafana.internal")
 
@@ -42,18 +42,18 @@ def test_search_finds_an_entry_in_the_user_profile(tmp_path: Path) -> None:
     assert "grafana.internal" in hits[0][1]
 
 
-def test_search_is_case_insensitive(tmp_path: Path) -> None:
+async def test_search_is_case_insensitive(tmp_path: Path) -> None:
     from stackowl.memory.curated import USER_TARGET
 
     mem = _curated(tmp_path)
-    mem.add(USER_TARGET, "The Runbook is at EXAMPLE.COM/ops", "permanent")
+    await mem.add(USER_TARGET, "The Runbook is at EXAMPLE.COM/ops", "permanent")
 
     assert mem.search("example.com/ops"), "search must fold case"
 
 
-def test_search_spans_owl_files_not_just_the_user_profile(tmp_path: Path) -> None:
+async def test_search_spans_owl_files_not_just_the_user_profile(tmp_path: Path) -> None:
     mem = _curated(tmp_path)
-    mem.add("secretary", "Telegram replies stay under 2048 tokens", "until_changed")
+    await mem.add("secretary", "Telegram replies stay under 2048 tokens", "until_changed")
 
     hits = mem.search("2048 tokens")
 
@@ -98,7 +98,7 @@ async def test_browser_recall_url_finds_a_url_written_in_curated_memory(
     from stackowl.tools.browser.tools import BrowserRecallUrlTool
 
     mem = _curated(tmp_path)
-    mem.add(USER_TARGET, "The ops runbook is at example.com/ops", "permanent")
+    await mem.add(USER_TARGET, "The ops runbook is at example.com/ops", "permanent")
     monkeypatch.setattr("stackowl.memory.curated.shared_memory", lambda: mem)
 
     result = await BrowserRecallUrlTool().execute(url="https://example.com/ops")

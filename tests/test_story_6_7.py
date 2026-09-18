@@ -97,7 +97,7 @@ async def test_remember_can_refuse_the_user_too(_isolated_memory):
     # and no full test run could finish. `headroom_for` asks the question the
     # gate actually answers.
     while mem.headroom_for(USER_TARGET, "permanent") > 80:
-        mem.add(USER_TARGET, f"Existing entry number {i} about how I work.", "permanent")
+        await mem.add(USER_TARGET, f"Existing entry number {i} about how I work.", "permanent")
         i += 1
 
     out = _text(await _cmd().handle("remember " + "x" * 300, make_state()))
@@ -115,7 +115,7 @@ async def test_remember_without_text_shows_usage(_isolated_memory):
 
 
 async def test_forget_removes_a_matching_entry(_isolated_memory):
-    _isolated_memory.add(USER_TARGET, "Temporary interest in X.", "until_changed")
+    await _isolated_memory.add(USER_TARGET, "Temporary interest in X.", "until_changed")
 
     out = _text(await _cmd().handle("forget Temporary interest", make_state()))
 
@@ -124,7 +124,7 @@ async def test_forget_removes_a_matching_entry(_isolated_memory):
 
 
 async def test_forget_reports_a_miss(_isolated_memory):
-    _isolated_memory.add(USER_TARGET, "Something.", "permanent")
+    await _isolated_memory.add(USER_TARGET, "Something.", "permanent")
 
     out = _text(await _cmd().handle("forget nothing like this", make_state()))
 
@@ -142,8 +142,8 @@ async def test_forget_without_text_shows_usage(_isolated_memory):
 
 
 async def test_stats_counts_entries_per_file(_isolated_memory):
-    _isolated_memory.add(USER_TARGET, "About me.", "permanent")
-    _isolated_memory.add("scout", "About my job.", "permanent")
+    await _isolated_memory.add(USER_TARGET, "About me.", "permanent")
+    await _isolated_memory.add("scout", "About my job.", "permanent")
 
     out = _text(await _cmd().handle("stats", make_state()))
 
@@ -157,7 +157,7 @@ async def test_stats_says_so_when_empty(_isolated_memory):
 
 
 async def test_budget_shows_the_limit_that_binds(_isolated_memory):
-    _isolated_memory.add(USER_TARGET, "A thing.", "permanent")
+    await _isolated_memory.add(USER_TARGET, "A thing.", "permanent")
 
     out = _text(await _cmd().handle("budget", make_state()))
 
@@ -165,7 +165,7 @@ async def test_budget_shows_the_limit_that_binds(_isolated_memory):
 
 
 async def test_search_finds_an_entry_by_substring(_isolated_memory):
-    _isolated_memory.add(USER_TARGET, "Runs everything on a Jetson.", "permanent")
+    await _isolated_memory.add(USER_TARGET, "Runs everything on a Jetson.", "permanent")
 
     out = _text(await _cmd().handle("search jetson", make_state()))
 
@@ -182,7 +182,7 @@ async def test_search_without_a_query_shows_usage(_isolated_memory):
 
 async def test_export_prints_the_file_verbatim(_isolated_memory):
     """Verbatim is the contract: what you read is what the model reads."""
-    _isolated_memory.add(USER_TARGET, "Exact text, unreformatted.", "permanent")
+    await _isolated_memory.add(USER_TARGET, "Exact text, unreformatted.", "permanent")
 
     out = _text(await _cmd().handle("export", make_state()))
 

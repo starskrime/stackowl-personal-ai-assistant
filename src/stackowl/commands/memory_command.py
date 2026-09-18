@@ -20,6 +20,7 @@ from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, re
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.response import CommandResponse
 from stackowl.infra.observability import log
+from stackowl.journal.enums import ActorKind
 from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -304,7 +305,10 @@ class MemoryCommand(SlashCommand):
         durability = "permanent"
         if stripped.startswith("--until-changed "):
             durability, stripped = "until_changed", stripped[len("--until-changed "):].strip()
-        result = self._curated().add(USER_TARGET, stripped, durability)
+        result = await self._curated().add(
+            USER_TARGET, stripped, durability,
+            actor_kind=ActorKind.OWNER, actor_id="owner",
+        )
         log.memory.info("[commands] memory.remember: exit",
                         extra={"_fields": {"ok": result.ok, "usage": result.usage}})
         mark = "✓" if result.ok else "✗"
@@ -350,7 +354,9 @@ class MemoryCommand(SlashCommand):
                 f"Removing them all: /memory forget {text} YES\n"
                 "Or narrow the text to match a single entry."
             )
-        result = mem.remove(USER_TARGET, text)
+        result = await mem.remove(
+            USER_TARGET, text, actor_kind=ActorKind.OWNER, actor_id="owner",
+        )
         return f"{'✓' if result.ok else '✗'} {result.message}"
 
     async def _export(self, args: str) -> str:

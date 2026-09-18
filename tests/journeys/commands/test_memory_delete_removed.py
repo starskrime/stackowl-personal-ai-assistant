@@ -85,7 +85,7 @@ async def test_memory_forget_still_works(db: DbPool) -> None:
     """
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
-    CuratedMemory().add(USER_TARGET, "still works after the delete removal", "permanent")
+    await CuratedMemory().add(USER_TARGET, "still works after the delete removal", "permanent")
 
     deps = _make_deps(FakeBridge(), db)
     register_all_commands(deps, registry=CommandRegistry.instance())

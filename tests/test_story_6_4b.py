@@ -42,7 +42,7 @@ async def test_memory_command_stats(db: DbPool) -> None:
     _reset_registry()
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
-    CuratedMemory().add(USER_TARGET, "the deploy region is eu-west-1", "permanent")
+    await CuratedMemory().add(USER_TARGET, "the deploy region is eu-west-1", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
@@ -57,7 +57,7 @@ async def test_memory_command_search_finds_a_curated_entry(db: DbPool) -> None:
     _reset_registry()
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
-    CuratedMemory().add(USER_TARGET, "alpha bravo charlie", "permanent")
+    await CuratedMemory().add(USER_TARGET, "alpha bravo charlie", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
@@ -113,7 +113,7 @@ async def test_memory_command_forget_removes_a_SINGLE_match_immediately(
     _reset_registry()
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
-    CuratedMemory().add(USER_TARGET, "to forget one", "permanent")
+    await CuratedMemory().add(USER_TARGET, "to forget one", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
@@ -136,7 +136,7 @@ async def test_memory_command_forget_reports_a_miss_rather_than_a_false_success(
     _reset_registry()
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
-    CuratedMemory().add(USER_TARGET, "keep this one", "permanent")
+    await CuratedMemory().add(USER_TARGET, "keep this one", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(

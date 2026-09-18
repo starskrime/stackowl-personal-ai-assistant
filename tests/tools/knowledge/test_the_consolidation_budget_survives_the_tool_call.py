@@ -71,7 +71,7 @@ def shared(tmp_path, monkeypatch):
     return store, MemoryTool()
 
 
-def _fill(store: CuratedMemory) -> None:
+async def _fill(store: CuratedMemory) -> None:
     """Push the profile to capacity so every further write must consolidate.
 
     EVERY ENTRY IS DISTINCT, and the first version was not. Repeating one string
@@ -85,21 +85,22 @@ def _fill(store: CuratedMemory) -> None:
     for i in range(200):
         if store.used_chars(USER_TARGET) >= budget - 60:
             return
-        if not store.add(USER_TARGET, f"fact number {i} " + "x" * 40, "permanent").ok:
+        result = await store.add(USER_TARGET, f"fact number {i} " + "x" * 40, "permanent")
+        if not result.ok:
             return
     raise AssertionError("could not fill the profile in 200 writes")
 
 
 class TestTheBudgetIsReachableThroughTheTool:
-    def test_repeated_refusals_reach_the_cap_and_go_terminal(self, shared) -> None:
+    async def test_repeated_refusals_reach_the_cap_and_go_terminal(self, shared) -> None:
         """THE DEFECT, at the tool boundary. Before the fix each call built its own
         CuratedMemory, so `attempt` was 1 forever and this could not be reached."""
         store, _tool = shared
-        _fill(store)
+        await _fill(store)
         text = "Something far too long to ever fit " + "y" * 400
 
         results = [
-            store.add(USER_TARGET, text, "permanent")
+            await store.add(USER_TARGET, text, "permanent")
             for _ in range(MAX_CONSOLIDATION_FAILURES_PER_TURN + 1)
         ]
 
@@ -109,14 +110,14 @@ class TestTheBudgetIsReachableThroughTheTool:
             "a write that cannot fit — the turn has no bound but its step budget"
         )
 
-    def test_a_successful_write_still_resets_the_budget(self, shared) -> None:
+    async def test_a_successful_write_still_resets_the_budget(self, shared) -> None:
         """The cap counts CONSECUTIVE failures. Sharing the instance must not turn
         it into a lifetime counter that punishes a turn for an earlier one."""
         store, _tool = shared
-        store.add(USER_TARGET, "a durable fact", "permanent")
-        _fill(store)
-        store.add(USER_TARGET, "z" * 900, "permanent")   # one failure
-        ok = store.remove(USER_TARGET, "a durable fact")
+        await store.add(USER_TARGET, "a durable fact", "permanent")
+        await _fill(store)
+        await store.add(USER_TARGET, "z" * 900, "permanent")   # one failure
+        ok = await store.remove(USER_TARGET, "a durable fact")
 
         assert ok.ok is True
         assert store._consolidation_failures == 0, (

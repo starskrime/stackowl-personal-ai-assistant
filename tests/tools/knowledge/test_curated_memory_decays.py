@@ -56,7 +56,7 @@ def mem(tmp_path, monkeypatch):
 _BIG = 300
 
 
-def _fill_to_capacity(mem: CuratedMemory, target: str, *, durability: str) -> int:
+async def _fill_to_capacity(mem: CuratedMemory, target: str, *, durability: str) -> int:
     """Add entries until the file is genuinely full. Returns how many landed.
 
     Stops on the first refusal (permanent) or when eviction starts recycling
@@ -64,7 +64,7 @@ def _fill_to_capacity(mem: CuratedMemory, target: str, *, durability: str) -> in
     """
     stored = 0
     for i in range(40):
-        r = mem.add(target, f"{durability[:4]}-{i:02d} " + "x" * 90,
+        r = await mem.add(target, f"{durability[:4]}-{i:02d} " + "x" * 90,
                     durability=durability)
         if not r.ok:
             break
@@ -75,70 +75,70 @@ def _fill_to_capacity(mem: CuratedMemory, target: str, *, durability: str) -> in
 
 
 class TestAFullFileMakesRoomInsteadOfLosingTheNewFact:
-    def test_the_new_fact_survives_a_full_file(self, mem: CuratedMemory) -> None:
+    async def test_the_new_fact_survives_a_full_file(self, mem: CuratedMemory) -> None:
         """The regression that cost 13,655 chars: the write was simply refused."""
-        _fill_to_capacity(mem, "user", durability="until_changed")
+        await _fill_to_capacity(mem, "user", durability="until_changed")
 
-        result = mem.add("user", "the fact that mattered " + "y" * _BIG,
+        result = await mem.add("user", "the fact that mattered " + "y" * _BIG,
                          durability="until_changed")
 
         assert result.ok, result.message
         assert any("the fact that mattered" in e.text for e in mem.entries("user"))
 
-    def test_the_oldest_until_changed_is_what_goes(self, mem: CuratedMemory) -> None:
+    async def test_the_oldest_until_changed_is_what_goes(self, mem: CuratedMemory) -> None:
         """File order is insertion order, so the first one there is the oldest."""
-        _fill_to_capacity(mem, "user", durability="until_changed")
+        await _fill_to_capacity(mem, "user", durability="until_changed")
         before = [e.text for e in mem.entries("user")]
 
-        mem.add("user", "brand new " + "y" * _BIG, durability="until_changed")
+        await mem.add("user", "brand new " + "y" * _BIG, durability="until_changed")
 
         after = [e.text for e in mem.entries("user")]
         assert before[0] not in after
         assert before[-1] in after
 
-    def test_it_stays_inside_the_budget(self, mem: CuratedMemory) -> None:
-        _fill_to_capacity(mem, "user", durability="until_changed")
+    async def test_it_stays_inside_the_budget(self, mem: CuratedMemory) -> None:
+        await _fill_to_capacity(mem, "user", durability="until_changed")
 
-        mem.add("user", "brand new " + "y" * _BIG, durability="until_changed")
+        await mem.add("user", "brand new " + "y" * _BIG, durability="until_changed")
 
         assert mem.used_chars("user") <= mem.budget_for("user")
 
 
 class TestPermanentIsNeverEvicted:
-    def test_a_permanent_entry_survives_pressure(self, mem: CuratedMemory) -> None:
+    async def test_a_permanent_entry_survives_pressure(self, mem: CuratedMemory) -> None:
         """This is the difference between decay and data loss. "Bakir prefers
         root-cause fixes over patches" is the one entry in his real profile that is
         actually about him, and it is permanent."""
-        mem.add("user", "Bakir prefers root-cause fixes over patches",
+        await mem.add("user", "Bakir prefers root-cause fixes over patches",
                 durability="permanent")
-        _fill_to_capacity(mem, "user", durability="until_changed")
+        await _fill_to_capacity(mem, "user", durability="until_changed")
 
-        mem.add("user", "another one " + "y" * _BIG, durability="until_changed")
+        await mem.add("user", "another one " + "y" * _BIG, durability="until_changed")
 
         kept = [e.text for e in mem.entries("user")]
         assert any("root-cause fixes" in t for t in kept)
 
-    def test_a_file_of_only_permanent_entries_still_REFUSES(
+    async def test_a_file_of_only_permanent_entries_still_REFUSES(
         self, mem: CuratedMemory,
     ) -> None:
         """Eviction must never become a licence to delete durable facts. With
         nothing evictable left, the honest answer is still the refusal — and the
         model is asked to consolidate, exactly as before."""
-        _fill_to_capacity(mem, "user", durability="permanent")
+        await _fill_to_capacity(mem, "user", durability="permanent")
 
-        result = mem.add("user", "one more " + "y" * _BIG, durability="permanent")
+        result = await mem.add("user", "one more " + "y" * _BIG, durability="permanent")
 
         assert not result.ok
         assert "consolidate" in result.message.lower()
 
 
 class TestTheEvictionIsVisible:
-    def test_the_caller_is_told_what_was_dropped(self, mem: CuratedMemory) -> None:
+    async def test_the_caller_is_told_what_was_dropped(self, mem: CuratedMemory) -> None:
         """A silent delete is the thing this codebase keeps having to fix. The
         model gets told, so it can re-add anything it still needs."""
-        _fill_to_capacity(mem, "user", durability="until_changed")
+        await _fill_to_capacity(mem, "user", durability="until_changed")
 
-        result = mem.add("user", "brand new " + "y" * _BIG,
+        result = await mem.add("user", "brand new " + "y" * _BIG,
                          durability="until_changed")
 
         assert result.ok
@@ -146,7 +146,7 @@ class TestTheEvictionIsVisible:
 
 
 class TestTheEvictionRuleIsAgeAndNothingCleverer:
-    def test_a_mislabelled_rule_is_protected_by_marking_it_permanent(
+    async def test_a_mislabelled_rule_is_protected_by_marking_it_permanent(
         self, mem: CuratedMemory,
     ) -> None:
         """MEASURED on Bakir's real secretary.md, 2026-08-19: making room for one
@@ -172,13 +172,13 @@ class TestTheEvictionRuleIsAgeAndNothingCleverer:
         The ceiling is not arbitrary and it is not tuned to make this pass: measured
         against the live store, the largest real entry is 39.9% of its target's
         budget, so a 50% ceiling refuses ZERO of the 32 entries that exist."""
-        mem.add("user", "Telegram replies must stay under 2048 tokens",
+        await mem.add("user", "Telegram replies must stay under 2048 tokens",
                 durability="permanent")
-        mem.add("user", "a big stale block " + "s" * 600,
+        await mem.add("user", "a big stale block " + "s" * 600,
                 durability="until_changed")
 
         biggest_allowed = mem._max_entry_chars("user")
-        mem.add("user", "the new fact " + "n" * (biggest_allowed - 13),
+        await mem.add("user", "the new fact " + "n" * (biggest_allowed - 13),
                 durability="until_changed")
 
         kept = [e.text for e in mem.entries("user")]

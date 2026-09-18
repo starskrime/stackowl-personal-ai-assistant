@@ -111,3 +111,42 @@ def test_phase_gateway_registers_the_task_name_resolver_after_db_pool_exists() -
         "register_task_name_resolver(db_pool) must be a plain, unconditional "
         "top-level call in _phase_gateway, not nested inside an if/try/etc."
     )
+
+
+def test_phase_gateway_wires_curated_memory_db_pool_after_db_pool_exists() -> None:
+    """``set_curated_memory_db_pool(db_pool)`` (Story 2.8) is wired into
+    ``_phase_gateway``, unconditionally, after ``db_pool`` is bound.
+
+    THE BUG THIS GUARDS AGAINST: if this call is silently removed, reordered
+    above the ``db_pool`` assignment, or wrapped in a conditional, every
+    ``CuratedMemory`` write in production silently stops being journaled --
+    ``memory/curated.py``'s ``_DB_POOL`` stays ``None``, and
+    ``record_md_memory_write`` is a documented, never-raising no-op on that
+    condition, so nothing else would ever catch the regression. Same AST-guard
+    rationale as ``test_phase_gateway_registers_the_task_name_resolver_after_db_pool_exists``
+    above -- see the module docstring.
+    """
+    fn = _phase_gateway_ast()
+
+    call = _find_call_by_name(fn, "set_curated_memory_db_pool")
+
+    assert len(call.args) == 1, "set_curated_memory_db_pool must take exactly one argument"
+    arg = call.args[0]
+    assert isinstance(arg, ast.Name) and arg.id == "db_pool", (
+        f"set_curated_memory_db_pool must be called with the local `db_pool`, "
+        f"got: {ast.dump(arg)}"
+    )
+
+    db_pool_lineno = _find_assignment_lineno(fn, "db_pool")
+    assert call.lineno > db_pool_lineno, (
+        "set_curated_memory_db_pool(db_pool) must run AFTER `db_pool` is bound. "
+        f"call at line {call.lineno}, db_pool assigned at line {db_pool_lineno}."
+    )
+
+    is_top_level = any(
+        isinstance(stmt, ast.Expr) and stmt.value is call for stmt in fn.body
+    )
+    assert is_top_level, (
+        "set_curated_memory_db_pool(db_pool) must be a plain, unconditional "
+        "top-level call in _phase_gateway, not nested inside an if/try/etc."
+    )

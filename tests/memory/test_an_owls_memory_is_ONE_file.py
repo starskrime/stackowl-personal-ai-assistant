@@ -173,11 +173,11 @@ def test_two_DIFFERENT_owls_named_in_one_fact_still_fall_back(tmp_path) -> None:
 # ------------------------------------------------------- read and write agree
 
 
-def test_a_write_under_the_display_name_is_READ_BACK_under_the_routing_name(tmp_path) -> None:  # noqa: ANN001
+async def test_a_write_under_the_display_name_is_READ_BACK_under_the_routing_name(tmp_path) -> None:  # noqa: ANN001
     """The end-to-end contract, and the one that was broken in production: the
     prompt asks for `scout`, so a fact remembered about "Falcon" has to be there."""
     mem = _mem(tmp_path, {"scout": "scout", "falcon": "scout"})
-    mem.add("Falcon", "the guest API ignores the remote filter", "permanent")
+    await mem.add("Falcon", "the guest API ignores the remote filter", "permanent")
 
     rendered = mem.snapshot_for_prompt("scout", conversation_id="c1")
     assert "guest API" in rendered

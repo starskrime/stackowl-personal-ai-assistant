@@ -83,19 +83,21 @@ def test_the_reserve_holds_the_facts_that_were_actually_evicted(mem) -> None:  #
     )
 
 
-def test_an_until_changed_fact_survives_a_full_permanent_tier(mem) -> None:  # noqa: ANN001
+async def test_an_until_changed_fact_survives_a_full_permanent_tier(mem) -> None:  # noqa: ANN001
     """End to end, and the whole point: fill permanent to ITS ceiling, then store
     the kind of fact that was being lost, and find it still there."""
     i = 0
     while True:
         text = f"Permanent fact number {i} about the user and how they work."
-        if mem.add(USER_TARGET, text, "permanent").ok is False:
+        result = await mem.add(USER_TARGET, text, "permanent")
+        if result.ok is False:
             break
         i += 1
         assert i < 200, "permanent never hit its ceiling — the reserve is not applied"
 
     dental = "Dental: Cigna DHMO (in-network-only); in-network dentists near 75025."
-    assert mem.add(USER_TARGET, dental, "until_changed").ok, (
+    dental_result = await mem.add(USER_TARGET, dental, "until_changed")
+    assert dental_result.ok, (
         "a real until_changed fact could not be stored even with the reserve"
     )
     assert any(dental in e.text for e in mem.entries(USER_TARGET))

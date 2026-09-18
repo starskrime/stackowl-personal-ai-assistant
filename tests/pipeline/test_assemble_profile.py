@@ -57,7 +57,7 @@ async def test_the_profile_reaches_the_prompt(
     monkeypatch.setattr(
         "stackowl.memory.curated._SHARED", CuratedMemory(root=tmp_path / "memory"),
     )
-    shared_memory().add(
+    await shared_memory().add(
         USER_TARGET, "PROFILE_MARKER: Bakir builds StackOwl.", "permanent",
     )
     set_services(StepServices())
@@ -78,8 +78,8 @@ async def test_owl_notes_reach_the_prompt_alongside_the_profile(
     monkeypatch.setattr(
         "stackowl.memory.curated._SHARED", CuratedMemory(root=tmp_path / "memory"),
     )
-    shared_memory().add(USER_TARGET, "PROFILE_MARKER: the user.", "permanent")
-    shared_memory().add("secretary", "NOTES_MARKER: how I work.", "permanent")
+    await shared_memory().add(USER_TARGET, "PROFILE_MARKER: the user.", "permanent")
+    await shared_memory().add("secretary", "NOTES_MARKER: how I work.", "permanent")
     set_services(StepServices())
 
     out = await assemble.run(_state())

@@ -53,6 +53,8 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
+from stackowl.journal.enums import ActorKind
 from stackowl.memory.curated import (
     DURABILITIES,
     CuratedMemory,
@@ -359,7 +361,11 @@ class MemoryTool(Tool):
         if refusal is not None:
             return refusal
 
-        result = self._curated().add(self._target(kwargs, content), content, durability)
+        result = await self._curated().add(
+            self._target(kwargs, content), content, durability,
+            actor_kind=ActorKind.OWL,
+            actor_id=str(TraceContext.get().get("owl_name") or ""),
+        )
         return self._from_curated(result, t0)
 
     async def _replace(
@@ -382,8 +388,10 @@ class MemoryTool(Tool):
         refusal = self._scanned(content, t0)
         if refusal is not None:
             return refusal
-        result = self._curated().replace(
-            self._target(kwargs, content), old, content, durability
+        result = await self._curated().replace(
+            self._target(kwargs, content), old, content, durability,
+            actor_kind=ActorKind.OWL,
+            actor_id=str(TraceContext.get().get("owl_name") or ""),
         )
         return self._from_curated(result, t0)
 
@@ -396,7 +404,11 @@ class MemoryTool(Tool):
                 "action='remove' requires 'content' — the text of the entry to drop.",
                 t0,
             )
-        result = self._curated().remove(self._target(kwargs, text), text)
+        result = await self._curated().remove(
+            self._target(kwargs, text), text,
+            actor_kind=ActorKind.OWL,
+            actor_id=str(TraceContext.get().get("owl_name") or ""),
+        )
         return self._from_curated(result, t0)
 
     def _from_curated(self, result: object, t0: float) -> ToolResult:

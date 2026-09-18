@@ -23,10 +23,10 @@ from stackowl.memory.curated import USER_TARGET, CuratedMemory
 pytestmark = pytest.mark.asyncio
 
 
-def _seed(*texts: str) -> CuratedMemory:
+async def _seed(*texts: str) -> CuratedMemory:
     mem = CuratedMemory()
     for t in texts:
-        mem.add(USER_TARGET, t, "permanent")
+        await mem.add(USER_TARGET, t, "permanent")
     return mem
 
 
@@ -38,7 +38,7 @@ async def _forget(cmd_args: str) -> str:
 
 class TestSingleMatchStaysImmediate:
     async def test_one_match_is_removed_without_asking(self) -> None:
-        _seed("the deploy region is eu-west-1", "unrelated note")
+        await _seed("the deploy region is eu-west-1", "unrelated note")
 
         out = await _forget("deploy region")
 
@@ -49,7 +49,7 @@ class TestSingleMatchStaysImmediate:
 
     async def test_no_match_reports_a_miss(self) -> None:
         """A typo must not read as a successful deletion."""
-        _seed("keep this")
+        await _seed("keep this")
 
         out = await _forget("nothing matches")
 
@@ -59,7 +59,7 @@ class TestSingleMatchStaysImmediate:
 
 class TestMultiMatchAsksFirst:
     async def test_two_matches_are_NOT_removed_without_confirmation(self) -> None:
-        _seed("deploy region is eu-west-1", "deploy takes 9 minutes", "unrelated")
+        await _seed("deploy region is eu-west-1", "deploy takes 9 minutes", "unrelated")
 
         out = await _forget("deploy")
 
@@ -71,14 +71,14 @@ class TestMultiMatchAsksFirst:
     async def test_it_SHOWS_what_it_would_remove(self) -> None:
         """The risk is that the substring reached further than the user pictured,
         so a bare count is not enough — the entries themselves have to be named."""
-        _seed("deploy region is eu-west-1", "deploy takes 9 minutes")
+        await _seed("deploy region is eu-west-1", "deploy takes 9 minutes")
 
         out = await _forget("deploy")
 
         assert "eu-west-1" in out and "9 minutes" in out, out
 
     async def test_confirming_removes_them_all(self) -> None:
-        _seed("deploy region is eu-west-1", "deploy takes 9 minutes", "unrelated")
+        await _seed("deploy region is eu-west-1", "deploy takes 9 minutes", "unrelated")
 
         out = await _forget("deploy YES")
 
@@ -91,7 +91,7 @@ class TestMultiMatchAsksFirst:
     ) -> None:
         """`forget deploy YES` must search for "deploy", not "deploy YES" — else
         confirming would always report a miss."""
-        _seed("deploy region", "deploy window")
+        await _seed("deploy region", "deploy window")
 
         assert "✓" in await _forget("deploy YES")
         assert CuratedMemory().entries(USER_TARGET) == []

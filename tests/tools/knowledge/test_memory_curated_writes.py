@@ -174,7 +174,7 @@ async def test_the_over_budget_refusal_carries_the_entries_through(tool, tmp_pat
     for i in range(500):
         if mem.headroom_for(USER_TARGET, "permanent") <= 120:
             break
-        mem.add(USER_TARGET, f"Fact {i} about how the user works day to day.", "permanent")
+        await mem.add(USER_TARGET, f"Fact {i} about how the user works day to day.", "permanent")
     else:  # pragma: no cover — only if the ceiling stops binding
         raise AssertionError("the permanent tier never filled — headroom_for is not shrinking")
 

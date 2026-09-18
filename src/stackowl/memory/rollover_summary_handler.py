@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from stackowl.infra.observability import log
+from stackowl.journal.enums import ActorKind
 from stackowl.memory.models import StagedFact
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
@@ -443,7 +444,10 @@ class RolloverSummaryHandler(JobHandler):
             #    exactly the kind of thing that gets superseded by the next one.
             from stackowl.memory.curated import CuratedMemory
 
-            result = CuratedMemory().add(owl, correction, "until_changed")
+            result = await CuratedMemory().add(
+                owl, correction, "until_changed",
+                actor_kind=ActorKind.AUTONOMOUS, actor_id="rollover_summary",
+            )
             # 4. EXIT — INFO, because this line is the only evidence the feature
             #    ever fires, and a refusal is as informative as a write.
             log.memory.info(
