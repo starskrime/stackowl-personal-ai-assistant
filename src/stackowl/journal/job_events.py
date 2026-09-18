@@ -11,13 +11,25 @@ Importing this module registers all four types as a side effect;
 
 from __future__ import annotations
 
-from pydantic import Field
+from typing import TYPE_CHECKING, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.journal.enums import AttentionClass, Intensity, RecordKind
 from stackowl.journal.models import JournalAttrsBase
+from stackowl.journal.records import (
+    ExpiredRecord,
+    get_record_reader_registry,
+    read_sqlite_record,
+    refuse_unless_owner,
+)
 from stackowl.journal.registry import EventTypeSpec, get_registry
 
+if TYPE_CHECKING:  # pragma: no cover -- typing-only
+    from stackowl.db.pool import DbPool
+
 _EMITTING_PROCESS = "scheduler"
+_TABLE = "jobs"
 
 #: AD-4, verbatim: "attrs hold ids, numbers, closed enums and bounded labels
 #: of at most 64 characters" -- the one bound every open string field below
@@ -88,19 +100,19 @@ def _register() -> None:
         type="job.started", schema_version=1, attrs_model=JobStartedAttrs,
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_started,
+        table=_TABLE, narrate=_narrate_started,
     ))
     registry.register(EventTypeSpec(
         type="job.finished", schema_version=1, attrs_model=JobFinishedAttrs,
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_finished,
+        table=_TABLE, narrate=_narrate_finished,
     ))
     registry.register(EventTypeSpec(
         type="job.failed", schema_version=1, attrs_model=JobFailedAttrs,
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_failed,
+        table=_TABLE, narrate=_narrate_failed,
     ))
     registry.register(EventTypeSpec(
         type="job.parked", schema_version=1, attrs_model=JobParkedAttrs,
@@ -108,8 +120,46 @@ def _register() -> None:
         # AD-5, verbatim: job.parked is one of the two NAMED needs_you/high
         # examples -- the scheduler gave up on this one-shot for good.
         attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.HIGH,
-        narrate=_narrate_parked,
+        table=_TABLE, narrate=_narrate_parked,
     ))
 
 
 _register()
+
+
+class JobRecordView(BaseModel):
+    """Typed view of one ``jobs`` row -- the registered reader's return shape
+    for ``RecordKind.JOB``/``sqlite`` (AD-4)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    job_id: str
+    handler_name: str
+    schedule: str
+    idempotency_key: str
+    last_run_at: str | None = None
+    next_run_at: str
+    status: str
+    retry_count: int
+    created_at: str
+
+
+async def read_job_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> JobRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.JOB``/``sqlite`` (AD-4): opens
+    the ``jobs`` row a ``job.*`` event's ``record_ref`` points at."""
+    refuse_unless_owner(RecordKind.JOB, owner_id)
+    row = await read_sqlite_record(
+        db_pool, table=_TABLE, id_column="job_id",
+        id_value=locator.get("job_id", ""), view_model=JobRecordView,
+    )
+    if row is None:
+        return ExpiredRecord(
+            record_kind=RecordKind.JOB, locator=locator,
+            reason="the jobs row this event referenced is gone",
+        )
+    return cast(JobRecordView, row)
+
+
+get_record_reader_registry().register(RecordKind.JOB, "sqlite", read_job_record)

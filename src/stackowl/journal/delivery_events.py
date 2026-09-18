@@ -29,7 +29,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.health.status import remedy_for
 from stackowl.infra.observability import log, redact_secret_shapes
@@ -38,6 +38,12 @@ from stackowl.journal.health import note_failure
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
 from stackowl.journal.recorder import record as journal_record
+from stackowl.journal.records import (
+    ExpiredRecord,
+    get_record_reader_registry,
+    read_sqlite_record,
+    refuse_unless_owner,
+)
 from stackowl.journal.registry import EventTypeSpec, get_registry
 
 if TYPE_CHECKING:  # pragma: no cover -- typing-only
@@ -129,13 +135,13 @@ def _register() -> None:
         type="delivery.attempted", schema_version=1, attrs_model=DeliveryAttemptedAttrs,
         emitting_process="notifications.deliverer", record_kind=RecordKind.DELIVERY,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_delivery_attempted,
+        table=_TABLE, narrate=_narrate_delivery_attempted,
     ))
     registry.register(EventTypeSpec(
         type="provider.rerouted", schema_version=1, attrs_model=ProviderReroutedAttrs,
         emitting_process="notifications.deliverer", record_kind=RecordKind.PROVIDER,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_provider_rerouted,
+        table=_TABLE, narrate=_narrate_provider_rerouted,
     ))
 
 
@@ -282,3 +288,65 @@ async def record_provider_rerouted(
             notification_id=notification_id,
         ),
     )
+
+
+class DeliveryRecordView(BaseModel):
+    """Typed view of one ``delivery_records`` row -- the registered readers'
+    shared return shape for BOTH ``RecordKind.DELIVERY``/``sqlite`` AND
+    ``RecordKind.PROVIDER``/``sqlite`` (AD-4): ``delivery.attempted`` and
+    ``provider.rerouted`` share this one table (module docstring), so one
+    view model backs both readers -- two registrations (different
+    ``RecordKind``), the same shape and the same underlying row."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    kind: str
+    channel: str
+    notification_id: str | None = None
+    outcome: str
+    occurred_at: str
+
+
+async def _read_delivery_record(
+    record_kind: RecordKind, db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> DeliveryRecordView | ExpiredRecord:
+    """Shared body for both delivery-table readers -- differs only in which
+    ``RecordKind`` is being asked for and refused/excused as."""
+    refuse_unless_owner(record_kind, owner_id)
+    row = await read_sqlite_record(
+        db_pool, table=_TABLE, id_column="id",
+        id_value=locator.get("id", ""), view_model=DeliveryRecordView,
+    )
+    if row is None:
+        return ExpiredRecord(
+            record_kind=record_kind, locator=locator,
+            reason="the delivery_records row this event referenced is gone",
+        )
+    return cast(DeliveryRecordView, row)
+
+
+async def read_delivery_attempted_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> DeliveryRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.DELIVERY``/``sqlite`` (AD-4):
+    opens the ``delivery_records`` row a ``delivery.attempted`` event's
+    ``record_ref`` points at."""
+    return await _read_delivery_record(RecordKind.DELIVERY, db_pool, locator, owner_id=owner_id)
+
+
+async def read_provider_rerouted_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> DeliveryRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.PROVIDER``/``sqlite`` (AD-4):
+    opens the ``delivery_records`` row a ``provider.rerouted`` event's
+    ``record_ref`` points at."""
+    return await _read_delivery_record(RecordKind.PROVIDER, db_pool, locator, owner_id=owner_id)
+
+
+get_record_reader_registry().register(
+    RecordKind.DELIVERY, "sqlite", read_delivery_attempted_record,
+)
+get_record_reader_registry().register(
+    RecordKind.PROVIDER, "sqlite", read_provider_rerouted_record,
+)

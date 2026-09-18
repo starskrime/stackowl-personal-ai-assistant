@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.health.status import remedy_for
 from stackowl.infra.observability import log, redact_secret_shapes
@@ -32,6 +32,12 @@ from stackowl.journal.health import note_failure
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
 from stackowl.journal.recorder import record as journal_record
+from stackowl.journal.records import (
+    ExpiredRecord,
+    get_record_reader_registry,
+    read_sqlite_record,
+    refuse_unless_owner,
+)
 from stackowl.journal.registry import EventTypeSpec, get_registry
 
 if TYPE_CHECKING:  # pragma: no cover -- typing-only
@@ -74,7 +80,7 @@ def _register() -> None:
         attrs_model=ChannelMessageReceivedAttrs,
         emitting_process="startup.orchestrator", record_kind=RecordKind.CHANNEL,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_channel_message_received,
+        table=_TABLE, narrate=_narrate_channel_message_received,
     ))
 
 
@@ -168,3 +174,37 @@ async def record_channel_message_received(
         "[journal] channel_events.record_channel_message_received: exit -- recorded",
         extra={"_fields": {"channel": channel, "trace_id": trace_id}},
     )
+
+
+class ChannelIngressRecordView(BaseModel):
+    """Typed view of one ``channel_ingress_records`` row -- the registered
+    reader's return shape for ``RecordKind.CHANNEL``/``sqlite`` (AD-4)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    channel: str
+    session_key: str
+    occurred_at: str
+
+
+async def read_channel_ingress_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> ChannelIngressRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.CHANNEL``/``sqlite`` (AD-4):
+    opens the ``channel_ingress_records`` row a ``channel.message_received``
+    event's ``record_ref`` points at."""
+    refuse_unless_owner(RecordKind.CHANNEL, owner_id)
+    row = await read_sqlite_record(
+        db_pool, table=_TABLE, id_column="id",
+        id_value=locator.get("id", ""), view_model=ChannelIngressRecordView,
+    )
+    if row is None:
+        return ExpiredRecord(
+            record_kind=RecordKind.CHANNEL, locator=locator,
+            reason="the channel_ingress_records row this event referenced is gone",
+        )
+    return cast(ChannelIngressRecordView, row)
+
+
+get_record_reader_registry().register(RecordKind.CHANNEL, "sqlite", read_channel_ingress_record)

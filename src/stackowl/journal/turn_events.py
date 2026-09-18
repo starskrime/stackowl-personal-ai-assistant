@@ -31,7 +31,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.health.status import remedy_for
 from stackowl.infra.observability import log, redact_secret_shapes
@@ -41,6 +41,12 @@ from stackowl.journal.health import note_failure
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
 from stackowl.journal.recorder import record as journal_record
+from stackowl.journal.records import (
+    ExpiredRecord,
+    get_record_reader_registry,
+    read_sqlite_record,
+    refuse_unless_owner,
+)
 from stackowl.journal.registry import EventTypeSpec, get_registry
 from stackowl.journal.turn_budget import check_and_note
 
@@ -160,19 +166,19 @@ def _register() -> None:
         type="model.called", schema_version=1, attrs_model=ModelCalledAttrs,
         emitting_process="providers.base", record_kind=RecordKind.TURN,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_model_called,
+        table=_TABLE, narrate=_narrate_model_called,
     ))
     registry.register(EventTypeSpec(
         type="tool.called", schema_version=1, attrs_model=ToolCalledAttrs,
         emitting_process="pipeline.steps.execute", record_kind=RecordKind.TURN,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_tool_called,
+        table=_TABLE, narrate=_narrate_tool_called,
     ))
     registry.register(EventTypeSpec(
         type="delegation.hopped", schema_version=1, attrs_model=DelegationHoppedAttrs,
         emitting_process="owls.a2a_delegation", record_kind=RecordKind.TURN,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_delegation_hopped,
+        table=_TABLE, narrate=_narrate_delegation_hopped,
     ))
 
 
@@ -377,3 +383,43 @@ async def record_delegation_hop(
             from_owl=from_owl, to_owl=to_owl, status=status,
         ),
     )
+
+
+class TurnActionRecordView(BaseModel):
+    """Typed view of one ``turn_action_records`` row -- the registered
+    reader's return shape for ``RecordKind.TURN``/``sqlite`` (AD-4). Shared
+    across all three of this module's types (``model.called``/``tool.called``/
+    ``delegation.hopped``): they all share this one table."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    trace_id: str
+    kind: str
+    identifier: str
+    outcome: str
+    duration_ms: int | None = None
+    error_code: str | None = None
+    occurred_at: str
+
+
+async def read_turn_action_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> TurnActionRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.TURN``/``sqlite`` (AD-4): opens
+    the ``turn_action_records`` row a ``model.called``/``tool.called``/
+    ``delegation.hopped`` event's ``record_ref`` points at."""
+    refuse_unless_owner(RecordKind.TURN, owner_id)
+    row = await read_sqlite_record(
+        db_pool, table=_TABLE, id_column="id",
+        id_value=locator.get("id", ""), view_model=TurnActionRecordView,
+    )
+    if row is None:
+        return ExpiredRecord(
+            record_kind=RecordKind.TURN, locator=locator,
+            reason="the turn_action_records row this event referenced is gone",
+        )
+    return cast(TurnActionRecordView, row)
+
+
+get_record_reader_registry().register(RecordKind.TURN, "sqlite", read_turn_action_record)

@@ -32,7 +32,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.health.status import remedy_for
 from stackowl.infra.observability import log
@@ -42,6 +42,12 @@ from stackowl.journal.health import note_failure
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
 from stackowl.journal.recorder import record as journal_record
+from stackowl.journal.records import (
+    ExpiredRecord,
+    get_record_reader_registry,
+    read_sqlite_record,
+    refuse_unless_owner,
+)
 from stackowl.journal.registry import EventTypeSpec, get_registry
 
 if TYPE_CHECKING:  # pragma: no cover -- typing-only
@@ -87,7 +93,7 @@ def _register() -> None:
         type="consent.decided", schema_version=1, attrs_model=ConsentDecisionAttrs,
         emitting_process="tools.consent", record_kind=RecordKind.CONSENT,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_consent_decided,
+        table=_TABLE, narrate=_narrate_consent_decided,
     ))
 
 
@@ -181,3 +187,41 @@ async def record_consent_decision(
         "[journal] consent_events.record_consent_decision: exit -- recorded",
         extra={"_fields": {"tool": tool_name, "decision": decision}},
     )
+
+
+class ConsentDecisionRecordView(BaseModel):
+    """Typed view of one ``consent_decision_records`` row -- the registered
+    reader's return shape for ``RecordKind.CONSENT``/``sqlite`` (AD-4)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    tool_name: str
+    channel: str
+    reason: str
+    decision: str
+    occurred_at: str
+
+
+async def read_consent_decision_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> ConsentDecisionRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.CONSENT``/``sqlite`` (AD-4):
+    opens the ``consent_decision_records`` row a ``consent.decided`` event's
+    ``record_ref`` points at."""
+    refuse_unless_owner(RecordKind.CONSENT, owner_id)
+    row = await read_sqlite_record(
+        db_pool, table=_TABLE, id_column="id",
+        id_value=locator.get("id", ""), view_model=ConsentDecisionRecordView,
+    )
+    if row is None:
+        return ExpiredRecord(
+            record_kind=RecordKind.CONSENT, locator=locator,
+            reason="the consent_decision_records row this event referenced is gone",
+        )
+    return cast(ConsentDecisionRecordView, row)
+
+
+get_record_reader_registry().register(
+    RecordKind.CONSENT, "sqlite", read_consent_decision_record,
+)

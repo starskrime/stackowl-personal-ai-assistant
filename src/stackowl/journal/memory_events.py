@@ -32,13 +32,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.journal.enums import ActorKind, AttentionClass, Outcome, RecordKind
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
 from stackowl.journal.recorder import record as journal_record
+from stackowl.journal.records import (
+    ExpiredRecord,
+    get_record_reader_registry,
+    read_md_record,
+    read_sqlite_record,
+    refuse_unless_owner,
+)
 from stackowl.journal.registry import EventTypeSpec, get_registry
 
 if TYPE_CHECKING:  # pragma: no cover -- typing-only
@@ -61,6 +68,12 @@ _MemoryOp = Literal["add", "replace", "remove"]
 #: (``memory/curated.py::USER_TARGET``, mirrored as a literal for the same
 #: AD-7 reason as ``_MemoryOp`` above). Anything else is an owl's own notes.
 _USER_TARGET = "user"
+
+#: ``memory.reflection_recorded``'s table (Story 2.10's reader) -- keyed by
+#: ``trace_id``, not a synthetic row id: ``reflections`` carries
+#: ``UNIQUE(trace_id)`` and the writer's own ``record_ref`` locator already
+#: uses it (``memory/reflection_writer_handler.py``).
+_REFLECTIONS_TABLE = "reflections"
 
 
 def _now_iso() -> str:
@@ -104,14 +117,16 @@ def _register() -> None:
         type="memory.written", schema_version=1, attrs_model=MemoryWrittenAttrs,
         emitting_process="memory.curated", record_kind=RecordKind.MEMORY,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_memory_written,
+        # md-backed -- AD-4: "md- and graph-backed targets never gain mirror
+        # tables", so this type declares no sqlite table to cover.
+        table=None, narrate=_narrate_memory_written,
     ))
     registry.register(EventTypeSpec(
         type="memory.reflection_recorded", schema_version=1,
         attrs_model=ReflectionRecordedAttrs,
         emitting_process="memory.reflection_writer_handler", record_kind=RecordKind.MEMORY,
         attention_class=AttentionClass.AMBIENT, intensity=None,
-        narrate=_narrate_reflection_recorded,
+        table=_REFLECTIONS_TABLE, narrate=_narrate_reflection_recorded,
     ))
 
 
@@ -220,3 +235,80 @@ async def record_md_memory_write(
         "[journal] memory_events.record_md_memory_write: exit -- recorded",
         extra={"_fields": {"target": target, "op": op}},
     )
+
+
+class ReflectionRecordView(BaseModel):
+    """Typed view of one ``reflections`` row -- the registered reader's
+    return shape for ``RecordKind.MEMORY``/``sqlite`` (AD-4). Deliberately
+    excludes ``embedding``/``embedding_model`` (a binary vector, not a
+    typed view field a reader needs)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    reflection_id: int
+    trace_id: str
+    owl_name: str
+    summary: str
+    suggested_strategy: str
+    failure_class: str | None = None
+    quality_score: float | None = None
+    created_at: float
+
+
+class MemoryWrittenRecordView(BaseModel):
+    """Typed view of one ``memory.written`` target -- the registered
+    reader's return shape for ``RecordKind.MEMORY``/``md`` (AD-4): the whole
+    file's text, plus the locator's own ``anchor`` as metadata (spec
+    Boundaries: no full section-anchor extraction)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    anchor: str | None = None
+
+
+async def read_reflection_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> ReflectionRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.MEMORY``/``sqlite`` (AD-4):
+    opens the ``reflections`` row a ``memory.reflection_recorded`` event's
+    ``record_ref`` points at, keyed by ``trace_id`` (the table's own
+    ``UNIQUE`` column, not a synthetic row id)."""
+    refuse_unless_owner(RecordKind.MEMORY, owner_id)
+    row = await read_sqlite_record(
+        db_pool, table=_REFLECTIONS_TABLE, id_column="trace_id",
+        id_value=locator.get("trace_id", ""), view_model=ReflectionRecordView,
+    )
+    if row is None:
+        return ExpiredRecord(
+            record_kind=RecordKind.MEMORY, locator=locator,
+            reason="the reflections row this event referenced is gone",
+        )
+    return cast(ReflectionRecordView, row)
+
+
+async def read_memory_written_record(
+    db_pool: DbPool | None, locator: dict[str, str], *, owner_id: str,
+) -> MemoryWrittenRecordView | ExpiredRecord:
+    """The registered reader for ``RecordKind.MEMORY``/``md`` (AD-4): opens
+    the ``StackowlHome``-relative md file a ``memory.written`` event's
+    ``record_ref`` points at, for READ ONLY -- never writes.
+
+    ``db_pool`` is accepted, unused, and always ``None``-safe -- md carriers
+    need no database, but every registered :class:`~stackowl.journal.records.RecordReader`
+    shares one call signature (:class:`~stackowl.journal.records.RecordReader`
+    Protocol) so a caller dispatching by ``(RecordKind, carrier)`` never has
+    to branch on carrier just to call it.
+    """
+    refuse_unless_owner(RecordKind.MEMORY, owner_id)
+    row = await read_md_record(locator=locator, view_model=MemoryWrittenRecordView)
+    if row is None:
+        return ExpiredRecord(
+            record_kind=RecordKind.MEMORY, locator=locator,
+            reason="the memory.written target file is gone",
+        )
+    return cast(MemoryWrittenRecordView, row)
+
+
+get_record_reader_registry().register(RecordKind.MEMORY, "sqlite", read_reflection_record)
+get_record_reader_registry().register(RecordKind.MEMORY, "md", read_memory_written_record)

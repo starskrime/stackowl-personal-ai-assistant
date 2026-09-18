@@ -740,6 +740,33 @@ class JournalInvalidAttrsError(DomainError):
         )
 
 
+class JournalRecordReaderRefusedError(DomainError):
+    """Raised when a registered journal record reader (AD-4, Story 2.10) is
+    called with an ``owner_id`` other than the platform's one owner.
+
+    None of the journal record-ref tables carry their own ``owner_id``
+    column (confirmed for ``turn_action_records`` and every sibling table
+    this story's readers open), so the honest, minimal authority check a
+    reader can make today is refusing any caller that is not the one owner,
+    loudly -- the same single-owner reasoning DW-25/DW-26's review threads
+    already used. Never raised for a target that is simply gone -- that
+    returns :class:`~stackowl.journal.records.ExpiredRecord` instead.
+    """
+
+    def __init__(self, record_kind: str, owner_id: str) -> None:
+        self.record_kind = record_kind
+        self.owner_id = owner_id
+        self.remedy = (
+            "journal record readers refuse any owner_id other than the "
+            "platform's one owner (tenancy.DEFAULT_PRINCIPAL_ID) -- pass the "
+            "real owner id, never a caller-supplied one"
+        )
+        super().__init__(
+            f"journal record reader for {record_kind!r} refused: owner_id "
+            f"{owner_id!r} is not the platform owner"
+        )
+
+
 class PidFileExistsError(StackOwlError):
     """Raised when a PID file already exists and the recorded process is still alive."""
 
