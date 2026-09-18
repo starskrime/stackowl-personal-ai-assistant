@@ -55,3 +55,27 @@ source_spec: `spec-1-6-verdicts-decide-what-gets-built.md`
 severity: medium
 reason: It's build-host automation, not an owner-driven real-device run, despite matching the required-row filename convention exactly. Confirmed on disk: the file is present today (gitignored, pre-existing before this story's diff -- the spec's own Code Map cites it as "present on disk today") and `verdict.py` correctly scores it per its own documented contract (score the file's own recorded fields, match by filename only) -- this is a pre-existing data-provenance gap in the real `results/` directory, not a `verdict.py` defect, and the story's Boundaries explicitly forbid building a new submission/validation mechanism to detect it. What would settle it: the operator replacing this file with a genuine real-device submission before any real `epic-1-verdicts.md` commit to `main`.
 status: open
+
+### DW-7: `DurableTaskStore.create()` is called directly (bypassing `enqueue()`) from several production sites, so tasks created that way never get `task.enqueued`/`task.claimed` journal rows
+origin: spec-2-1-the-journal-records-task-events-in-the-same-transaction-as-the-change.md, Review Triage Log (verification-gap, "Other findings")
+location: src/stackowl/pipeline/durable/store.py (DurableTaskStore.create()); callers at src/stackowl/pipeline/durable/react_runner.py:131, src/stackowl/pipeline/durable/executor.py:150, src/stackowl/pipeline/durable/task_runner.py:178 (via goal_execution.py), src/stackowl/memory/rollover_summary_handler.py:399
+source_spec: `spec-2-1-the-journal-records-task-events-in-the-same-transaction-as-the-change.md`
+severity: medium
+reason: Confirmed these call sites pre-date Story 2.1 and construct `DurableTask(status="running", ...)` directly via `store.create(task)`, skipping `enqueue()` entirely -- so a task created this way can go through its whole lifecycle with no `task.enqueued`/`task.claimed` journal row, only picking up `task.finished`/`task.dead_lettered` if it later reaches one of the wired terminal methods. This multi-entry-point shape pre-dates Story 2.1 and is not something it introduced; it is exactly the coverage gap Story 2.10 ("Nothing escapes the journal") exists to close via its coverage tripwire (every migration-created table listed in the registry with its event types, or marked `unjournaled` with a reason). What would settle it: Story 2.10 either wiring `create()`'s callers through the journal too, or explicitly marking this an accepted `unjournaled` path with a stated reason.
+status: open
+
+### DW-8: `pyproject.toml` carries a pre-existing malformed dependency constraint directly adjacent to Story 2.1's new `uuid-utils` line
+origin: spec-2-1-the-journal-records-task-events-in-the-same-transaction-as-the-change.md, Review Triage Log (blind-hunter)
+location: pyproject.toml (dependencies list, pypdf entry)
+source_spec: `spec-2-1-the-journal-records-task-events-in-the-same-transaction-as-the-change.md`
+severity: low
+reason: `"pypdf>=5.4,<7,<7"` (a duplicated upper-bound constraint) is present at baseline_revision `6d4aed27933dc0f97d77f96de225ca7dd48d6cdd`, unrelated to this story's `uuid-utils` addition on the next line, and fixing an unrelated dependency constraint is out of this story's scope. What would settle it: a trivial follow-up dropping the duplicated `<7`.
+status: open
+
+### DW-9: `fail_and_requeue`'s permanent-branch UPDATE still has no compare-and-set status guard, so two genuinely concurrent calls for the same task_id could each record a `task.dead_lettered` row
+origin: spec-2-1-the-journal-records-task-events-in-the-same-transaction-as-the-change.md, Review Triage Log (self-reported by the implementation subagent during the patch pass)
+location: src/stackowl/pipeline/durable/store.py (DurableTaskStore.fail_and_requeue(), permanent/exhausted branch)
+source_spec: `spec-2-1-the-journal-records-task-events-in-the-same-transaction-as-the-change.md`
+severity: low
+reason: The review pass's rowcount-guard patch (see the story's Review Triage Log) fixed the more severe bug -- an UPDATE matching 0 rows still unconditionally recording a journal event -- by checking `cursor.rowcount == 1` before calling `journal_record`. That patch does not close a narrower, genuinely-concurrent case: the UPDATE's WHERE clause (`task_id=? AND owner_id=?`) carries no status guard, so if two callers both reach this branch for the same task_id (e.g. a stale worker's call finally landing after `reclaim_expired()` already handed the lease to a new worker that also fails the task), each UPDATE still matches exactly 1 row and each would record its own `task.dead_lettered` event -- a real duplicate-recording race, though the task's own final state ('dead_letter') stays correct either way. Confirmed by reading the patched UPDATE's WHERE clause directly. What would settle it: deciding what a "lost the race" `fail_and_requeue` caller should observe (silent no-op, a warning, or an exception) and adding a compare-and-set guard (e.g. `AND status != 'dead_letter'`) accordingly -- a small design decision, not a mechanical fix, which is why it was not patched in this pass.
+status: open
