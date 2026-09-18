@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+from stackowl.exceptions import LinkAuthenticationError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.ipc.frames import ChunkFrame, HelloFrame, IngressFrame, RestartNoticeFrame
 from stackowl.journal.write_gate import writes_paused
@@ -85,12 +88,21 @@ def _msg(text: str = "hi") -> IngressMessage:
     )
 
 
+#: Spec 2.4 — fixed per-file secret; both GatewayLink( constructions AND every
+#: HelloFrame fed through `_route` representing a real/successful core Hello
+#: use this same value (a wrong/missing-secret negative case gets its own test
+#: below, using a DIFFERENT value on purpose).
+_LINK_SECRET = "test-link-secret"
+
+
 def _hello(pid: int = 1) -> HelloFrame:
-    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+    return HelloFrame(
+        sender_pid=pid, highest_migration=1, registry_digest="x", link_secret=_LINK_SECRET,
+    )
 
 
 async def test_submit_buffers_when_no_connection() -> None:
-    link = GatewayLink({"cli": _FakeAdapter()})
+    link = GatewayLink({"cli": _FakeAdapter()}, link_secret=_LINK_SECRET)
     # No connection bound yet -> the message is held, nothing is sent.
     await link.submit(_msg("a"))
     assert link._pending and link._pending[0].text == "a"
@@ -98,7 +110,7 @@ async def test_submit_buffers_when_no_connection() -> None:
 
 async def test_hello_flushes_buffered_messages() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
 
     # Buffer while disconnected, then connect + receive a Hello -> flush.
@@ -117,7 +129,7 @@ async def test_hello_flushes_buffered_messages() -> None:
 
 async def test_restart_notice_starts_buffering() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
@@ -130,7 +142,7 @@ async def test_restart_notice_starts_buffering() -> None:
 
 async def test_finalize_ends_cut_turn_readers() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
@@ -154,7 +166,7 @@ async def test_finalize_ends_cut_turn_readers() -> None:
 
 async def test_chunk_routes_to_demux_after_submit() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
     await link.submit(_msg("x"))
@@ -171,7 +183,7 @@ async def test_chunk_routes_to_demux_after_submit() -> None:
 
 async def test_a_mismatched_hello_keeps_buffering_and_does_not_flush() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
 
     await link.submit(_msg("a"))
@@ -180,7 +192,10 @@ async def test_a_mismatched_hello_keeps_buffering_and_does_not_flush() -> None:
         local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="gateway-digest"),
     )
     await link._route(
-        HelloFrame(sender_pid=9, highest_migration=1, registry_digest="core-digest")
+        HelloFrame(
+            sender_pid=9, highest_migration=1, registry_digest="core-digest",
+            link_secret=_LINK_SECRET,
+        )
     )
 
     # The link never activated: nothing was flushed, buffering still applies.
@@ -193,14 +208,19 @@ async def test_a_matching_hello_resumes_writes_and_flushes() -> None:
     from stackowl.journal import write_gate
 
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
 
     write_gate.pause_writes("test setup")
     await link.submit(_msg("a"))
     matching = HelloFrame(sender_pid=0, highest_migration=1, registry_digest="same")
     link.set_connection(conn, local_hello=matching)
-    await link._route(HelloFrame(sender_pid=9, highest_migration=1, registry_digest="same"))
+    await link._route(
+        HelloFrame(
+            sender_pid=9, highest_migration=1, registry_digest="same",
+            link_secret=_LINK_SECRET,
+        )
+    )
     await asyncio.sleep(0.01)
 
     assert not link._pending
@@ -213,7 +233,7 @@ async def test_drop_connection_pauses_the_write_gate() -> None:
     from stackowl.journal import write_gate
 
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(
         conn,
@@ -231,13 +251,107 @@ async def test_the_health_contributor_and_the_link_property_share_one_counter() 
     `link_health.mismatch_count()` must never disagree — both read the SAME
     module-global state."""
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(
         conn,
         local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="gw"),
     )
-    await link._route(HelloFrame(sender_pid=9, highest_migration=1, registry_digest="core"))
+    await link._route(
+        HelloFrame(
+            sender_pid=9, highest_migration=1, registry_digest="core",
+            link_secret=_LINK_SECRET,
+        )
+    )
 
     assert link.consecutive_hello_mismatches == link_health.mismatch_count()
     assert link.consecutive_hello_mismatches == 1
+
+
+# --- Spec 2.4 — link-secret verification at the GatewayLink seam ----------
+
+
+async def test_a_wrong_link_secret_raises_and_never_reaches_hello_compat() -> None:
+    """The secret check runs BEFORE evaluate_hello: a wrong secret raises
+    LinkAuthenticationError even for an otherwise-compatible Hello, and never
+    touches `consecutive_hello_mismatches` (that counter is for genuine
+    version skew, not an identity failure -- conflating them would let an
+    impersonation attempt force the gateway to stand down real respawns), and
+    never resumes writes / stops buffering -- exactly as if Hello was never
+    evaluated at all (which, source-order-wise, it wasn't)."""
+    from stackowl.journal import write_gate
+
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
+    conn = _FakeConn()
+    # Start from the disconnected-and-paused state a real reconnect begins in.
+    link.drop_connection()
+    assert link._buffering is True
+    assert write_gate.writes_paused() is True
+    link.set_connection(
+        conn,
+        local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="x"),
+    )
+
+    with pytest.raises(LinkAuthenticationError):
+        await link._route(
+            HelloFrame(
+                sender_pid=9, highest_migration=1, registry_digest="x",
+                link_secret="the-wrong-secret",
+            )
+        )
+
+    # Neither `_buffering=False` nor `write_gate.resume_writes()` was ever
+    # reached -- the raise happened before evaluate_hello, let alone success.
+    assert link._buffering is True
+    assert write_gate.writes_paused() is True
+    assert link.consecutive_hello_mismatches == 0
+
+
+async def test_a_missing_link_secret_raises() -> None:
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
+    conn = _FakeConn()
+    link.set_connection(
+        conn,
+        local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="x"),
+    )
+
+    with pytest.raises(LinkAuthenticationError):
+        # link_secret defaults to None -- the pre-2.4 shape of a Hello.
+        await link._route(HelloFrame(sender_pid=9, highest_migration=1, registry_digest="x"))
+
+
+class _OneHelloConn:
+    """A minimal async-iterable connection yielding exactly one frame."""
+
+    def __init__(self, frame: object) -> None:
+        self._frame = frame
+        self._yielded = False
+
+    def __aiter__(self) -> _OneHelloConn:
+        return self
+
+    async def __anext__(self) -> object:
+        if self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        return self._frame
+
+
+async def test_run_propagates_a_link_secret_failure_and_ends_the_connection() -> None:
+    """`run()`'s per-frame resilience wrapper must NOT swallow this — Design
+    Notes: a dedicated LinkAuthenticationError carve-out, unlike every other
+    bad frame, which stays non-fatal."""
+    adapter = _FakeAdapter()
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
+    bad_hello = HelloFrame(
+        sender_pid=9, highest_migration=1, registry_digest="x", link_secret="wrong",
+    )
+    link.set_connection(
+        _FakeConn(),
+        local_hello=HelloFrame(sender_pid=0, highest_migration=1, registry_digest="x"),
+    )
+
+    with pytest.raises(LinkAuthenticationError):
+        await link.run(_OneHelloConn(bad_hello))  # type: ignore[arg-type]

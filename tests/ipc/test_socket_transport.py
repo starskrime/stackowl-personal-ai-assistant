@@ -8,6 +8,7 @@ fresh client re-attaches).
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
@@ -15,6 +16,7 @@ from stackowl.ipc.client import IpcClient
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import AckFrame, ChunkFrame, HelloFrame, IngressFrame
 from stackowl.ipc.server import IpcServer
+from stackowl.runtime import link_auth
 
 
 @pytest.fixture
@@ -128,3 +130,47 @@ async def test_core_restart_reattaches_to_durable_listener(socket_path) -> None:
         await server.stop()
 
     assert hellos == [111, 222]
+
+
+async def test_raw_socket_over_a_real_asyncio_transport_yields_the_real_peer_pid(
+    socket_path,
+) -> None:
+    """Spec 2.4 — ``FrameConnection.raw_socket`` is the ACTUAL code path
+    ``_accept_core`` uses for the peer-PID check. Unlike ``test_link_auth.py``
+    (a raw ``socket.socketpair()``, which bypasses asyncio's transport layer
+    entirely), this drives it over a REAL ``asyncio.start_unix_server`` /
+    ``open_unix_connection`` pair — the same transport ``IpcServer``/
+    ``IpcClient`` build in production.
+
+    MEASURED here (not assumed): over a real asyncio transport,
+    ``get_extra_info("socket")`` returns an ``asyncio.trsock.TransportSocket``
+    proxy, NOT a literal ``socket.socket`` — this is exactly why
+    ``FrameConnection.raw_socket``/``link_auth.peer_pid`` are typed against
+    the structural ``PeerCredSocket`` protocol rather than
+    ``isinstance(x, socket.socket)``; a nominal check silently discarded this
+    real object and returned ``None`` on every real connection until this
+    test caught it.
+    """
+    observed: dict[str, object] = {}
+
+    async def handler(conn: FrameConnection) -> None:
+        observed["raw_socket"] = conn.raw_socket
+        observed["peer_pid"] = link_auth.peer_pid(conn.raw_socket)
+        await conn.recv()  # wait for the client to hang up
+
+    server = IpcServer(socket_path)
+    await server.start(handler)
+    try:
+        client_conn = await IpcClient(socket_path).connect(timeout_s=5)
+        client_peer_pid = link_auth.peer_pid(client_conn.raw_socket)
+        await client_conn.aclose()
+        await asyncio.sleep(0.05)  # let the server-side handler observe the accept
+    finally:
+        await server.stop()
+
+    # A real, getsockopt-capable object — never None, never a bare fallback.
+    raw = observed.get("raw_socket")
+    assert raw is not None
+    assert hasattr(raw, "getsockopt")
+    assert observed["peer_pid"] == os.getpid()
+    assert client_peer_pid == os.getpid()

@@ -24,11 +24,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.commands.response import Action
 
-#: Spec 2.3 — bumped from 1. Both sides refuse to talk when their Hello's
+#: Spec 2.4 — bumped from 2 (Spec 2.3's own precedent: any HelloFrame shape
+#: change bumps this). Both sides refuse to talk when their Hello's
 #: ``protocol_version`` disagrees (``runtime.hello.evaluate_hello``); this is the
 #: ONE place that number is declared, so a future wire-shape change need only
 #: change this constant.
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 
 class _Frame(BaseModel):
@@ -45,6 +46,16 @@ class HelloFrame(_Frame):
     ``runtime.hello.evaluate_hello`` needs to refuse a half-upgraded link:
     ``protocol_version``, the highest applied migration number, and a digest of
     the registered journal event types (+ the attention-policy version).
+
+    Spec 2.4 — ``link_secret`` carries the per-boot secret (``runtime.link_auth``)
+    that proves this Hello came from the core process the gateway itself
+    spawned/inherited its env into. Optional because only core's OUTGOING Hello
+    ever carries a real value (the gateway's own Hello, and `_core_frame_loop`'s
+    local comparison-only Hello, never populate it — `evaluate_hello` never
+    compares this field; `GatewayLink._route` checks it separately, before
+    `evaluate_hello` runs). NEVER logged in full: the name ends in ``secret`` so
+    the existing ``SensitiveFieldFilter``/``is_credential_name`` redacts it
+    everywhere in structured ``_fields`` automatically.
     """
 
     type: Literal["hello"] = "hello"
@@ -52,6 +63,7 @@ class HelloFrame(_Frame):
     protocol_version: int = PROTOCOL_VERSION
     highest_migration: int
     registry_digest: str
+    link_secret: str | None = None
 
 
 class GoodbyeFrame(_Frame):

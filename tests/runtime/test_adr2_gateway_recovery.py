@@ -50,8 +50,16 @@ def _msg(text: str) -> IngressMessage:
     )
 
 
+#: Spec 2.4 — fixed per-file secret; both GatewayLink( constructions AND every
+#: HelloFrame fed through `_route` below use this same value (a real/matching
+#: core Hello, per the replay-decision tests' intent).
+_LINK_SECRET = "test-link-secret"
+
+
 def _hello(pid: int = 1) -> HelloFrame:
-    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+    return HelloFrame(
+        sender_pid=pid, highest_migration=1, registry_digest="x", link_secret=_LINK_SECRET,
+    )
 
 
 async def test_replay_decision_routes_through_actuator_when_unify_on(monkeypatch) -> None:  # noqa: ANN001
@@ -60,7 +68,7 @@ async def test_replay_decision_routes_through_actuator_when_unify_on(monkeypatch
     monkeypatch.setattr(_gl_mod, "_unify_gateway_enabled", lambda: True)
     adapter = _FakeAdapter()
     spy = _SpyActuator()
-    link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
+    link = GatewayLink({"cli": adapter}, recovery=spy, link_secret=_LINK_SECRET)  # type: ignore[arg-type]
 
     await link.submit(_msg("x"))            # buffers (no conn)
     link.set_connection(_FailingConn(), local_hello=_hello())     # type: ignore[arg-type]
@@ -80,7 +88,7 @@ async def test_replay_decision_inline_when_unify_off(monkeypatch) -> None:  # no
     monkeypatch.setattr(_gl_mod, "_unify_gateway_enabled", lambda: False)
     adapter = _FakeAdapter()
     spy = _SpyActuator()
-    link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
+    link = GatewayLink({"cli": adapter}, recovery=spy, link_secret=_LINK_SECRET)  # type: ignore[arg-type]
 
     await link.submit(_msg("x"))
     link.set_connection(_FailingConn(), local_hello=_hello())  # type: ignore[arg-type]

@@ -30,6 +30,7 @@ import contextlib
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, cast
 
+from stackowl.exceptions import LinkAuthenticationError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
@@ -50,7 +51,7 @@ from stackowl.ipc.frames import (
 )
 from stackowl.ipc.stream_bridge import StreamDemux
 from stackowl.journal import write_gate
-from stackowl.runtime import link_health
+from stackowl.runtime import link_auth, link_health
 from stackowl.runtime.hello import evaluate_hello
 from stackowl.runtime.message_bridge import ingress_to_frame
 
@@ -128,7 +129,15 @@ class GatewayLink:
         event_bus: _EventSink | None = None,
         consent_router: _ConsentRouter | None = None,
         recovery: object | None = None,
+        *,
+        link_secret: str,
     ) -> None:
+        # Spec 2.4 — this gateway boot's per-boot secret (runtime.link_auth),
+        # verified against every connected core's real Hello in `_route`
+        # BEFORE the existing evaluate_hello compatibility check. REQUIRED
+        # (no default): a GatewayLink with no secret to check against would
+        # silently accept an unauthenticated link.
+        self._link_secret = link_secret
         # Mutable copy so channels started after construction (Telegram/Slack/…
         # in gateway role) can register themselves via register_adapter.
         self._adapters: dict[str, _Adapter] = dict(adapters)
@@ -422,8 +431,18 @@ class GatewayLink:
 
     async def run(self, conn: FrameConnection) -> None:
         async for frame in conn:
-            with contextlib.suppress(Exception):
+            # Spec 2.4 — a failed link-secret check must NOT be swallowed by the
+            # general "one bad frame must not kill the connection" resilience
+            # wrapper below: it means this peer failed identity verification,
+            # and the connection MUST end (the `_accept_core` `finally` already
+            # calls drop_connection()/finalize() on any exit from `run`, so
+            # re-raising here is sufficient — no new pause/buffer plumbing).
+            try:
                 await self._route(frame)
+            except LinkAuthenticationError:
+                raise
+            except Exception:  # noqa: BLE001 — every OTHER bad frame stays non-fatal
+                pass
 
     async def _route(self, frame: object) -> None:
         if isinstance(frame, ChunkFrame):
@@ -474,6 +493,41 @@ class GatewayLink:
             if self._event_bus is not None:
                 self._event_bus.emit(frame.event, frame.payload)
         elif isinstance(frame, HelloFrame):
+            # Spec 2.4 — the per-boot link secret is verified FIRST, before the
+            # Spec 2.3 compatibility check below: a peer that already passed the
+            # peer-PID check (`_accept_core`, before any Hello was even sent)
+            # still must prove it is running WITH the secret this gateway boot
+            # minted, not just a same-PID process that raced in some other way.
+            # WHY THIS CHECK EXISTS ON TOP OF THE PEER-PID CHECK: during the
+            # crash-respawn window, `core_proc_holder["proc"]` can briefly still
+            # hold the PID of the core process that just died, before
+            # `_supervise_core` reassigns it to the freshly spawned replacement.
+            # If the OS reused that now-dead PID for an unrelated same-user
+            # process in that narrow window, `authorize_peer` alone could be
+            # fooled into treating it as the supervised core. That impostor has
+            # no way to know this gateway boot's `link_secret`, so
+            # `verify_link_secret` independently refuses it even when the
+            # peer-PID check alone would not have.
+            # A failure here is a SecurityError subclass that PROPAGATES OUT of
+            # `run()`'s frame loop (never `link_health.note_mismatch` — that
+            # counter drives `_supervise_core`'s stand-down-respawning decision
+            # for genuine version skew, and counting an impersonation attempt
+            # there would let an attacker force the gateway to stop respawning
+            # the real core — a self-inflicted DoS).
+            if not link_auth.verify_link_secret(
+                expected=self._link_secret, presented=frame.link_secret,
+            ):
+                raise LinkAuthenticationError(
+                    "Hello link_secret did not match this gateway boot's secret",
+                    remedy=(
+                        "the connected core did not present this gateway boot's "
+                        "link secret — a code-change restart (os.execv) inherits "
+                        "it unchanged, so this should only fire for a genuinely "
+                        "unauthenticated peer; restart the gateway if this "
+                        "persists across every reconnect"
+                    ),
+                    context={"sender_pid": frame.sender_pid},
+                )
             # Spec 2.3 — a (re)connected core's Hello is evaluated against THIS
             # gateway's own (bound at `set_connection` time) before it is
             # trusted to receive. `self._local_hello` is None only if a

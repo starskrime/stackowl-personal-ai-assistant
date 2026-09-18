@@ -41,7 +41,7 @@ async def test_supervise_core_stops_respawning_at_the_mismatch_ceiling(
 ) -> None:
     spawn_calls = 0
 
-    async def _fake_spawn_core(socket_path: object) -> _FakeProc:
+    async def _fake_spawn_core(socket_path: object, *, env: object = None) -> _FakeProc:
         nonlocal spawn_calls
         spawn_calls += 1
         return _FakeProc()
@@ -73,16 +73,28 @@ async def test_supervise_core_keeps_respawning_below_the_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A vacuity control: below the ceiling, the loop still tries to respawn
-    (proves the check above is real, not a guard that always fires)."""
+    (proves the check above is real, not a guard that always fires).
+
+    Spec 2.4 — also asserts the respawn's `env` kwarg carries this boot's
+    `link_secret` under `link_auth.ENV_LINK_SECRET`, merged with the ambient
+    environment (not a bare override) — the same secret an `os.execv` restart
+    inherits unchanged, so a crash-respawned core must present it too."""
+    import os
+
+    from stackowl.runtime import link_auth
+
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda _s: real_sleep(0))
+    monkeypatch.setenv("AN_AMBIENT_VAR_TEST_MARKER", "still-here")
 
     spawn_calls = 0
     respawned = _FakeProc()
+    captured_env: dict[str, str] | None = None
 
-    async def _fake_spawn_core(socket_path: object) -> _FakeProc:
-        nonlocal spawn_calls
+    async def _fake_spawn_core(socket_path: object, *, env: object = None) -> _FakeProc:
+        nonlocal spawn_calls, captured_env
         spawn_calls += 1
+        captured_env = env  # type: ignore[assignment]
         return respawned
 
     monkeypatch.setattr(
@@ -104,6 +116,7 @@ async def test_supervise_core_keeps_respawning_below_the_ceiling(
             stop_event=stop_event,
             first_conn_event=first_conn_event,
             gateway_link=gateway_link,  # type: ignore[arg-type]
+            link_secret="respawn-secret-xyz",
         )
     )
     await real_sleep(0.05)
@@ -113,6 +126,11 @@ async def test_supervise_core_keeps_respawning_below_the_ceiling(
         await task
 
     assert spawn_calls >= 1
+    assert captured_env is not None
+    assert captured_env[link_auth.ENV_LINK_SECRET] == "respawn-secret-xyz"
+    # Merged with the ambient environment, not a bare override.
+    assert captured_env["AN_AMBIENT_VAR_TEST_MARKER"] == "still-here"
+    assert captured_env.get("PATH") == os.environ.get("PATH")
 
 
 async def test_the_check_never_fires_when_no_gateway_link_is_passed(
@@ -127,7 +145,7 @@ async def test_the_check_never_fires_when_no_gateway_link_is_passed(
     spawn_calls = 0
     respawned = _FakeProc()
 
-    async def _fake_spawn_core(socket_path: object) -> _FakeProc:
+    async def _fake_spawn_core(socket_path: object, *, env: object = None) -> _FakeProc:
         nonlocal spawn_calls
         spawn_calls += 1
         return respawned

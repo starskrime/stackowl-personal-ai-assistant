@@ -39,8 +39,26 @@ class IpcServer:
 
     async def start(self, handler: ConnectionHandler) -> None:
         """Bind the socket and begin accepting. Unlinks any stale socket file."""
+        # 1. ENTRY
+        log.gateway.debug(
+            "[ipc] server.start: entry", extra={"_fields": {"path": str(self._path)}},
+        )
         self._handler = handler
+        # 2. STEP -- ensure the socket's parent directory exists.
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        # 3. DECISION/STEP -- Spec 2.4/AD-33: owner-only socket directory. A
+        # chmod failure is logged but never aborts boot: the directory
+        # permissions are defense-in-depth on top of the peer-PID + link-secret
+        # checks, not the only guard.
+        try:
+            self._path.parent.chmod(0o700)
+        except OSError as exc:
+            log.gateway.error(
+                "[ipc] server.start: failed to make the socket directory "
+                "owner-only (0700) — continuing anyway",
+                exc_info=exc,
+                extra={"_fields": {"path": str(self._path.parent)}},
+            )
         # ASK WHETHER ANYTHING ANSWERS BEFORE REMOVING THE FILE. This used to
         # unlink unconditionally, commented "remove a stale socket file from a
         # prior run" — the right intent, but `unlink` cannot tell a stale socket
@@ -65,6 +83,10 @@ class IpcServer:
             self._path.unlink()
         self._server = await asyncio.start_unix_server(
             self._on_connect, path=str(self._path)
+        )
+        # 4. EXIT
+        log.gateway.debug(
+            "[ipc] server.start: exit — accepting", extra={"_fields": {"path": str(self._path)}},
         )
 
     async def _is_live(self) -> bool:

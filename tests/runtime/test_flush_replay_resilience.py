@@ -54,13 +54,21 @@ def _msg(text: str) -> IngressMessage:
     )
 
 
+#: Spec 2.4 — fixed per-file secret; both GatewayLink( constructions AND every
+#: HelloFrame fed through `_route` below use this same value (a real/matching
+#: core Hello — these tests exercise the REPLAY path, not the secret check).
+_LINK_SECRET = "test-link-secret"
+
+
 def _hello(pid: int = 1) -> HelloFrame:
-    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+    return HelloFrame(
+        sender_pid=pid, highest_migration=1, registry_digest="x", link_secret=_LINK_SECRET,
+    )
 
 
 async def test_transient_replay_failure_is_requeued_not_dropped() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
 
     # No connection yet -> the turn buffers.
     await link.submit(_msg("x"))
@@ -77,7 +85,7 @@ async def test_transient_replay_failure_is_requeued_not_dropped() -> None:
 
 async def test_replay_recovers_when_a_later_core_accepts() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     await link.submit(_msg("x"))
 
     # First fresh core faults -> re-queued.
@@ -99,7 +107,7 @@ async def test_replay_recovers_when_a_later_core_accepts() -> None:
 
 async def test_exhausted_replay_notifies_originating_adapter() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     await link.submit(_msg("x"))
 
     # Each Hello replays once against a perpetually-faulting core. After the

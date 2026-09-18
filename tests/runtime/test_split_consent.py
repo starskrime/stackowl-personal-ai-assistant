@@ -21,6 +21,11 @@ from stackowl.runtime.gateway_link import GatewayLink
 from stackowl.runtime.socket_consent import SocketConsentPrompter
 from stackowl.tools.consent import ConsentRequest, ConsentScope
 
+#: Spec 2.4 — GatewayLink now requires a link_secret; the core side in this
+#: test never sends a real HelloFrame (only ConsentRequestFrame traffic), so
+#: any fixed value is fine.
+_LINK_SECRET = "test-link-secret"
+
 
 @pytest.fixture
 def socket_path(tmp_path):
@@ -38,7 +43,9 @@ class _FakeRouter:
 
 
 async def _wire(socket_path, router):
-    link = GatewayLink({"telegram": _NullAdapter()}, consent_router=router)
+    link = GatewayLink(
+        {"telegram": _NullAdapter()}, consent_router=router, link_secret=_LINK_SECRET,
+    )
 
     async def gw_accept(conn: FrameConnection) -> None:
         link.set_connection(

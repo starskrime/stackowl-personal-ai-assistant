@@ -49,13 +49,20 @@ def _msg(text: str) -> IngressMessage:
     )
 
 
+#: Spec 2.4 — fixed per-file secret; both GatewayLink( constructions AND every
+#: HelloFrame fed through `_route` below use this same value.
+_LINK_SECRET = "test-link-secret"
+
+
 def _hello(pid: int = 1) -> HelloFrame:
-    return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
+    return HelloFrame(
+        sender_pid=pid, highest_migration=1, registry_digest="x", link_secret=_LINK_SECRET,
+    )
 
 
 async def test_unfinished_turn_is_requeued_on_crash_and_replayed() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 
@@ -87,7 +94,7 @@ async def test_unfinished_turn_is_requeued_on_crash_and_replayed() -> None:
 
 async def test_finished_turn_is_not_replayed_after_a_later_crash() -> None:
     adapter = _FakeAdapter()
-    link = GatewayLink({"cli": adapter})
+    link = GatewayLink({"cli": adapter}, link_secret=_LINK_SECRET)
     conn = _FakeConn()
     link.set_connection(conn, local_hello=_hello())  # type: ignore[arg-type]
 

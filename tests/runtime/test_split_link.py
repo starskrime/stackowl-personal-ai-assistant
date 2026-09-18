@@ -21,6 +21,11 @@ from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.runtime.core_link import _TURN_FAILURE_NOTICE, CoreLink, CoreSink
 from stackowl.runtime.gateway_link import GatewayLink
 
+#: Spec 2.4 — GatewayLink now requires a link_secret; this test never routes a
+#: real core Hello through `_route` (CoreLink sends no HelloFrame), so any
+#: fixed value is fine.
+_LINK_SECRET = "test-link-secret"
+
 
 class FakeAdapter:
     channel_name = "cli"
@@ -60,7 +65,7 @@ async def _run_split(socket_path, dispatch, adapter):
     holder: dict = {}
     link_ready = asyncio.Event()
     # One link instance, reattached per accepted core connection (reconnect-aware).
-    link = GatewayLink(adapters={adapter.channel_name: adapter})
+    link = GatewayLink(adapters={adapter.channel_name: adapter}, link_secret=_LINK_SECRET)
     holder["link"] = link
 
     async def gateway_accept(conn: FrameConnection) -> None:

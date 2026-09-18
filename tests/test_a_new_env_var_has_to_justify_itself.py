@@ -70,6 +70,13 @@ _JUSTIFIED: dict[str, str] = {
     "STACKOWL_CONFIG_FILE": "bootstrap",
     "STACKOWL_YAML": "bootstrap",
     "STACKOWL_CORE_SOCKET": "bootstrap",
+    # Spec 2.4 — a fresh, per-boot random secret the gateway mints and passes to
+    # every core spawn (initial + every crash-respawn) via env, proving to the
+    # gateway that a connecting core is the one it itself started. Generated at
+    # runtime (never in stackowl.yaml, never persisted, never operator-set), so
+    # it is inter-process bootstrap plumbing for the gateway<->core split —
+    # exactly like STACKOWL_CORE_SOCKET above — not a Settings field.
+    "STACKOWL_CORE_LINK_SECRET": "bootstrap",
     "STACKOWL_MODEL_CACHE_DIR": "bootstrap",
     "STACKOWL_TEST_MODE": "bootstrap",
     # host-specific — a property of the machine, not the user

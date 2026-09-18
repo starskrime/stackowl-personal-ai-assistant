@@ -25,6 +25,11 @@ class _WorkingConn:
         return None
 
 
+#: Spec 2.4 — GatewayLink now requires a link_secret; no HelloFrame is routed
+#: through `_route` in this file, so any fixed value is fine.
+_LINK_SECRET = "test-link-secret"
+
+
 def _hello(pid: int = 1) -> HelloFrame:
     return HelloFrame(sender_pid=pid, highest_migration=1, registry_digest="x")
 
@@ -60,7 +65,7 @@ def _msg() -> IngressMessage:
 async def test_send_task_failure_is_logged_and_routed_to_recovery() -> None:
     adapter = _RaisingAdapter()
     spy = _SpyActuator()
-    link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
+    link = GatewayLink({"cli": adapter}, recovery=spy, link_secret=_LINK_SECRET)  # type: ignore[arg-type]
     link.set_connection(_WorkingConn(), local_hello=_hello())  # type: ignore[arg-type]
 
     await link.submit(_msg())
@@ -89,7 +94,7 @@ async def test_send_task_success_never_touches_recovery() -> None:
 
     adapter = _OkAdapter()
     spy = _SpyActuator()
-    link = GatewayLink({"cli": adapter}, recovery=spy)  # type: ignore[arg-type]
+    link = GatewayLink({"cli": adapter}, recovery=spy, link_secret=_LINK_SECRET)  # type: ignore[arg-type]
     link.set_connection(_WorkingConn(), local_hello=_hello())  # type: ignore[arg-type]
 
     await link.submit(_msg())

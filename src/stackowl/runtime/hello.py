@@ -26,7 +26,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
 
 
-async def build_local_hello(*, sender_pid: int, db_pool: DbPool) -> HelloFrame:
+async def build_local_hello(
+    *, sender_pid: int, db_pool: DbPool, link_secret: str | None = None,
+) -> HelloFrame:
     """This process's own Hello -- freshly computed, never cached.
 
     AD-33: the gateway re-checks ``schema_head`` (here, the highest applied
@@ -36,11 +38,19 @@ async def build_local_hello(*, sender_pid: int, db_pool: DbPool) -> HelloFrame:
     Hello exchange. ``highest_migration`` is read straight from
     ``schema_migrations`` -- zero-padded version text, parsed as ``int``;
     ``0`` when no migration has ever been applied (an empty/fresh database).
+
+    Spec 2.4 -- ``link_secret`` is populated ONLY on core's real outgoing
+    Hello (the caller passes ``runtime.link_auth.read_link_secret_from_env()``
+    there); every other caller (the gateway's own Hello, `_core_frame_loop`'s
+    local comparison-only Hello) leaves the default ``None`` -- `evaluate_hello`
+    never compares this field, so a `None` here is harmless.
     """
-    # 1. ENTRY
+    # 1. ENTRY -- never logs the secret itself, only whether one was passed.
     log.ipc.debug(
         "[ipc] hello.build_local_hello: entry",
-        extra={"_fields": {"sender_pid": sender_pid}},
+        extra={"_fields": {
+            "sender_pid": sender_pid, "link_secret_present": link_secret is not None,
+        }},
     )
     # 2. STEP -- the one query; the row shape is the decision (present or empty).
     rows = await db_pool.fetch_all(
@@ -51,6 +61,7 @@ async def build_local_hello(*, sender_pid: int, db_pool: DbPool) -> HelloFrame:
         sender_pid=sender_pid,
         highest_migration=highest_migration,
         registry_digest=compute_registry_digest(),
+        link_secret=link_secret,
     )
     # 4. EXIT
     log.ipc.debug(

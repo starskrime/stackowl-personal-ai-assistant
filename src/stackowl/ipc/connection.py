@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import cast
 
 from stackowl.infra.observability import log
 from stackowl.ipc.codec import FrameDecodeError, decode_frame, encode_frame
 from stackowl.ipc.frames import Frame
+from stackowl.runtime.link_auth import PeerCredSocket
 
 
 class FrameConnection:
@@ -28,6 +30,24 @@ class FrameConnection:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    @property
+    def raw_socket(self) -> PeerCredSocket | None:
+        """The underlying socket, for the Spec 2.4 peer-PID check ONLY.
+
+        ``None`` if the transport doesn't expose one (never raises). In
+        production this is an ``asyncio.trsock.TransportSocket`` proxy, NOT a
+        literal ``socket.socket`` -- ``get_extra_info("socket")`` never
+        returns the real one over a real asyncio transport. Typed as
+        ``PeerCredSocket`` (structural: anything ``getsockopt``-capable)
+        rather than narrowed with ``isinstance(sock, socket.socket)``, which
+        would silently discard that real proxy and return ``None`` on every
+        real connection -- a regression a real
+        ``asyncio.start_unix_server``/``open_unix_connection`` integration
+        test caught (``tests/ipc/test_socket_transport.py``).
+        """
+        sock = self._writer.get_extra_info("socket")
+        return cast("PeerCredSocket | None", sock)
 
     async def send(self, frame: Frame) -> None:
         """Write one frame and flush. Raises if the connection is closed."""

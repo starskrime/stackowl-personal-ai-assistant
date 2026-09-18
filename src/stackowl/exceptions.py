@@ -75,6 +75,7 @@ class SecurityError(StackOwlError):
             "consequential_action_blocked",
             "export_sanitization_failed",
             "audit_integrity_broken",
+            "link_authentication_failed",
         ] = "nfr33",
         context: dict[str, object] | None = None,
     ) -> None:
@@ -531,6 +532,26 @@ class PluginCapabilityDeniedError(SecurityError):
     def __init__(self, capability: str) -> None:
         super().__init__(f"Capability {capability!r} not granted to this plugin")
         self.capability = capability
+
+
+class LinkAuthenticationError(SecurityError):
+    """Spec 2.4 -- the gateway/core IPC link refused an unverified/impersonating peer.
+
+    Raised for EITHER of Spec 2.4's two identity checks: a peer-PID mismatch
+    (an accepted connection is not the core process the gateway itself
+    supervises) or a wrong/missing per-boot ``link_secret`` in ``HelloFrame``.
+    Never pass the raw secret into ``context`` -- only ids/pids/booleans.
+    """
+
+    def __init__(
+        self, reason: str, *, remedy: str, context: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(
+            f"gateway/core IPC link refused: {reason} -- {remedy}",
+            category="link_authentication_failed",
+            context=context,
+        )
+        self.remedy = remedy
 
 
 class IntegrationNotFoundError(DomainError):

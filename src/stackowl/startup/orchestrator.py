@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from stackowl.config.settings import Settings
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool, default_db_path
-from stackowl.exceptions import ConfigurationError, StartupError
+from stackowl.exceptions import ConfigurationError, LinkAuthenticationError, StartupError
 from stackowl.health.status import HealthStatus
 from stackowl.paths import StackowlHome
 from stackowl.runtime.turn_client import IngressHandler, LocalTurnClient, TurnClient
@@ -246,6 +246,8 @@ async def _supervise_core(
     on_crash: Callable[[int | None], Awaitable[None]] | None = None,
     stall_probe: Callable[[datetime], Awaitable[HealthStatus]] | None = None,
     gateway_link: GatewayLink | None = None,
+    *,
+    link_secret: str | None = None,
 ) -> None:
     """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
 
@@ -273,7 +275,12 @@ async def _supervise_core(
     contributor regardless); this is the ONLY place that decides whether to
     keep calling ``spawn_core`` at all, so it is the natural, minimal place to
     consult it — no new coordination primitive between the two.
+
+    Spec 2.4 — ``link_secret`` (when passed) is threaded into every respawn's
+    env, identically to the initial spawn, so a crash-respawned core presents
+    the SAME per-boot secret in its Hello as the core it replaced.
     """
+    from stackowl.runtime import link_auth
     from stackowl.runtime.supervisor import spawn_core
 
     if socket_path is None:
@@ -353,7 +360,14 @@ async def _supervise_core(
         if first_conn_event is not None:
             first_conn_event.clear()
         try:
-            proc_holder["proc"] = await spawn_core(socket_path)
+            proc_holder["proc"] = await spawn_core(
+                socket_path,
+                env=(
+                    None
+                    if link_secret is None
+                    else {**os.environ, link_auth.ENV_LINK_SECRET: link_secret}
+                ),
+            )
         except Exception as exc:  # spawn itself failed — log and retry on next loop
             log.error("[startup] gateway: core respawn failed to spawn", exc_info=exc)
             continue
@@ -961,6 +975,7 @@ class StartupOrchestrator:
         from stackowl.pipeline.state import PipelineState
         from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
         from stackowl.providers.registry import ProviderRegistry
+        from stackowl.runtime import link_auth
         from stackowl.runtime.code_watcher import CodeWatcher
         from stackowl.runtime.drain import quiesce
         from stackowl.runtime.gateway_link import GatewayLink
@@ -1070,10 +1085,18 @@ class StartupOrchestrator:
             # evaluate compatibility before trusting this core with traffic.
             # No `contextlib.suppress` here: a Hello that can't be sent is
             # this story's whole point, never silently continued past.
+            from stackowl.runtime import link_auth
             from stackowl.runtime.hello import build_local_hello
 
             await core_conn.send(
-                await build_local_hello(sender_pid=os.getpid(), db_pool=db_pool)
+                await build_local_hello(
+                    sender_pid=os.getpid(),
+                    db_pool=db_pool,
+                    # Spec 2.4 — the per-boot secret this core was spawned/
+                    # respawned/execv'd with (env inherited unchanged either
+                    # way), proving to the gateway this is the core IT started.
+                    link_secret=link_auth.read_link_secret_from_env(),
+                )
             )
 
         # AD-30 -- the ONE NameResolver for RecordKind.TASK, so
@@ -3405,10 +3428,16 @@ class StartupOrchestrator:
         turn_client: TurnClient
         if self._role == "gateway":
             assert gateway_socket_path is not None
+            # Spec 2.4 — minted ONCE per gateway process (AD-33): passed to every
+            # core spawn below (initial + every `_supervise_core` respawn) via
+            # env, so `os.execv` (inherits env unchanged) and a crash-respawn
+            # both present the SAME value in their real Hello.
+            link_secret = link_auth.generate_link_secret()
             gateway_link = GatewayLink(
                 {adapter.channel_name: adapter},
                 event_bus=event_bus,
                 consent_router=consent_routing,
+                link_secret=link_secret,
             )
             turn_client = gateway_link
 
@@ -3418,6 +3447,29 @@ class StartupOrchestrator:
                 # IpcServer closes the connection when this returns, so we route it
                 # to EOF here, then drop+finalize so the next core can reattach.
                 assert gateway_link is not None
+                # Spec 2.4 — peer-PID check FIRST, before ANYTHING Hello-related
+                # is sent: an impostor (any same-user process, e.g. a shell child
+                # of core's own tree) gets ZERO protocol information. Refused
+                # connections never reach `set_connection`/`build_local_hello`.
+                supervised = core_proc_holder.get("proc")
+                observed_pid = link_auth.peer_pid(conn.raw_socket)
+                supervised_pid = supervised.pid if supervised is not None else None
+                if not link_auth.authorize_peer(
+                    observed_pid=observed_pid, supervised_pid=supervised_pid,
+                ):
+                    raise LinkAuthenticationError(
+                        "peer PID does not match the supervised core process",
+                        remedy=(
+                            "an accepted connection on the gateway<->core socket "
+                            "did not come from the core process this gateway "
+                            "itself spawned — refused before any protocol "
+                            "information was sent"
+                        ),
+                        context={
+                            "observed_pid": observed_pid,
+                            "supervised_pid": supervised_pid,
+                        },
+                    )
                 # Spec 2.3 — recomputed FRESH on every accepted connection (AD-33:
                 # never cached across a core reconnect), so a schema/registry
                 # change made while this gateway keeps running is still detected.
@@ -3457,7 +3509,10 @@ class StartupOrchestrator:
                 "[startup] gateway: socket bound — spawning core",
                 extra={"_fields": {"socket_path": str(gateway_socket_path)}},
             )
-            core_proc_holder["proc"] = await spawn_core(gateway_socket_path)
+            core_proc_holder["proc"] = await spawn_core(
+                gateway_socket_path,
+                env={**os.environ, link_auth.ENV_LINK_SECRET: link_secret},
+            )
             # Phase 5 — bounded wait for the core's first connection so a core that
             # dies during boot surfaces as a startup failure instead of a hang.
             log.info("[startup] gateway: waiting for core to connect")
@@ -4942,6 +4997,8 @@ class StartupOrchestrator:
                     # Spec 2.3 — so repeated Hello mismatches across core
                     # respawns stop the loop instead of retrying forever.
                     gateway_link=gateway_link,
+                    # Spec 2.4 — every respawn presents the SAME per-boot secret.
+                    link_secret=link_secret,
                 )
             )
             # AND THE SUPERVISOR THAT WATCHES FOR A SILENT DEATH COULD DIE SILENTLY
