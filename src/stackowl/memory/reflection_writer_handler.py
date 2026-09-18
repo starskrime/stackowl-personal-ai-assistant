@@ -31,6 +31,10 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.embeddings.registry import EmbeddingRegistry
 from stackowl.infra.observability import log
+from stackowl.journal import JournalEvent, Outcome, RecordRef
+from stackowl.journal import record as journal_record
+from stackowl.journal.enums import ActorKind
+from stackowl.journal.memory_events import ReflectionRecordedAttrs
 from stackowl.memory.critic_scorer_handler import CriticScorerHandler
 from stackowl.memory.outcome_store import TaskOutcome
 from stackowl.memory.reflection_prompt import (
@@ -287,6 +291,48 @@ class ReflectionWriterHandler(JobHandler):
                             embedding_model=p.embedding_model,
                             conn=tx,
                         )
+                        # Story 2.8 (AD-24) -- journaled in the SAME commit as
+                        # the `reflections` row above, on the chunk's ALREADY-
+                        # open transaction. Wrapped in its OWN try/except so a
+                        # journal-only failure degrades health (recorder.py's
+                        # own failure path) without aborting/rolling back the
+                        # chunk's real reflection rows -- the surrounding
+                        # `except Exception: continue` below already treats
+                        # any escaping exception as "lose this whole chunk",
+                        # and a journal bug must never do that to real
+                        # learning data (B5).
+                        try:
+                            await journal_record(tx, JournalEvent(
+                                type="memory.reflection_recorded", schema_version=1,
+                                actor_kind=ActorKind.AUTONOMOUS,
+                                actor_id="reflection_writer",
+                                target_kind=ActorKind.OWL, target_id=p.outcome.owl_name,
+                                outcome=Outcome.OK,
+                                record_ref=RecordRef(
+                                    kind="sqlite",
+                                    locator={
+                                        "table": "reflections",
+                                        "trace_id": p.outcome.trace_id,
+                                    },
+                                ),
+                                attrs=ReflectionRecordedAttrs(
+                                    owl_name=p.outcome.owl_name,
+                                    failure_class=p.outcome.failure_class,
+                                    quality_score=p.outcome.quality_score,
+                                ),
+                                trace_id=p.outcome.trace_id,
+                            ))
+                        except Exception as exc:  # B5 -- never lose the reflection row over this
+                            log.memory.error(
+                                "[reflection] execute: memory.reflection_recorded journal "
+                                "write failed -- the reflection row itself still commits",
+                                exc_info=exc,
+                                extra={"_fields": {
+                                    "job_id": job.job_id,
+                                    "trace_id": p.outcome.trace_id,
+                                    "owl_name": p.outcome.owl_name,
+                                }},
+                            )
             except Exception as exc:  # B5
                 log.memory.warning(
                     "[reflection] execute: chunk persist failed — rolled back, skipping chunk",

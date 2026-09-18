@@ -160,6 +160,170 @@ async def test_all_rows_persisted_across_chunk_boundary(db: DbPool) -> None:
         assert ref.summary == "ok"
 
 
+class TestMemoryReflectionRecordedJoinsTheSameCommit:
+    """Story 2.8 -- each `reflections` row's chunk transaction ALSO writes a
+    `memory.reflection_recorded` journal event, same trace_id, same commit
+    (AD-24)."""
+
+    async def test_each_row_gets_its_own_journal_event(self, db: DbPool) -> None:
+        n = 3
+        await _seed_pre_scored_outcomes(db, n)
+
+        registry = ProviderRegistry()
+        registry.register_mock("fast", _ScriptedProvider(), tier="fast")
+        critic = _NoOpCritic()
+
+        handler = ReflectionWriterHandler(
+            db=db, provider_registry=registry, embedding_registry=EmbeddingRegistry(),
+            batch_limit=n, critic=critic,
+        )
+        result = await handler.execute(_job())
+        assert result.metadata["written"] == n
+
+        rows = await db.fetch_all(
+            "SELECT trace_id, target_id, outcome, attention FROM journal_events "
+            "WHERE type = 'memory.reflection_recorded' ORDER BY trace_id",
+        )
+        assert len(rows) == n
+        assert {r["trace_id"] for r in rows} == {f"chunk-{i}" for i in range(n)}
+        for row in rows:
+            assert row["target_id"] == "secretary"
+            assert row["outcome"] == "ok"
+            assert row["attention"] == "ambient"
+
+    async def test_a_journal_failure_mid_chunk_still_commits_the_reflection_row(
+        self, db: DbPool, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A simulated `journal.record()` failure on ONE row must not roll
+        back that row's `reflections` write, and must not stop later rows in
+        the same chunk from committing either (B5)."""
+        n = 3
+        await _seed_pre_scored_outcomes(db, n)
+
+        import stackowl.memory.reflection_writer_handler as handler_module
+
+        real_record = handler_module.journal_record
+        call_count = 0
+
+        async def _flaky(conn: object, event: object) -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:  # fail exactly the SECOND row's journal write
+                raise RuntimeError("simulated journal.record failure")
+            return await real_record(conn, event)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(handler_module, "journal_record", _flaky)
+
+        registry = ProviderRegistry()
+        registry.register_mock("fast", _ScriptedProvider(), tier="fast")
+        critic = _NoOpCritic()
+
+        handler = ReflectionWriterHandler(
+            db=db, provider_registry=registry, embedding_registry=EmbeddingRegistry(),
+            batch_limit=n, critic=critic,
+        )
+        result = await handler.execute(_job())
+
+        # Every reflection row committed -- the chunk was NOT rolled back.
+        assert result.metadata["written"] == n
+        rstore = ReflectionStore(db)
+        for i in range(n):
+            ref = await rstore.get_by_trace_id(f"chunk-{i}")
+            assert ref is not None
+            assert ref.summary == "ok"
+
+        # Only n - 1 journal rows exist -- the one simulated failure left no row.
+        journal_rows = await db.fetch_all(
+            "SELECT trace_id FROM journal_events WHERE type = 'memory.reflection_recorded'",
+        )
+        assert len(journal_rows) == n - 1
+
+    async def test_a_real_journal_record_failure_degrades_health(
+        self, db: DbPool,
+    ) -> None:
+        """AD-24's explicit clause: 'a failed record marks the journal health
+        contributor degraded.' Unlike the mid-chunk test above (which
+        monkeypatches the whole ``journal_record`` function, bypassing
+        recorder.py's own degrade logic entirely), this forces a GENUINE
+        internal ``journal.record()`` failure -- an unregistered event type,
+        the same failure shape ``recorder.py``'s own
+        ``get_registry().get(event.type)`` call raises on -- so recorder.py's
+        real ``except`` block, real ``note_failure`` call, are what is under
+        test here. The reflection row must still commit regardless (B5)."""
+        from stackowl.journal.health import JournalHealthContributor
+        from stackowl.journal.health import reset_for_tests as reset_journal_health
+        from stackowl.journal.registry import get_registry
+
+        n = 1
+        await _seed_pre_scored_outcomes(db, n)
+
+        registry = get_registry()
+        saved_spec = registry._specs.pop("memory.reflection_recorded")  # noqa: SLF001 -- force recorder.py's REAL unregistered-type failure path
+        try:
+            registry_local = ProviderRegistry()
+            registry_local.register_mock("fast", _ScriptedProvider(), tier="fast")
+            handler = ReflectionWriterHandler(
+                db=db, provider_registry=registry_local, embedding_registry=EmbeddingRegistry(),
+                batch_limit=n, critic=_NoOpCritic(),
+            )
+            result = await handler.execute(_job())
+
+            # The reflection row still committed -- only its journal row is missing.
+            assert result.metadata["written"] == n
+            rstore = ReflectionStore(db)
+            ref = await rstore.get_by_trace_id("chunk-0")
+            assert ref is not None and ref.summary == "ok"
+
+            status = await JournalHealthContributor().health_check()
+            assert status.status == "degraded"
+        finally:
+            registry._specs["memory.reflection_recorded"] = saved_spec  # noqa: SLF001
+            # `journal/health.py`'s state is process-global and this directory
+            # carries no autouse reset (unlike tests/journal/conftest.py) --
+            # clear the streak THIS test deliberately caused so it cannot leak
+            # a "degraded" status into an unrelated later test in the same run.
+            reset_journal_health()
+
+    async def test_canary_secrets_are_redacted_through_the_real_emitter(
+        self, db: DbPool,
+    ) -> None:
+        """NFR33, the third of the three real recording paths this story
+        wires (mirrors test_memory_events.py/test_consent_events.py's own
+        proof for the other two) -- driven through the REAL chunk-loop
+        emitter, not a synthetic JournalEvent."""
+        canary = "Bearer sk-canary1234567890abcdefghijklmno"
+        store = TaskOutcomeStore(db)
+        await store.record(
+            trace_id="chunk-canary", session_key="s", owl_name=canary, channel="cli",
+            success=True, latency_ms=10.0, tool_call_count=0,
+            failure_class=None, step_durations={}, input_text="do a thing",
+            response_text="solid answer",
+        )
+        out = await store.get_by_trace_id("chunk-canary")
+        assert out is not None
+        await store.set_quality_score(out.outcome_id, 0.9)
+
+        registry = ProviderRegistry()
+        registry.register_mock("fast", _ScriptedProvider(), tier="fast")
+        critic = _NoOpCritic()
+        handler = ReflectionWriterHandler(
+            db=db, provider_registry=registry, embedding_registry=EmbeddingRegistry(),
+            batch_limit=1, critic=critic,
+        )
+        result = await handler.execute(_job())
+        assert result.metadata["written"] == 1
+
+        rows = await db.fetch_all(
+            "SELECT attrs FROM journal_events WHERE type = 'memory.reflection_recorded' "
+            "AND trace_id = ?",
+            ("chunk-canary",),
+        )
+        assert len(rows) == 1
+        stored = rows[0]["attrs"]
+        assert canary not in stored
+        assert json.loads(stored)["_redacted"] is True
+
+
 @dataclass
 class _ModelCapturingProvider:
     """Records the ``model`` kwarg passed to every ``complete()`` call —
