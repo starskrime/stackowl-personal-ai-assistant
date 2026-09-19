@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.interaction.reversibility_resolver import (
     Decision,
     Reversibility,
@@ -48,6 +49,7 @@ __all__ = [
     "ConsentPrompter",
     "AutonomousPrompter",
     "FailClosedPrompter",
+    "PRINCIPAL_AUTONOMOUS_SCHEDULER",
     "RoutingPrompter",
     "TtyConsentPrompter",
     "ConsentPolicy",
@@ -351,6 +353,20 @@ _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 #: that knows nothing about the user was the one that bound.
 HUMAN_DECISION_TIMEOUT_SECONDS = 1200.0
 
+#: Story 3.4 -- the EXPLICIT, trigger-set identity a scheduled/autonomous run
+#: carries on ``TraceContext``, never inferred from ``channel``/payload.
+#: ``_bind_job_trace`` (`scheduler/scheduler.py`) sets this on every
+#: ``TraceContext.start(...)`` it opens; ``ConsentPolicy.request()`` reads it
+#: back and routes straight to ``AutonomousPrompter`` when it matches --
+#: bypassing ``RoutingPrompter`` (and therefore any channel-keyed prompter)
+#: entirely, because a job's real target channel (set for delivery/scoping)
+#: is not evidence that a human is attending THIS trigger. Replaces the
+#: deleted ``RoutingPrompter -> AutonomousPrompter`` fallback, which inferred
+#: "nobody can be asked" from "no prompter is registered for this channel" --
+#: a signal that also fires when a channel IS live and simply has a wiring
+#: fault (Story 3.4 Intent).
+PRINCIPAL_AUTONOMOUS_SCHEDULER = "autonomous:scheduler"
+
 
 class ConsentScope(StrEnum):
     """The scope a user grants when approving a consequential action."""
@@ -428,6 +444,30 @@ class FailClosedPrompter:
 #: `owl_build` covers create/edit/rename/retire/pause/resume — the fleet's shape. Both
 #: follow the ORIGIN of the request.
 _PROVENANCE_CATEGORIES = frozenset({"authority_widening", "owl_build"})
+
+#: AC5/NFR24 -- channels with no REAL adapter today. `web` and `voice` must
+#: never count as an "official" origin even if they end up in
+#: `_gateway_channels()`'s live set (a future adapter registering under one
+#: of these names, or a test double), because neither has been built out as
+#: a real, operator-configured ingress yet. A forward guard, not a fix for an
+#: observed leak -- Story 3.4 Boundaries.
+_NEVER_OFFICIAL_CHANNELS = frozenset({"web", "voice"})
+
+
+def _is_official_channel(channel: str) -> bool:
+    """The ONE provenance check both `AutonomousPrompter.prompt()` and
+    `ConsentPolicy.request()` used to duplicate inline (Story 3.4 Code Map).
+
+    A channel is official when it names a real, live gateway adapter --
+    never `web`/`voice` (see :data:`_NEVER_OFFICIAL_CHANNELS`), and never a
+    channel `_gateway_channels()` could not confirm (an unreadable registry
+    already collapses to empty there, so this fails closed by construction).
+    """
+    return (
+        bool(channel)
+        and channel not in _NEVER_OFFICIAL_CHANNELS
+        and channel in _gateway_channels()
+    )
 
 
 def _gateway_channels_or_unknown() -> frozenset[str] | None:
@@ -543,7 +583,7 @@ class AutonomousPrompter:
         # and an official origin says who ASKED, never that a destructive act was
         # intended. Widening those is a separate, explicit decision.
         if not req.allow_relaxation and req.category in _PROVENANCE_CATEGORIES:
-            official = bool(req.channel) and req.channel in _gateway_channels()
+            official = _is_official_channel(req.channel)
             log.tool.info(
                 "[consent] authority request judged by its ORIGIN",
                 extra={"_fields": {
@@ -645,18 +685,27 @@ class AutonomousPrompter:
 class RoutingPrompter:
     """Multiplexes consent requests to a per-channel prompter.
 
-    An UNKNOWN channel does NOT deny outright — it routes to
-    :class:`AutonomousPrompter`, which grants an ordinary consequential action and
-    still refuses anything always-ask (``allow_relaxation`` False). "unknown → deny"
-    is what this said until 2026-08-21 and it had been false since 7e020cd1; the
-    invariant test that guarded it went red at that commit and stayed red, so nothing
-    corrected the sentence either. See
-    tests/channels/test_unwired_channel_consent_fails_closed.py for the contract as it
-    actually is.
+    An UNKNOWN channel DENIES and opens one deduplicated `incident` needs_you
+    item for that channel (Story 3.4). This used to route to
+    :class:`AutonomousPrompter` instead — deliberately, from 2026-08-21 — but
+    that conflated two situations under one signal ("no channel UX"): a
+    genuinely unattended trigger (nobody CAN be asked) and a live channel the
+    operator simply failed to wire a prompter for (somebody COULD be asked
+    and the platform never tried). `AutonomousPrompter`'s own docstring named
+    the conflation before this fixed it. Unattended work now carries an
+    EXPLICIT, trigger-set ``principal`` on ``TraceContext``
+    (:data:`PRINCIPAL_AUTONOMOUS_SCHEDULER`) that ``ConsentPolicy.request()``
+    reads directly and routes to ``AutonomousPrompter`` with, bypassing this
+    router entirely — so the autonomous case no longer needs "no prompter
+    registered" to stand in for it. See
+    tests/channels/test_unwired_channel_consent_fails_closed.py for the
+    contract as it actually is.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_pool: DbPool | None = None) -> None:
         self._by_channel: dict[str, ConsentPrompter] = {}
+        self._default: ConsentPrompter | None = None
+        self._db_pool = db_pool
 
     def register(self, channel: str, prompter: ConsentPrompter) -> None:
         log.tool.debug(
@@ -665,25 +714,41 @@ class RoutingPrompter:
         )
         self._by_channel[channel] = prompter
 
+    def set_default(self, prompter: ConsentPrompter) -> None:
+        """Set the prompter used for any channel with no per-channel registration.
+
+        CORE role (`startup/orchestrator.py`) uses this: CORE has no local
+        `ChannelRegistry` (adapters live in the gateway process in split
+        mode), so every channel it does not itself host forwards to the
+        gateway's own `RoutingPrompter` — the real authority on "is this
+        channel wired" — instead of an enumerated, hardcoded channel list.
+        """
+        log.tool.debug("[consent] RoutingPrompter.set_default")
+        self._default = prompter
+
     async def prompt(self, req: ConsentRequest) -> ConsentScope:
-        prompter = self._by_channel.get(req.channel)
+        prompter = self._by_channel.get(req.channel, self._default)
         if prompter is None:
-            # No channel UX for this turn means NOBODY CAN BE ASKED — which is the
-            # autonomous case, not a dangerous one. Denying here is what stopped
-            # unattended agents from finishing work they had already decided to do,
-            # and it denied SILENTLY: the user was never asked, so there was nothing
-            # for them to approve or refuse (Bakir, 2026-08-16: "agent was blocked
-            # due to ask permission and permission was never asked from user").
-            #
-            # The always-ask tools and categories never reach here — ConsentPolicy
-            # applies those BEFORE any prompter is consulted — so this grants the
-            # ordinary consequential actions and nothing that the reviews ringfenced.
-            log.tool.info(
-                "[consent] RoutingPrompter: no channel UX — routing to the "
-                "autonomous grant instead of denying unasked",
+            # No registered prompter for this channel, and no default set
+            # either. This is now ALWAYS a deny + a durable incident for a
+            # human to look at — never an inference that nobody can be
+            # asked. Genuinely unattended work (a scheduled job) does not
+            # reach this branch at all: it carries `principal` on
+            # `TraceContext`, which `ConsentPolicy.request()` reads BEFORE
+            # ever calling `self.prompter.prompt(req)` (i.e. before this
+            # method runs), routing straight to `AutonomousPrompter` instead.
+            log.tool.warning(
+                "[consent] RoutingPrompter: no prompter for this channel — "
+                "denying and opening an incident (never falling back to the "
+                "autonomous grant)",
                 extra={"_fields": {"channel": req.channel, "tool": req.tool_name}},
             )
-            return await AutonomousPrompter().prompt(req)
+            from stackowl.journal import consent_events
+
+            await consent_events.record_channel_unreachable(
+                self._db_pool, channel=req.channel, tool_name=req.tool_name,
+            )
+            return ConsentScope.DENY
         return await prompter.prompt(req)
 
 
@@ -805,7 +870,7 @@ class ConsentPolicy:
         # already have it auto-granted; now a request with no official origin is
         # refused outright.
         if category in _PROVENANCE_CATEGORIES:
-            official = bool(channel) and channel in _gateway_channels()
+            official = _is_official_channel(channel)
             log.tool.info(
                 "[consent] authority judged by ORIGIN, not by attendance",
                 extra={"_fields": {
@@ -893,8 +958,23 @@ class ConsentPolicy:
                 session_key=session_key, category=category, expires_at=expires_at,
             )
 
+        # Story 3.4 -- an EXPLICIT, trigger-set principal bypasses
+        # `self.prompter` (usually `RoutingPrompter`, channel-keyed) entirely
+        # and goes straight to `AutonomousPrompter`. Read off `TraceContext`
+        # directly (never a threaded parameter -- Boundaries: mirrors how
+        # `consent_events.record_consent_decision` already reads `trace_id`
+        # this way), so a scheduled job's real target channel (set for
+        # delivery/scoping) never causes it to wait on a human who isn't
+        # watching THIS trigger. `AutonomousPrompter`'s own always-ask
+        # refusal (`allow_relaxation is False -> DENY`) is untouched, so this
+        # bypass still cannot grant any of the six always-ask categories.
+        principal = TraceContext.get().get("principal")
+        prompter: ConsentPrompter = (
+            AutonomousPrompter() if principal == PRINCIPAL_AUTONOMOUS_SCHEDULER
+            else self.prompter
+        )
         try:
-            scope = await self.prompter.prompt(req)
+            scope = await prompter.prompt(req)
         except Exception as exc:  # fail closed — never allow on a prompt error
             log.tool.error(
                 "[consent] policy.request: prompter raised — denying",

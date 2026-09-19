@@ -16,8 +16,10 @@ from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.journal import AttentionClass, Intensity, NeedsYouKind, RecordKind, classify
 from stackowl.journal.consent_events import (
+    ConsentChannelUnreachableAttrs,
     ConsentDecisionAttrs,
     ConsentRequestedAttrs,
+    record_channel_unreachable,
     record_consent_decision,
     record_consent_requested,
 )
@@ -46,6 +48,15 @@ class TestTheTypeIsRegistered:
         assert spec.emitting_process == "tools.consent"
         assert spec.needs_you_kind is NeedsYouKind.APPROVAL
         assert classify("consent.requested") == (AttentionClass.NEEDS_YOU, Intensity.NORMAL)
+
+    def test_channel_unreachable_is_consent_needs_you_incident(self) -> None:
+        """Story 3.4."""
+        spec = get_registry().get("consent.channel_unreachable")
+        assert spec.attrs_model is ConsentChannelUnreachableAttrs
+        assert spec.record_kind is RecordKind.CONSENT
+        assert spec.emitting_process == "tools.consent"
+        assert spec.needs_you_kind is NeedsYouKind.INCIDENT
+        assert classify("consent.channel_unreachable") == (AttentionClass.NEEDS_YOU, Intensity.HIGH)
 
 
 class TestNarration:
@@ -335,4 +346,72 @@ class TestRecordConsentRequested:
 
         assert item_id is None
         rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE kind = 'approval'")
+        assert rows == []
+
+
+class TestRecordChannelUnreachable:
+    """Story 3.4 — ``record_channel_unreachable`` opens a durable ``incident``
+    item, deduplicated per channel, whenever ``RoutingPrompter`` finds no
+    prompter (and no default) for a channel."""
+
+    async def test_no_db_pool_is_a_silent_no_op(self) -> None:
+        await record_channel_unreachable(None, channel="discord", tool_name="shell")
+
+    async def test_opens_one_incident_item(self, tmp_db: DbPool) -> None:
+        await record_channel_unreachable(tmp_db, channel="discord", tool_name="shell")
+
+        rows = await tmp_db.fetch_all(
+            "SELECT * FROM needs_you WHERE kind = 'incident' AND resolved_cursor IS NULL"
+        )
+        assert len(rows) == 1
+
+        journal_rows = await tmp_db.fetch_all(
+            "SELECT * FROM journal_events WHERE type = 'consent.channel_unreachable'",
+        )
+        assert len(journal_rows) == 1
+        assert journal_rows[0]["outcome"] == "failed"
+        assert journal_rows[0]["attention"] == "needs_you"
+        assert journal_rows[0]["intensity"] == "high"
+        attrs = json.loads(journal_rows[0]["attrs"])
+        assert attrs["channel"] == "discord"
+        assert attrs["tool_name"] == "shell"
+
+    async def test_two_calls_for_the_same_channel_dedupe_to_ONE_open_item(
+        self, tmp_db: DbPool,
+    ) -> None:
+        """Mirrors Story 3.1's ``ON CONFLICT ... DO NOTHING`` dedupe — the
+        SAME channel must never open a second incident while one is still
+        open (spec Code Map: 'per-channel deduped via target_id=channel')."""
+        await record_channel_unreachable(tmp_db, channel="whatsapp", tool_name="shell")
+        await record_channel_unreachable(tmp_db, channel="whatsapp", tool_name="send_file")
+
+        rows = await tmp_db.fetch_all(
+            "SELECT * FROM needs_you WHERE kind = 'incident' AND resolved_cursor IS NULL"
+        )
+        assert len(rows) == 1
+
+    async def test_different_channels_each_get_their_own_item(self, tmp_db: DbPool) -> None:
+        await record_channel_unreachable(tmp_db, channel="discord", tool_name="shell")
+        await record_channel_unreachable(tmp_db, channel="whatsapp", tool_name="shell")
+
+        rows = await tmp_db.fetch_all(
+            "SELECT * FROM needs_you WHERE kind = 'incident' AND resolved_cursor IS NULL"
+        )
+        assert len(rows) == 2
+
+    async def test_a_journal_record_failure_never_raises(
+        self, tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from stackowl.journal import consent_events as consent_events_module
+
+        async def _boom(*_args: object, **_kwargs: object) -> str:
+            raise RuntimeError("simulated journal.record failure")
+
+        monkeypatch.setattr(consent_events_module, "journal_record", _boom)
+
+        # Never raises (B5) — a journaling failure must never turn a
+        # fail-closed deny into something louder.
+        await record_channel_unreachable(tmp_db, channel="slack", tool_name="shell")
+
+        rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE kind = 'incident'")
         assert rows == []

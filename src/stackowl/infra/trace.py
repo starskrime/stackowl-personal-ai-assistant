@@ -29,6 +29,7 @@ class _TraceToken(NamedTuple):
     task_id: Token[str | None]
     durable_owner_id: Token[str | None]
     retry_lineage_id: Token[str | None]
+    principal: Token[str | None]
 
 
 class TraceContext:
@@ -100,6 +101,18 @@ class TraceContext:
     _retry_lineage_id: ContextVar[str | None] = ContextVar(
         "retry_lineage_id", default=None
     )
+    # Story 3.4 -- the EXPLICIT identity a trigger declares for the whole run
+    # it opens, e.g. `autonomous:scheduler` (`stackowl.tools.consent.
+    # PRINCIPAL_AUTONOMOUS_SCHEDULER`), never inferred from `channel`/payload.
+    # `ConsentPolicy.request()` reads this to decide whether a request bypasses
+    # channel-keyed routing (`RoutingPrompter`) and goes straight to
+    # `AutonomousPrompter` -- replacing the deleted "no prompter registered for
+    # this channel" inference, which could not tell "nobody can be asked" apart
+    # from "somebody can be asked and the platform failed to wire it". Default
+    # None ⇒ every existing call site (a real user turn) is unaffected.
+    # LOG-SAFE — a short closed-vocabulary label, included in get() like
+    # `channel`.
+    _principal: ContextVar[str | None] = ContextVar("principal", default=None)
 
     @classmethod
     def start(
@@ -119,6 +132,7 @@ class TraceContext:
         task_id: str | None = None,
         durable_owner_id: str | None = None,
         retry_lineage_id: str | None = None,
+        principal: str | None = None,
     ) -> _TraceToken:
         """Set trace context for the current async task; return a token to reset later.
 
@@ -150,6 +164,7 @@ class TraceContext:
             task_id=cls._task_id.set(task_id),
             durable_owner_id=cls._durable_owner_id.set(durable_owner_id),
             retry_lineage_id=cls._retry_lineage_id.set(retry_lineage_id),
+            principal=cls._principal.set(principal),
         )
 
     @classmethod
@@ -171,6 +186,7 @@ class TraceContext:
         cls._task_id.reset(token.task_id)
         cls._durable_owner_id.reset(token.durable_owner_id)
         cls._retry_lineage_id.reset(token.retry_lineage_id)
+        cls._principal.reset(token.principal)
 
     @classmethod
     @asynccontextmanager
@@ -251,6 +267,7 @@ class TraceContext:
             "owl_name": cls._owl_name.get(),
             "task_id": cls._task_id.get(),
             "retry_lineage_id": cls._retry_lineage_id.get(),
+            "principal": cls._principal.get(),
         }
 
     @classmethod

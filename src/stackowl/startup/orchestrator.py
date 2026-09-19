@@ -1684,9 +1684,15 @@ class StartupOrchestrator:
             from stackowl.runtime.socket_consent import SocketConsentPrompter
 
             socket_consent_prompter = SocketConsentPrompter(core_conn)
-            for _chan in ("cli", "telegram", "slack", "discord", "whatsapp"):
-                consent_routing.register(_chan, socket_consent_prompter)
-            log.info("[startup] core: socket consent prompter registered (all channels)")
+            # Story 3.4 (AC1) -- CORE has no local ChannelRegistry (adapters
+            # live in the gateway process in split mode), so this is not an
+            # enumerated channel list any more: any channel not itself
+            # hosted locally forwards to the gateway's own RoutingPrompter,
+            # which is the real, adapter-start-driven authority on "is this
+            # channel wired". A hardcoded 5-channel loop silently stopped
+            # covering a 6th channel the moment one was added.
+            consent_routing.set_default(socket_consent_prompter)
+            log.info("[startup] core: socket consent prompter set as default (all channels)")
 
         # E5 — clarify pause/resume gateway. One DI singleton: tools reach it via
         # get_services().clarify_gateway to ask the user mid-turn; the message

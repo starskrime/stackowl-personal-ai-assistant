@@ -92,11 +92,23 @@ class TestTheAutonomousGrant:
         assert getattr(grants[0], "_fields", {}).get("tool") == "tool_build"
 
 
-class TestTheRouterNoLongerDeniesUnasked:
-    async def test_a_turn_with_no_channel_UX_is_granted_not_denied(self) -> None:
-        """The autonomous case: nobody can be asked, so denying is not the safe
-        answer — it is no answer, and the task dies unattended."""
-        assert await RoutingPrompter().prompt(_req()) is not ConsentScope.DENY
+class TestTheRouterNowDeniesUnasked:
+    """Story 3.4 — RENAMED from ``TestTheRouterNoLongerDeniesUnasked``. The
+    ``RoutingPrompter -> AutonomousPrompter`` fallback this class used to pin is
+    deleted outright: "no channel UX" conflated a genuinely unattended trigger
+    (nobody CAN be asked) with a live channel the operator failed to wire a
+    prompter for (somebody COULD be asked). The autonomous case now proves
+    itself with an explicit ``principal`` on ``TraceContext``
+    (``ConsentPolicy.request()`` reads it BEFORE ever calling
+    ``RoutingPrompter``), so this router goes back to denying unconditionally —
+    and also opens a durable ``incident`` so the wiring fault is never silent."""
+
+    async def test_a_turn_with_no_channel_UX_is_denied_and_opens_an_incident(
+        self,
+    ) -> None:
+        """``db_pool=None`` (this router's default) is a no-op journal write —
+        the DENY still happens regardless of whether the incident is durable."""
+        assert await RoutingPrompter().prompt(_req()) is ConsentScope.DENY
 
     async def test_a_registered_channel_still_asks_its_own_prompter(self) -> None:
         """The whole point is that a REAL user still gets asked. If a channel UX

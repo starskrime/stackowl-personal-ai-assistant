@@ -49,7 +49,9 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.infra.trace import TraceContext
 from stackowl.tools.consent import (
+    PRINCIPAL_AUTONOMOUS_SCHEDULER,
     AutonomousPrompter,
     ConsentPolicy,
     ConsentRequest,
@@ -82,11 +84,23 @@ class TestTheRingfencedSetIsNeverGrantedWithNobodyWatching:
 
         If this starts failing, either the relaxation was reverted (fine — update
         it with the reason) or something re-gated code execution silently, which
-        is the drift this file exists to catch."""
-        allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(
-            tool_name="execute_code", channel="cron", session_key="s1",
-            summary="", reversible=False,
-        )
+        is the drift this file exists to catch.
+
+        Story 3.4 — the autonomous grant is no longer reached by leaving the
+        channel unwired (that now DENIES + opens an incident, see
+        ``tests/channels/test_unwired_channel_consent_fails_closed.py``). An
+        unattended run proves itself with the explicit
+        ``PRINCIPAL_AUTONOMOUS_SCHEDULER`` on ``TraceContext`` instead — the
+        same mechanism ``scheduler.scheduler._bind_job_trace`` uses for a real
+        scheduled job."""
+        token = TraceContext.start(principal=PRINCIPAL_AUTONOMOUS_SCHEDULER)
+        try:
+            allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(
+                tool_name="execute_code", channel="cron", session_key="s1",
+                summary="", reversible=False,
+            )
+        finally:
+            TraceContext.reset(token)
 
         assert allowed is True
 
@@ -115,10 +129,24 @@ class TestOrdinaryAutonomousWorkIsStillUnblocked:
     the hole must not re-block the ordinary unattended work it was built for."""
 
     async def test_a_normal_consequential_tool_is_still_granted(self) -> None:
-        allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(
-            tool_name="send_file", channel="cron", session_key="s1",
-            summary="", reversible=False,
-        )
+        """Story 3.4 — rewritten to prove the NEW mechanism. ``channel="cron"``
+        with NO prompter registered used to fall through to
+        ``AutonomousPrompter`` by itself; that fallback is deleted, and an
+        unwired channel now DENIES outright (+ opens an incident). Ordinary
+        unattended work instead proves itself with the explicit
+        ``PRINCIPAL_AUTONOMOUS_SCHEDULER`` on ``TraceContext`` — the same
+        mechanism a real scheduled job carries via
+        ``scheduler.scheduler._bind_job_trace`` — which
+        ``ConsentPolicy.request()`` reads and routes straight to
+        ``AutonomousPrompter`` with, bypassing ``RoutingPrompter`` entirely."""
+        token = TraceContext.start(principal=PRINCIPAL_AUTONOMOUS_SCHEDULER)
+        try:
+            allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(
+                tool_name="send_file", channel="cron", session_key="s1",
+                summary="", reversible=False,
+            )
+        finally:
+            TraceContext.reset(token)
 
         assert allowed is True
 

@@ -111,6 +111,23 @@ def _narrate_consent_requested(attrs: JournalAttrsBase, name: str) -> str:  # no
     return f"Consent requested for {a.tool_name} on {a.channel}."
 
 
+class ConsentChannelUnreachableAttrs(JournalAttrsBase):
+    """``consent.channel_unreachable`` (Story 3.4) -- a consent request
+    arrived on a channel with no registered prompter (and no default). Opens
+    an ``incident`` needs_you item, deduplicated per channel."""
+
+    channel: str = Field(max_length=_MAX_LABEL_LEN)
+    tool_name: str = Field(max_length=_MAX_LABEL_LEN)
+
+
+def _narrate_channel_unreachable(attrs: JournalAttrsBase, name: str) -> str:  # noqa: ARG001 -- no resolver registered for RecordKind.CONSENT (out of scope)
+    a = cast(ConsentChannelUnreachableAttrs, attrs)
+    return (
+        f"A consent request for {a.tool_name} on {a.channel} could not be "
+        "asked -- no prompter is wired for that channel."
+    )
+
+
 def _register() -> None:
     get_registry().register(EventTypeSpec(
         type="consent.decided", schema_version=1, attrs_model=ConsentDecisionAttrs,
@@ -129,6 +146,17 @@ def _register() -> None:
         # mirrors budget.warning's/link.hello_mismatch_standdown's own
         # table=None rationale).
         table=None, narrate=_narrate_consent_requested,
+    ))
+    get_registry().register(EventTypeSpec(
+        type="consent.channel_unreachable", schema_version=1,
+        attrs_model=ConsentChannelUnreachableAttrs,
+        emitting_process="tools.consent", record_kind=RecordKind.CONSENT,
+        attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.HIGH,
+        needs_you_kind=NeedsYouKind.INCIDENT,
+        # No single owning row -- like `link.hello_mismatch_standdown`, this
+        # describes a wiring fault over a channel name, not a table row
+        # (spec Code Map, `EventTypeSpec.table`'s own docstring).
+        table=None, narrate=_narrate_channel_unreachable,
     ))
 
 
@@ -212,6 +240,63 @@ async def record_consent_requested(
         extra={"_fields": {"tool": tool_name, "item_id": item_id}},
     )
     return item_id
+
+
+async def record_channel_unreachable(
+    db_pool: DbPool | None, *, channel: str, tool_name: str,
+) -> None:
+    """Record ``consent.channel_unreachable`` -- ``RoutingPrompter`` found no
+    prompter for ``channel`` (and no default). Never opens a waiter (nobody
+    waits on an incident) -- ``record()``'s own NEEDS_YOU wiring opens the
+    deduplicated ``incident`` item automatically, keyed by ``channel`` (spec
+    Code Map: "one deduplicated `incident` needs_you item per channel,
+    mirrors Story 3.1's `ON CONFLICT ... DO NOTHING` dedupe").
+
+    A no-op (``db_pool is None``) mirrors every other helper in this module
+    -- the DENY this accompanies still happens regardless (Boundaries:
+    "``db_pool=None`` ... is a no-op journal write ... DENY still happens").
+    Never raises (B5): a journaling failure must never turn a fail-closed
+    deny into something louder.
+    """
+    # 1. ENTRY
+    log.tool.debug(
+        "[journal] consent_events.record_channel_unreachable: entry",
+        extra={"_fields": {"channel": channel, "tool": tool_name}},
+    )
+    # 2. DECISION -- no DbPool wired is a silent no-op.
+    if db_pool is None:
+        log.tool.debug(
+            "[journal] consent_events.record_channel_unreachable: exit -- "
+            "no db_pool wired",
+            extra={"_fields": {"channel": channel}},
+        )
+        return
+    try:
+        # 3. STEP
+        async with db_pool.transaction() as conn:
+            await journal_record(conn, JournalEvent(
+                type="consent.channel_unreachable", schema_version=1,
+                occurred_at=_now_iso(),
+                actor_kind=ActorKind.AUTONOMOUS, actor_id="tools.consent",
+                target_kind=ActorKind.OWNER, target_id=channel,
+                outcome=Outcome.FAILED,
+                attrs=ConsentChannelUnreachableAttrs(
+                    channel=channel, tool_name=tool_name,
+                ),
+            ))
+    except Exception as exc:
+        log.tool.error(
+            "[journal] consent_events.record_channel_unreachable: FAILED -- "
+            "the deny still stands; only its durable incident is missing",
+            exc_info=exc,
+            extra={"_fields": {"channel": channel, "tool": tool_name}},
+        )
+        return
+    # 4. EXIT
+    log.tool.debug(
+        "[journal] consent_events.record_channel_unreachable: exit -- recorded",
+        extra={"_fields": {"channel": channel}},
+    )
 
 
 async def record_consent_decision(

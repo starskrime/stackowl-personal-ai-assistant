@@ -238,45 +238,60 @@ async def test_prompter_exception_fails_closed() -> None:
     assert await policy.request(tool_name="t", channel="cli", session_key="s1") is False
 
 
-async def test_a_channel_with_no_UX_routes_to_the_AUTONOMOUS_GRANT() -> None:
-    """A turn nobody can be asked about is GRANTED, not refused. Bakir's call,
-    2026-08-27, when this disagreement was put to him.
+async def test_a_channel_with_no_UX_now_DENIES_and_a_declared_principal_still_grants() -> None:
+    """Story 3.4 — RENAMED from ``test_a_channel_with_no_UX_routes_to_the_AUTONOMOUS_GRANT``.
 
-    THIS TEST USED TO ASSERT THE OPPOSITE and had been red for some time. The
-    name said "fails_closed" and the code said otherwise:
+    THIS TEST USED TO ASSERT THAT "no channel UX" alone was enough to prove nobody
+    could be asked, and had that history right at the time:
 
         [consent] RoutingPrompter: no channel UX — routing to the autonomous
                   grant instead of denying unasked
         [consent] autonomous grant — no human attached to this turn
 
-    THE DISAGREEMENT WAS REAL, which is why it was escalated rather than fixed.
-    The 2026-08-19 record describes the defect this replaced as "authz was
-    INVERTED (denied attended, granted UNATTENDED)" — and granting unattended is
-    what this path does. Either that wording was loose or a fix had
-    over-corrected, and guessing on a consent path is not a call to automate.
+    Bakir's 2026-08-27 call (recorded in this test's prior form) was that
+    unattended operation must not be refused wholesale — an assistant whose whole
+    purpose is to work while its owner sleeps cannot refuse every turn its owner
+    is not watching.
 
-    HIS ANSWER: grant is intended. An assistant whose whole purpose is to work
-    while its owner sleeps cannot refuse every turn its owner is not watching —
-    that would make unattended operation impossible, which is the failure the
-    2026-08-19 work existed to remove.
+    WHAT STORY 3.4 FOUND: "no channel UX" was the WRONG proxy for "nobody can be
+    asked" — it also fires for a live, wired channel where the operator simply
+    failed to register a prompter, and the old fallback granted THAT case too,
+    silently. `AutonomousPrompter`'s own docstring named this conflation
+    explicitly. So the grant Bakir asked for is preserved, but the signal that
+    triggers it changed: an unattended run now DECLARES itself with an explicit
+    ``principal`` (``autonomous:scheduler``) on ``TraceContext`` — set by the
+    trigger (`scheduler.scheduler._bind_job_trace` for every scheduled job), never
+    inferred from the channel being unwired. ``RoutingPrompter`` itself goes back
+    to denying an unwired channel unconditionally (+ opens a durable incident so
+    the wiring fault is never silent) — see
+    ``tests/channels/test_unwired_channel_consent_fails_closed.py``.
 
-    THE TEST IS REWRITTEN, NOT DELETED. A security test that vanishes leaves no
-    record of what was chosen, and the next person to read this path deserves the
-    reasoning rather than silence. Note the CONTRAST that makes this safe: the
-    OTHER consent path, authority_widening, is judged by official-channel ORIGIN
-    and refuses outright when there is no official origin — so "no human present"
-    is not a skeleton key, it is one branch with a stated rationale.
+    Note the CONTRAST that makes this safe: the OTHER consent path,
+    authority_widening, is judged by official-channel ORIGIN and refuses outright
+    when there is no official origin — so "no human present" is not a skeleton
+    key, it is one branch with a stated rationale.
     """
-    from stackowl.tools.consent import RoutingPrompter
+    from stackowl.infra.trace import TraceContext
+    from stackowl.tools.consent import PRINCIPAL_AUTONOMOUS_SCHEDULER, RoutingPrompter
 
     routing = RoutingPrompter()  # nothing registered — nobody to ask
     policy = ConsentPolicy(prompter=routing)
 
-    granted = await policy.request(tool_name="t", channel="telegram", session_key="s1")
+    denied = await policy.request(tool_name="t", channel="telegram", session_key="s1")
+    assert denied is False, (
+        "an unwired channel must DENY outright — the AutonomousPrompter fallback "
+        "is deleted, it conflated 'nobody can be asked' with 'a wiring fault'"
+    )
+
+    token = TraceContext.start(principal=PRINCIPAL_AUTONOMOUS_SCHEDULER)
+    try:
+        granted = await policy.request(tool_name="t", channel="telegram", session_key="s2")
+    finally:
+        TraceContext.reset(token)
 
     assert granted is True, (
-        "an unattended turn must not be refused merely because no channel UX is "
-        "registered — that stops the platform working whenever its owner is away"
+        "a run that DECLARES itself unattended (the explicit principal) must "
+        "still be granted — that is the case the old fallback existed for"
     )
 
 

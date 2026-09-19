@@ -42,6 +42,7 @@ from stackowl.scheduler.scheduler_helpers import (
 )
 from stackowl.scheduler.scheduler_mutations import run_now, update_job
 from stackowl.supervisor.supervisor import SupervisedTask
+from stackowl.tools.consent import PRINCIPAL_AUTONOMOUS_SCHEDULER
 from stackowl.tools.verification import is_trustworthy_success
 
 #: AD-4's bound, reused rather than re-declared — a job's `handler_name` is
@@ -175,7 +176,16 @@ def _bind_job_trace(job: Any) -> Any:
         or (targets[0] if targets else None)
         or "internal"
     )
-    return TraceContext.start(session_key=f"job:{job.job_id}", channel=str(channel))
+    # Story 3.4 (AC3) -- the EXPLICIT principal every scheduled/autonomous run
+    # carries, never inferred from `channel`/payload. `ConsentPolicy.request()`
+    # reads this off `TraceContext` and routes straight to `AutonomousPrompter`
+    # when it matches -- so this job's real target `channel` above (set for
+    # delivery/scoping only) never causes a consequential-action gate to wait
+    # on a human who isn't attending THIS trigger.
+    return TraceContext.start(
+        session_key=f"job:{job.job_id}", channel=str(channel),
+        principal=PRINCIPAL_AUTONOMOUS_SCHEDULER,
+    )
 
 
 #: One day, in seconds — the boundary at which a dropped slot costs a job its

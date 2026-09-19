@@ -63,7 +63,10 @@ class ConsentAssembly:
         # (single source of truth); other locales can be registered later.
         install_default_translations()
 
-        routing_prompter = RoutingPrompter()
+        # Story 3.4 -- same db_pool value threaded to ConsentPolicy two lines
+        # below, new destination: an unwired-channel deny now opens a
+        # durable `incident` needs_you item through RoutingPrompter itself.
+        routing_prompter = RoutingPrompter(db_pool=db_pool)
         routing_prompter.register("cli", TtyConsentPrompter())
 
         # Task 4 Finding 2 (user decision) — the daily SkillSynthesizer job is
