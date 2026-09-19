@@ -19,12 +19,24 @@ from stackowl.authz.bounds_guard import (
     check_tool_bounds,
     effective_bounds,
 )
+from stackowl.authz.severity import (
+    ALL_SEVERITIES,
+    CONSEQUENTIAL,
+    READ,
+    WRITE,
+    ControlPrincipal,
+)
 
 __all__ = [
+    "ALL_SEVERITIES",
     "BoundsSpec",
     "BoundsViolation",
+    "CONSEQUENTIAL",
+    "ControlPrincipal",
     "NetworkRule",
+    "READ",
     "ResourceCaps",
+    "WRITE",
     "check_effective_bounds",
     "check_tool_bounds",
     "effective_bounds",

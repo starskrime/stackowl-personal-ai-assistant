@@ -21,9 +21,12 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import secrets
-from dataclasses import dataclass
 from typing import Final
 
+from stackowl.authz import ALL_SEVERITIES, ControlPrincipal
+from stackowl.authz import CONSEQUENTIAL as CONSEQUENTIAL
+from stackowl.authz import READ as READ
+from stackowl.authz import WRITE as WRITE
 from stackowl.config.secret_resolver import SecretResolver
 from stackowl.config.secret_writer import delete_secret, store_secret
 from stackowl.infra.observability import log
@@ -34,16 +37,11 @@ from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 #: that prints it, so there is ONE source for where the token lives.
 SECRET_SERVICE: Final = "stackowl-control-plane"
 
-#: The severities an endpoint can declare, in the platform's own vocabulary —
-#: `ToolManifest.action_severity` is `Literal["read","write","consequential"]`.
-#: Reusing it means "this credential may read but not write" is expressible on
-#: day one with no new concepts, rather than needing a rewrite when it is asked
-#: for. A boolean `authenticated` is the recorded core defect of this programme —
-#: "consent gated ACTIONS, nothing gated AUTHORITY" — with a new front door.
-READ: Final = "read"
-WRITE: Final = "write"
-CONSEQUENTIAL: Final = "consequential"
-ALL_SEVERITIES: Final = frozenset({READ, WRITE, CONSEQUENTIAL})
+# READ, WRITE, CONSEQUENTIAL, ALL_SEVERITIES and ControlPrincipal now live in
+# `stackowl.authz.severity` (AD-7: `authz/` is the one shared severity/principal
+# home that survives this module's later deletion). Re-exported here, not
+# redefined, so every existing `stackowl.control_plane.auth.X` import keeps
+# resolving to the same objects.
 
 _BEARER: Final = "Bearer "
 
@@ -61,26 +59,6 @@ class CredentialUnavailable(RuntimeError):
     The server treats this as fatal. It is NOT a signal to serve openly — that
     is the one behaviour this whole module exists to make impossible.
     """
-
-
-@dataclass(frozen=True)
-class ControlPrincipal:
-    """Who is calling, and what they are allowed to do.
-
-    `granted` is a SET even though it currently always holds all three
-    severities. That is deliberate: a boolean would have to become a set later,
-    and every handler written against the boolean would have to change. The set
-    costs nothing now and is the whole difference between authenticating a
-    CONNECTION and authorising a PERSON.
-    """
-
-    principal_id: str
-    credential_id: str
-    granted: frozenset[str]
-
-    def may(self, severity: str) -> bool:
-        """Whether this principal may invoke an endpoint of *severity*."""
-        return severity in self.granted
 
 
 def ensure_credential() -> str:
