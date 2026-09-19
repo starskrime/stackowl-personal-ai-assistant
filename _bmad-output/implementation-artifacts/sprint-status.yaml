@@ -59,13 +59,13 @@ development_status:
   2-12-journal-cost-measured-on-a-small-host: backlog
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-give-ups-become-durable-needs-you-items: done
   3-2-one-answer-wins-on-every-surface: done
   3-3-approvals-and-questions-become-needs-you-items: done
   3-4-consent-never-grants-a-channel-nobody-can-answer: done
   3-5-the-consent-address-survives-the-gateway-core-link: done
-  3-6-answer-from-telegram-and-watch-it-close: backlog
+  3-6-answer-from-telegram-and-watch-it-close: done
   epic-3-retrospective: optional
 
   epic-4: backlog
