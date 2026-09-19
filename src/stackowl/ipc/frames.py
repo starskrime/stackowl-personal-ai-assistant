@@ -24,13 +24,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.commands.response import Action
 
-#: Spec 2.5 — bumped from 3 (Spec 2.3/2.4's own precedent: any frame-shape
-#: change bumps this). ``ProgressEventFrame`` is deleted and ``JournalEventFrame``
-#: takes its place on the union. Both sides refuse to talk when their Hello's
-#: ``protocol_version`` disagrees (``runtime.hello.evaluate_hello``); this is the
-#: ONE place that number is declared, so a future wire-shape change need only
-#: change this constant.
-PROTOCOL_VERSION = 4
+#: Spec 3.5 — bumped from 4 (Spec 2.3/2.4/2.5's own precedent: any frame-shape
+#: change bumps this). ``ConsentRequestFrame`` gains ``reply_target``. Both sides
+#: refuse to talk when their Hello's ``protocol_version`` disagrees
+#: (``runtime.hello.evaluate_hello``); this is the ONE place that number is
+#: declared, so a future wire-shape change need only change this constant.
+PROTOCOL_VERSION = 5
 
 
 class _Frame(BaseModel):
@@ -261,6 +260,12 @@ class ConsentRequestFrame(_Frame):
     channel: str
     tool_name: str
     session_key: str
+    #: Spec 3.5 — mirrors ``ConsentRequest.reply_target``: WHERE to ask, as
+    #: opposed to WHICH CONVERSATION is asking (``session_key``). A frame that
+    #: omits this (old-shape wire bytes, or the field default) decodes to
+    #: ``None``; ``GatewayLink._handle_consent`` refuses rather than guessing a
+    #: chat id from ``session_key``.
+    reply_target: int | str | None = None
     category: str | None = None
     summary: str = ""
     allow_relaxation: bool = True

@@ -880,26 +880,56 @@ class GatewayLink:
             await adapter.send_text(text)
 
     async def _handle_consent(self, frame: ConsentRequestFrame) -> None:
+        """Rebuild the request from the wire and route it to the real prompter.
+
+        Story 3.5 — a frame that crosses the link with no ``reply_target`` is
+        refused OUTRIGHT: ``self._consent_router`` is never invoked, so it can
+        never fall back to guessing a chat id from ``session_key`` (the class
+        of bug ``ConsentRequest.reply_target``'s own docstring names). Only a
+        frame that carries a real ``reply_target`` reaches the router.
+        """
         from stackowl.tools.consent import ConsentRequest, ConsentScope
 
-        scope = ConsentScope.DENY
-        if self._consent_router is not None:
-            try:
-                req = ConsentRequest(
-                    tool_name=frame.tool_name,
-                    channel=frame.channel,
-                    session_key=frame.session_key,
-                    category=frame.category,
-                    summary=frame.summary,
-                    allow_relaxation=frame.allow_relaxation,
-                )
-                scope = await self._consent_router.prompt(req)
-            except Exception as exc:  # noqa: BLE001 — fail closed on any error
-                log.gateway.warning(
-                    "[ipc] gateway link: consent prompt failed — denying",
-                    extra={"_fields": {"consent_id": frame.consent_id, "error": str(exc)}},
-                )
-                scope = ConsentScope.DENY
+        # 1. ENTRY
+        log.gateway.debug(
+            "[ipc] gateway link: _handle_consent: entry",
+            extra={"_fields": {
+                "consent_id": frame.consent_id, "channel": frame.channel,
+                "tool_name": frame.tool_name,
+            }},
+        )
+        # 2. DECISION — no reply_target on the wire ⇒ refuse, never route to a guess.
+        if frame.reply_target is None:
+            log.gateway.error(
+                "[ipc] gateway link: consent frame missing reply_target — denying, "
+                "never routed to a guessed destination",
+                extra={"_fields": {
+                    "consent_id": frame.consent_id, "channel": frame.channel,
+                    "tool_name": frame.tool_name,
+                }},
+            )
+            scope = ConsentScope.DENY
+        else:
+            scope = ConsentScope.DENY
+            if self._consent_router is not None:
+                try:
+                    # 3. STEP — rebuild the in-process request and route it.
+                    req = ConsentRequest(
+                        tool_name=frame.tool_name,
+                        channel=frame.channel,
+                        session_key=frame.session_key,
+                        reply_target=frame.reply_target,
+                        category=frame.category,
+                        summary=frame.summary,
+                        allow_relaxation=frame.allow_relaxation,
+                    )
+                    scope = await self._consent_router.prompt(req)
+                except Exception as exc:  # noqa: BLE001 — fail closed on any error
+                    log.gateway.warning(
+                        "[ipc] gateway link: consent prompt failed — denying",
+                        extra={"_fields": {"consent_id": frame.consent_id, "error": str(exc)}},
+                    )
+                    scope = ConsentScope.DENY
         if self._conn is not None:
             with contextlib.suppress(Exception):
                 await self._conn.send(
@@ -907,6 +937,11 @@ class GatewayLink:
                         consent_id=frame.consent_id, scope=scope.value
                     )
                 )
+        # 4. EXIT
+        log.gateway.debug(
+            "[ipc] gateway link: _handle_consent: exit",
+            extra={"_fields": {"consent_id": frame.consent_id, "scope": scope.value}},
+        )
 
     async def _handle_send_ephemeral(self, frame: SendEphemeralFrame) -> None:
         """Send a muted probe on the real adapter and report its message_id back.

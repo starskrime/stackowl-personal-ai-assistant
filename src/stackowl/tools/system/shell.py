@@ -662,6 +662,7 @@ async def _gate_catastrophic(
             tool_name=tool_name,
             channel=channel,
             session_key=session_key,
+            reply_target=ctx.get("reply_target"),
             category="catastrophic",
             summary=f"Run shell command: {command}",
         )

@@ -412,6 +412,7 @@ class ToolBuildTool(Tool):
                 tool_name=self.name,
                 channel=channel,
                 session_key=session_key,
+                reply_target=ctx.get("reply_target"),
                 category=_CONSENT_CATEGORY,
                 summary=f"Register new tool {name}",
                 # Graded self-authorization (Task 8): a learned tool has a genuine

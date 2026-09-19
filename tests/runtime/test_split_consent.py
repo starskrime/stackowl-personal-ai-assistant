@@ -91,7 +91,8 @@ async def test_consent_granted_round_trip(socket_path) -> None:
     prompter, _link, stop = await _wire(socket_path, router)
     try:
         req = ConsentRequest(
-            tool_name="shell", channel="telegram", session_key="123", summary="run ls"
+            tool_name="shell", channel="telegram", session_key="123",
+            reply_target=555, summary="run ls",
         )
         scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
     finally:
@@ -100,6 +101,39 @@ async def test_consent_granted_round_trip(socket_path) -> None:
     assert scope == ConsentScope.SESSION
     assert router.seen and router.seen[0].tool_name == "shell"
     assert router.seen[0].channel == "telegram"
+    assert router.seen[0].reply_target == 555
+
+
+async def test_consent_refused_when_reply_target_missing(socket_path) -> None:
+    # Story 3.5 — a request with no reply_target is refused BEFORE the router
+    # is ever invoked (proven by seeding a router that would GRANT if reached).
+    router = _FakeRouter(ConsentScope.SESSION)
+    prompter, _link, stop = await _wire(socket_path, router)
+    try:
+        req = ConsentRequest(tool_name="shell", channel="telegram", session_key="123")
+        scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
+    finally:
+        await stop()
+
+    assert scope == ConsentScope.DENY
+    assert router.seen == []
+
+
+async def test_consent_reply_target_survives_the_link_group(socket_path) -> None:
+    # Negative reply_target — a Telegram group/thread id, per Story 3.5's AC2.
+    router = _FakeRouter(ConsentScope.SESSION)
+    prompter, _link, stop = await _wire(socket_path, router)
+    try:
+        req = ConsentRequest(
+            tool_name="shell", channel="telegram", session_key="123",
+            reply_target=-100123456789, summary="run ls",
+        )
+        scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
+    finally:
+        await stop()
+
+    assert scope == ConsentScope.SESSION
+    assert router.seen and router.seen[0].reply_target == -100123456789
 
 
 async def test_consent_denied_round_trip(socket_path) -> None:

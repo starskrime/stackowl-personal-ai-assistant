@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pydantic
 import pytest
 
 from stackowl.ipc.codec import FrameDecodeError, decode_frame, encode_frame
@@ -10,6 +11,8 @@ from stackowl.ipc.frames import (
     ChunkFrame,
     ClarifyAskFrame,
     ClarifyReplyFrame,
+    ConsentRequestFrame,
+    ConsentResponseFrame,
     GoodbyeFrame,
     HelloFrame,
     IngressFrame,
@@ -52,6 +55,16 @@ ALL_FRAMES = [
     ),
     ClarifyAskFrame(clarify_id="c1", session_key="s1", question="which one?", trace_id="t1"),
     ClarifyReplyFrame(clarify_id="c1", answer="the first"),
+    ConsentRequestFrame(
+        consent_id="cr-1", channel="telegram", tool_name="shell", session_key="s1",
+        reply_target=72055773, category="catastrophic", summary="run ls",
+    ),
+    # Negative reply_target — a Telegram group/thread id (Story 3.5).
+    ConsentRequestFrame(
+        consent_id="cr-2", channel="telegram", tool_name="shell", session_key="s1",
+        reply_target=-100123456789,
+    ),
+    ConsentResponseFrame(consent_id="cr-1", scope="session"),
     AckFrame(ref="t1", status="deferred", detail="quiescing"),
 ]
 
@@ -106,3 +119,25 @@ def test_decode_tolerates_missing_trailing_newline() -> None:
     frame = AckFrame(ref="t9")
     wire_no_nl = encode_frame(frame).rstrip(b"\n")
     assert decode_frame(wire_no_nl) == frame
+
+
+def test_consent_request_frame_rejects_unknown_field() -> None:
+    """AC1 — ConsentRequestFrame stays typed with ``extra=forbid``: an
+    unexpected keyword argument must raise, not silently pass through."""
+    with pytest.raises(pydantic.ValidationError):
+        ConsentRequestFrame(
+            consent_id="cr-9", channel="telegram", tool_name="shell",
+            session_key="s1", not_a_real_field="surprise",
+        )
+
+
+def test_consent_request_frame_without_reply_target_decodes_to_none() -> None:
+    """Story 3.5 — an old-protocol peer's wire bytes omit the key entirely;
+    the field default fills it in as None rather than raising."""
+    wire = (
+        b'{"type":"consent_request","consent_id":"cr-3","channel":"telegram",'
+        b'"tool_name":"shell","session_key":"s1"}\n'
+    )
+    frame = decode_frame(wire)
+    assert isinstance(frame, ConsentRequestFrame)
+    assert frame.reply_target is None

@@ -1061,6 +1061,7 @@ class OwlBuildTool(Tool):
                 tool_name=self.name,
                 channel=channel,
                 session_key=session_key,
+                reply_target=ctx.get("reply_target"),
                 category=category or _CONSENT_CATEGORY,
                 summary=summary,
                 reversible=reversible,

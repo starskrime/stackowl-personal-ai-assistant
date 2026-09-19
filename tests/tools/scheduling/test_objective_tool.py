@@ -188,8 +188,10 @@ class _FakePolicy:
 
     def __init__(self, outcome: bool | BaseException) -> None:
         self._outcome = outcome
+        self.calls: list[dict[str, object]] = []
 
     async def request(self, **kwargs: object) -> bool:
+        self.calls.append(kwargs)
         if isinstance(self._outcome, BaseException):
             raise self._outcome
         return self._outcome
@@ -271,6 +273,36 @@ async def test_repo_bearing_call_gate_declined_refused(
     assert result.side_effect_committed is False
     store = ObjectiveStore(migrated_db)
     assert await store.list_objectives() == []
+
+
+async def test_repo_bearing_call_consent_carries_reply_target(
+    tmp_path: Path, migrated_db: DbPool
+) -> None:
+    """Story 3.5 — ``_gate_epic_consent`` threads ``reply_target`` off
+    ``TraceContext`` into ``gate.policy.request(...)``, exactly like the
+    other three consent call sites (shell.py/tool_build.py/owl_build.py). A
+    split-mode ``GatewayLink._handle_consent`` hard-denies any consent
+    request missing this shape, so this is the one gate for an entire
+    unattended objective/epic run — it must not regress silently."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    pr = _provider_registry("story one\nstory two")
+    gate = _FakeGate(True)
+    token = set_services(
+        StepServices(db_pool=migrated_db, provider_registry=pr, consent_gate=gate)
+    )
+    ttoken = TraceContext.start(
+        session_key="sess-obj-reply-target", interactive=True, channel="telegram",
+        reply_target=72055773,
+    )
+    try:
+        result = await ObjectiveTool().execute(intent="build a feature", repo=str(repo))
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+    assert result.success is True
+    assert gate.policy.calls and gate.policy.calls[0]["reply_target"] == 72055773
 
 
 async def test_repo_bearing_call_gate_approved_creates_epic(

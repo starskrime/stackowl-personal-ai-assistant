@@ -323,6 +323,7 @@ class ObjectiveTool(Tool):
                 session_key=session_key,
                 category="epic_execution",
                 summary=self.consent_summary(intent=intent, repo=repo) or "",
+                reply_target=ctx.get("reply_target"),
             )
         except Exception as exc:  # fail-closed on any gate error
             log.tool.error(

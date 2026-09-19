@@ -359,6 +359,42 @@ async def test_catastrophic_no_gate_fails_closed(monkeypatch: pytest.MonkeyPatch
     assert result.side_effect_committed is False  # no gate → fail-closed, never spawned
 
 
+class _SpyPrompter:
+    """Records the ConsentRequest it was called with, then denies."""
+
+    def __init__(self) -> None:
+        self.seen: list[Any] = []
+
+    async def prompt(self, req: Any) -> Any:
+        from stackowl.tools.consent import ConsentScope
+
+        self.seen.append(req)
+        return ConsentScope.DENY
+
+
+@pytest.mark.asyncio
+async def test_catastrophic_consent_carries_reply_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Story 3.5 — ``_gate_catastrophic`` threads ``ctx.get("reply_target")``
+    into ``gate.policy.request(...)`` so the socket-hardened AC3 refusal never
+    regresses this live, human-attended delivery path."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    _patch_subprocess(monkeypatch)
+    prompter = _SpyPrompter()
+    gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
+
+    token = set_services(StepServices(consent_gate=gate))
+    trace = TraceContext.start(
+        session_key="123", interactive=True, channel="telegram", reply_target=72055773,
+    )
+    try:
+        await ShellTool().execute(command="rm -rf /")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert prompter.seen and prompter.seen[0].reply_target == 72055773
+
+
 @pytest.mark.asyncio
 async def test_benign_command_skips_gate_entirely(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
