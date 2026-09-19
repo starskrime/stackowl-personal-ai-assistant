@@ -70,7 +70,7 @@ development_status:
 
   epic-4: in-progress
   4-1-severities-and-the-principal-live-in-authz: done
-  4-2-every-tool-and-slash-command-declares-whether-it-changes-sta: backlog
+  4-2-every-tool-and-slash-command-declares-whether-it-changes-sta: done
   4-3-a-declared-command-runs-through-one-door: backlog
   4-4-one-action-policy-gate-decides: backlog
   4-5-undo-for-24-hours: backlog
