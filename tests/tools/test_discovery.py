@@ -17,7 +17,7 @@ from stackowl.tools._infra.discovery import (
     discover_tool_classes,
     requires_explicit_wiring,
 )
-from stackowl.tools.base import Tool
+from stackowl.tools.base import Tool, ToolManifest
 from stackowl.tools.registry import ToolRegistry
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +161,14 @@ def test_an_unwired_tool_with_a_constructor_fails_LOUDLY(monkeypatch):
         @property
         def parameters(self) -> dict[str, object]:
             return {"type": "object", "properties": {}}
+
+        @property
+        def manifest(self) -> ToolManifest:
+            # Story 4.2 -- ToolManifest.action_severity has no default.
+            return ToolManifest(
+                name=self.name, description=self.description, parameters=self.parameters,
+                action_severity="read",
+            )
 
         async def execute(self, **kwargs: object):  # pragma: no cover
             raise NotImplementedError

@@ -52,7 +52,7 @@ from stackowl.plugins.hooks import (
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.sessions.ingress import resolve_turn_session
 from stackowl.sessions.store import SessionStore
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 
 class _Watcher(LifecycleHook):
@@ -121,6 +121,14 @@ class _ProbeTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="done", duration_ms=0.0)

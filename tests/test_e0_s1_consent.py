@@ -89,6 +89,7 @@ class _StubConsequentialTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=(f"test.{self._name}",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -98,7 +99,10 @@ class _StubConsequentialTool(Tool):
 class _StubReadTool(_StubConsequentialTool):
     @property
     def manifest(self) -> ToolManifest:
-        return ToolManifest(name=self._name, description=self.description, parameters=self.parameters)
+        return ToolManifest(
+            name=self._name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +436,8 @@ async def test_gate_derives_category_from_manifest() -> None:
         def manifest(self) -> ToolManifest:
             return ToolManifest(
                 name=self._name, description=self.description, parameters=self.parameters,
-                action_severity="consequential", consent_category="lock",
+                action_severity="consequential", command_types=("test.lock",),
+                consent_category="lock",
             )
 
     prompter = _RecordingPrompter(ConsentScope.SESSION)
@@ -453,9 +458,11 @@ async def test_gate_skips_nonconsequential(severity: str) -> None:
     class _T(_StubConsequentialTool):
         @property
         def manifest(self) -> ToolManifest:
+            command_types = () if severity == "read" else ("test.nonconsequential",)
             return ToolManifest(
                 name=self._name, description=self.description,
                 parameters=self.parameters, action_severity=severity,  # type: ignore[arg-type]
+                command_types=command_types,
             )
 
     assert await gate.check(_T()) is True

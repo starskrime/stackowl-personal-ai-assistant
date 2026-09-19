@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch
 
 from stackowl.mcp.server import McpServer
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 pytestmark = pytest.mark.integration
@@ -35,6 +35,14 @@ class _ConformanceTool(Tool):
             },
             "required": ["query"],
         }
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=0.0)

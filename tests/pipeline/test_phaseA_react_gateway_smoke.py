@@ -57,7 +57,7 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.openai_provider import OpenAIProvider
 from stackowl.providers.registry import ProviderRegistry
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -100,6 +100,14 @@ class _LookupLatestTool(Tool):
             "properties": {"query": {"type": "string"}},
             "required": ["query"],
         }
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         self.calls.append(dict(kwargs))

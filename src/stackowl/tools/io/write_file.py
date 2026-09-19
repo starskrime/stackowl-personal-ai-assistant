@@ -40,6 +40,7 @@ class WriteFileTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("files.write",),
             commit_coupling="transactional",
             progress_key="WRITE_FILES",
         )

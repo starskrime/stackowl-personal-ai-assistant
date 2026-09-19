@@ -136,6 +136,7 @@ class SessionsSendTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("agents.session_send",),
             commit_coupling="unconfirmed",
             toolset_group=_TOOLSET_GROUP,
         )

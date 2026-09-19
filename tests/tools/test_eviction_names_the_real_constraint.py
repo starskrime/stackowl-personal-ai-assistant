@@ -44,6 +44,7 @@ class _T(Tool):
         self._m = ToolManifest(
             name=name, description=desc,
             parameters={"type": "object", "properties": {}},
+            action_severity="read",
             toolset_group="misc",
         )
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.mcp.allowlist import McpServerConfig
 from stackowl.mcp.cache import McpToolDefinition
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 if TYPE_CHECKING:
     from stackowl.mcp.client import McpClient
@@ -99,6 +99,20 @@ class McpTool(Tool):
     def parameters(self) -> dict[str, object]:
         # Remote schema is a trust boundary too — sanitize before it reaches the model.
         return sanitize_mcp_schema(self._definition.input_schema)
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # DEBT-298 — an MCP tool's real severity comes from the EXTERNAL server
+        # and cannot be read statically, so "cannot tell" is treated as "read"
+        # (the safe default; nothing on this install has ever configured MCP —
+        # ZERO `[mcp]` records in the whole corpus, confirmed — so this is
+        # unexercised today and will be EXERCISED on a clone that uses one).
+        # Story 4.2 — ToolManifest.action_severity has no field default anymore,
+        # so this was made explicit rather than left to inherit one.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         # Lazy import avoids a module-load cycle (client.py imports McpTool).

@@ -144,6 +144,7 @@ class ToolBuildTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=("owls.build_tool",),
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
         )

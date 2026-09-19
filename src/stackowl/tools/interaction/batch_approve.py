@@ -165,6 +165,7 @@ class BatchApproveTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("consent.batch_approve",),
             commit_coupling="unconfirmed",
             toolset_group="interaction",
         )

@@ -201,11 +201,13 @@ class _ConsequentialTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        command_types = () if self._severity == "read" else (f"test.{self._name}",)
         return ToolManifest(
             name=self._name,
             description=self.description,
             parameters=self.parameters,
             action_severity=self._severity,  # type: ignore[arg-type]
+            command_types=command_types,
             capability_tag=None,
         )
 
@@ -330,6 +332,14 @@ async def test_no_action_standard_turn_not_nudged(
         @property
         def parameters(self) -> dict[str, object]:
             return {"type": "object", "properties": {}}
+
+        @property
+        def manifest(self) -> ToolManifest:
+            # Story 4.2 -- ToolManifest.action_severity has no default.
+            return ToolManifest(
+                name=self.name, description=self.description, parameters=self.parameters,
+                action_severity="read",
+            )
 
         async def execute(self, **kwargs: object) -> ToolResult:
             return ToolResult(success=True, output="", error=None, duration_ms=0.0)

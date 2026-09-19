@@ -1005,6 +1005,7 @@ class ShellTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("system.shell_exec",),
             commit_coupling="unconfirmed",
             progress_key="RUN_CMD",
         )

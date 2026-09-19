@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 
 from stackowl.infra import tool_outcome_ledger as ledger
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 
@@ -32,6 +32,14 @@ class _Noop(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:  # pragma: no cover
         return ToolResult(success=True, output="", duration_ms=1.0)

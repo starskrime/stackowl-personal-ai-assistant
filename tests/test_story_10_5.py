@@ -23,7 +23,7 @@ from stackowl.plugins.context import PluginContext
 from stackowl.plugins.local_loader import LocalPluginLoader
 from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.job import Job, JobResult
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 
@@ -44,6 +44,14 @@ class _FakeTool(Tool):
     def parameters(self) -> dict[str, object]:
         return {}
 
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
+
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=0.0)
 
@@ -60,6 +68,14 @@ class _FakeTool2(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok2", duration_ms=0.0)

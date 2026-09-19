@@ -47,6 +47,7 @@ class _ManifestOnlyTool(Tool):
             name="manifest_only",
             description="A tool that declares itself once, through its manifest.",
             parameters={"type": "object", "properties": {}},
+            action_severity="read",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -87,6 +88,7 @@ class TestOneDeclarationIsEnough:
                     name="child",
                     description="A child that renames itself through the manifest.",
                     parameters={"type": "object", "properties": {}},
+                    action_severity="read",
                 )
 
         assert _Child().name == "child"
@@ -110,6 +112,7 @@ class TestOneDeclarationIsEnough:
                     name="manifest-says-otherwise",
                     description=self.description,
                     parameters=self.parameters,
+                    action_severity="read",
                 )
 
             async def execute(self, **kwargs: object) -> ToolResult:

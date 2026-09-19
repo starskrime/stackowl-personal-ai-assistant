@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
@@ -210,7 +210,23 @@ class ToolManifest(BaseModel):
     name: str
     description: str
     parameters: dict[str, object]
-    action_severity: Literal["read", "write", "consequential"] = "read"
+    # Story 4.2 — no field default. Epic 4's "one door" gate needs every tool's
+    # severity DECLARED, not silently inherited from a permissive default. 3 of
+    # 77 tools relied on the old "read" default until this story named them
+    # explicitly — note_applied_lesson, tool_search (both grep-confirmed by the
+    # spec), plus tool_describe (found only by actually constructing every live
+    # tool's manifest — its file mentions the STRING "action_severity" only
+    # while reading OTHER tools' manifests, so a grep for that string alone
+    # undercounted it as already-declared). An undeclared tool now fails
+    # construction loudly, at registry boot, rather than passing a lint pass.
+    action_severity: Literal["read", "write", "consequential"]
+    # Story 4.2 — the future command type(s) (dot-namespaced, e.g. "files.edit")
+    # this tool's real-world action will eventually submit through, once Epic 4's
+    # migration stories (4.3+) give it a command surface. ONE shared namespace
+    # across tools and slash commands: the same real action gets the same string
+    # regardless of surface (see authz/state_change_census.py). Required non-empty
+    # whenever action_severity != "read" (enforced below); left () for read tools.
+    command_types: tuple[str, ...] = ()
     # Trusted, tool-declared consent category (e.g. "lock", "alarm", "destructive").
     # The consent gate keys always-ask exclusions off THIS, never off LLM-supplied
     # call args — the model must not be able to relax its own gating (E0-S1 / B2).
@@ -289,6 +305,21 @@ class ToolManifest(BaseModel):
     effect_class: Literal[
         "creates_persistent_entity", "sends_message", "schedules"
     ] | None = None
+
+    @model_validator(mode="after")
+    def _require_command_types_when_not_read(self) -> ToolManifest:
+        """Story 4.2 — a ``write``/``consequential`` tool must name ≥1 future
+        command type. Fails loudly at construction (registry boot), naming the
+        offending tool, rather than shipping a state-changer Epic 4's migration
+        stories have no way to find."""
+        if self.action_severity != "read" and not self.command_types:
+            raise ValueError(
+                f"ToolManifest {self.name!r} has action_severity="
+                f"{self.action_severity!r} but no command_types — every "
+                "write/consequential tool must declare ≥1 future command type "
+                "(see authz/state_change_census.py)."
+            )
+        return self
 
 
 def _derived_from_manifest(field: str) -> property:

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
 from stackowl.mcp.server import McpServer, _sse_auth_ok
 from stackowl.mcp.server_settings import McpServerSettings
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 
@@ -26,6 +26,14 @@ class _FakeTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=0.0)

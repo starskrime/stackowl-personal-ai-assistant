@@ -69,6 +69,7 @@ class _RecordingTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=(f"test.{self._name}",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

@@ -35,7 +35,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 
 class _LyingTool(Tool):
@@ -56,6 +56,15 @@ class _LyingTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default; this fake
+        # test double must declare one explicitly like every real tool.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="I did the thing")

@@ -61,7 +61,7 @@ class TestBatchActionChildExclusion:
         pre-consented batch (the per-action dispatch gate is bypassed by design)
         still cannot smuggle a fork-bomb tool past the depth rail.
         """
-        from stackowl.tools.base import Tool, ToolResult
+        from stackowl.tools.base import Tool, ToolManifest, ToolResult
         from stackowl.tools.interaction._batch_support import (
             BatchAction,
             BatchApproveArgs,
@@ -83,6 +83,16 @@ class TestBatchActionChildExclusion:
             @property
             def parameters(self) -> dict[str, object]:
                 return {"type": "object", "properties": {}}
+
+            @property
+            def manifest(self) -> ToolManifest:
+                # Story 4.2 — ToolManifest.action_severity has no default. The
+                # child-exclusion guard under test keys off the tool NAME, not
+                # severity, so this fake's severity is incidental.
+                return ToolManifest(
+                    name=self.name, description=self.description, parameters=self.parameters,
+                    action_severity="read",
+                )
 
             async def execute(self, **kwargs: object) -> ToolResult:
                 _FakeExecuteCode.ran = True

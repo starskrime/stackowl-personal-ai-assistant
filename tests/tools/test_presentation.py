@@ -182,6 +182,7 @@ def test_register_allows_dangerous_category_when_consequential() -> None:
             return ToolManifest(
                 name="ha_lock", description="d", parameters=self.parameters,
                 action_severity="consequential", consent_category="lock",
+                command_types=("test.ha_lock",),
             )
 
     reg = ToolRegistry()

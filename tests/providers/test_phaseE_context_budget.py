@@ -37,7 +37,7 @@ from stackowl.providers._truncate import (
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.openai_provider import OpenAIProvider
 from stackowl.providers.registry import ProviderRegistry
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 # --------------------------------------------------------------------------- #
@@ -367,6 +367,14 @@ class _GiantTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         self.calls.append(dict(kwargs))

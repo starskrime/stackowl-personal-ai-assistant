@@ -26,13 +26,21 @@ from stackowl.authz.severity import (
     WRITE,
     ControlPrincipal,
 )
+from stackowl.authz.state_change_census import (
+    COMMAND_TYPE_MIGRATIONS,
+    MIGRATION_STORIES,
+    CommandTypeMigration,
+)
 
 __all__ = [
     "ALL_SEVERITIES",
     "BoundsSpec",
     "BoundsViolation",
     "CONSEQUENTIAL",
+    "COMMAND_TYPE_MIGRATIONS",
+    "CommandTypeMigration",
     "ControlPrincipal",
+    "MIGRATION_STORIES",
     "NetworkRule",
     "READ",
     "ResourceCaps",

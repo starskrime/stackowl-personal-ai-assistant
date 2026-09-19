@@ -61,6 +61,7 @@ class _FakeTool(Tool):
             name=self.name,
             description=self.description,
             parameters=self.parameters,
+            action_severity="read",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:  # pragma: no cover

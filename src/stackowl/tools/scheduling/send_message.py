@@ -137,6 +137,7 @@ class SendMessageTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=("messaging.send_message",),
             commit_coupling="unconfirmed",
             toolset_group=_TOOLSET_GROUP,
             effect_class="sends_message",

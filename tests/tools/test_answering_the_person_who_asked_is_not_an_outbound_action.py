@@ -74,6 +74,7 @@ class _FakeDeliveryTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=(f"test.{self._name}",),
             consent_category=self._category,
         )
 

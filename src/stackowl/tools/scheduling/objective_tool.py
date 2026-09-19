@@ -115,6 +115,7 @@ class ObjectiveTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("scheduling.set_objective",),
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
         )

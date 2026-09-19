@@ -80,6 +80,7 @@ class _FakeBrowserTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=(f"test.{self._name}",),
             toolset_group=self._group,
             requires_capability="browser",
         )

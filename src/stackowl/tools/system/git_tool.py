@@ -435,6 +435,7 @@ class GitTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("dev.git_command",),
             commit_coupling="unconfirmed",
             toolset_group=_TOOLSET_GROUP,
             progress_key="RUN_CMD",

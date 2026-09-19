@@ -327,6 +327,7 @@ class DelegateTaskTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("agents.delegate_task",),
             commit_coupling="unconfirmed",
             toolset_group=_TOOLSET_GROUP,
         )

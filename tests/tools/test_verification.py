@@ -146,6 +146,14 @@ class _ClaimsButProducesNothing(Tool):
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
 
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
+
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(
             success=True, output="done!", duration_ms=1.0,
@@ -174,6 +182,14 @@ class _RealProducer(Tool):
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
 
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
+
     async def execute(self, **kwargs: object) -> ToolResult:
         self._target.write_text("real output")
         return ToolResult(
@@ -199,6 +215,14 @@ class _NoVerifyOverride(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=1.0)
@@ -240,6 +264,14 @@ async def test_call_does_not_verify_a_failed_execute() -> None:
         def parameters(self) -> dict[str, object]:
             return {"type": "object", "properties": {}}
 
+        @property
+        def manifest(self) -> ToolManifest:
+            # Story 4.2 -- ToolManifest.action_severity has no default.
+            return ToolManifest(
+                name=self.name, description=self.description, parameters=self.parameters,
+                action_severity="read",
+            )
+
         async def execute(self, **kwargs: object) -> ToolResult:
             return ToolResult(success=False, output="", error="boom", duration_ms=1.0)
 
@@ -266,6 +298,14 @@ async def test_call_verify_exception_falls_back_to_none() -> None:
         @property
         def parameters(self) -> dict[str, object]:
             return {"type": "object", "properties": {}}
+
+        @property
+        def manifest(self) -> ToolManifest:
+            # Story 4.2 -- ToolManifest.action_severity has no default.
+            return ToolManifest(
+                name=self.name, description=self.description, parameters=self.parameters,
+                action_severity="read",
+            )
 
         async def execute(self, **kwargs: object) -> ToolResult:
             return ToolResult(success=True, output="ok", duration_ms=1.0)
@@ -298,6 +338,14 @@ class _SelfStampsVerifiedTrue(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="done!", duration_ms=1.0, verified=True)
@@ -347,6 +395,14 @@ async def test_call_self_reported_verified_false_is_preserved() -> None:
         @property
         def parameters(self) -> dict[str, object]:
             return {"type": "object", "properties": {}}
+
+        @property
+        def manifest(self) -> ToolManifest:
+            # Story 4.2 -- ToolManifest.action_severity has no default.
+            return ToolManifest(
+                name=self.name, description=self.description, parameters=self.parameters,
+                action_severity="read",
+            )
 
         async def execute(self, **kwargs: object) -> ToolResult:
             return ToolResult(success=True, output="ok", duration_ms=1.0, verified=False)
@@ -471,6 +527,14 @@ async def test_call_emits_next_step_signal_on_plain_failure() -> None:
         @property
         def parameters(self) -> dict[str, object]:
             return {"type": "object", "properties": {}}
+
+        @property
+        def manifest(self) -> ToolManifest:
+            # Story 4.2 -- ToolManifest.action_severity has no default.
+            return ToolManifest(
+                name=self.name, description=self.description, parameters=self.parameters,
+                action_severity="read",
+            )
 
         async def execute(self, **kwargs: object) -> ToolResult:
             return ToolResult(success=False, output="", error="boom", duration_ms=1.0)

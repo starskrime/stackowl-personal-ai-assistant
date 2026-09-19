@@ -191,6 +191,11 @@ class _BrowserTool(Tool):
     #: D03.4 level 3 — the largest result this tool may return. None = uncapped.
     #: Set per subclass; only the tools measured to overflow declare one.
     _max_result_chars: int | None = None
+    #: Story 4.2 — same class-attribute pattern: a non-read subclass declares its
+    #: future command type(s) here instead of overriding manifest. Empty for the
+    #: read subclasses (ToolManifest's validator only requires it non-empty when
+    #: _severity != "read").
+    _command_types: tuple[str, ...] = ()
 
     @property
     def manifest(self) -> ToolManifest:
@@ -199,6 +204,7 @@ class _BrowserTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity=self._severity,
+            command_types=self._command_types,
             presentation_priority=self._priority,
             commit_coupling=self._commit_coupling,
             consent_category=self._consent_category,
@@ -396,6 +402,7 @@ class BrowserExtractTool(_BrowserTool):
 class BrowserClickTool(_BrowserTool):
     _priority = 90
     _severity = "write"
+    _command_types = ("browser.click",)
     _commit_coupling = "unconfirmed"
     # Engine-emitted aria refs are opaque alphanumeric tokens (e.g. "e7"). We
     # validate the shape before interpolating into the aria-ref selector so a
@@ -480,6 +487,7 @@ class BrowserClickTool(_BrowserTool):
 class BrowserTypeTool(_BrowserTool):
     _priority = 90
     _severity = "write"
+    _command_types = ("browser.type_text",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_type"
@@ -594,6 +602,7 @@ class BrowserScrollTool(_BrowserTool):
     # Part of SEEING the page: a snapshot only covers what is in view.
     _priority = 70
     _severity = "write"
+    _command_types = ("browser.scroll",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_scroll"
@@ -698,6 +707,7 @@ class BrowserWaitForTool(_BrowserTool):
 
 class BrowserEvalJsTool(_BrowserTool):
     _severity = "consequential"
+    _command_types = ("browser.eval_js",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_eval_js"
@@ -761,6 +771,7 @@ class BrowserEvalJsTool(_BrowserTool):
 
 class BrowserUploadTool(_BrowserTool):
     _severity = "consequential"
+    _command_types = ("browser.upload_file",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_upload"
@@ -814,6 +825,7 @@ class BrowserUploadTool(_BrowserTool):
 
 class BrowserDownloadTool(_BrowserTool):
     _severity = "consequential"
+    _command_types = ("browser.download_file",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_download"
@@ -921,6 +933,7 @@ class BrowserCookiesGetTool(_BrowserTool):
 
 class BrowserCookiesSetTool(_BrowserTool):
     _severity = "write"
+    _command_types = ("browser.set_cookie",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_cookies_set"
@@ -968,6 +981,7 @@ class BrowserCookiesSetTool(_BrowserTool):
 
 class BrowserCookiesClearTool(_BrowserTool):
     _severity = "write"
+    _command_types = ("browser.clear_cookies",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_cookies_clear"
@@ -1067,6 +1081,7 @@ class BrowserTabListTool(_BrowserTool):
 
 class BrowserTabCloseTool(_BrowserTool):
     _severity = "write"
+    _command_types = ("browser.close_tab",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_tab_close"
@@ -1115,6 +1130,7 @@ class BrowserTabCloseTool(_BrowserTool):
 
 class BrowserCloseTool(_BrowserTool):
     _severity = "write"
+    _command_types = ("browser.close_session",)
     _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_close"

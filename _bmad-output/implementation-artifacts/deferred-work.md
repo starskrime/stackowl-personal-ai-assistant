@@ -285,3 +285,19 @@ source_spec: `spec-3-6-answer-from-telegram-and-watch-it-close.md`
 severity: low
 reason: Same structural gap already reviewed and accepted for Story 3.5 (its own triage log, IA-1) and Story 3.3 before it: `scripts/dev_ingress.py` cannot simulate a real `callback_query`/button tap and has no split-mode socket awareness, so it cannot stand in as a literal live-process proof for this story's approval-tap, expiry-edit, or incident/alert-push paths either. This story's own verification instead extends the established in-process real-code/fake-bot-transport pattern (`tests/smoke/test_e0_s1_consent_telegram_smoke.py`) plus the real-socket pattern (`tests/runtime/test_split_consent.py`) for split-mode/group-chat proof -- the same substitution the codebase has used consistently since spec-3-3. What would settle it: a `dev_ingress.py` extension (or a parallel harness) that can drive a real Telegram Bot API sandbox/mock server end-to-end, including a simulated button tap and split-mode socket wiring -- a materially larger investment than any single story in this epic has taken on.
 status: open
+
+### DW-35: `/provider remove` is classified `consequential` (real, irreversible delete) with no confirmation gate today
+origin: spec-4-2-every-tool-and-slash-command-declares-whether-it-changes-state.md, Design Notes (planning-time judgment call)
+location: src/stackowl/commands/state_census.py (SUBCOMMAND_CENSUS["provider.remove"]); src/stackowl/commands/provider_command.py (the actual remove handler)
+source_spec: `spec-4-2-every-tool-and-slash-command-declares-whether-it-changes-state.md`
+severity: low
+reason: This story only DECLARES severity for the census -- it never adds new gating (per its own Boundaries: "do not change any existing tool's or command's actual runtime behavior, consent gating"). `/provider remove` genuinely, irreversibly deletes a configured provider with no confirmation step today, which is why it is classified `consequential` in `SUBCOMMAND_CENSUS` (naming the true risk) even though the command itself has no consent prompt to match that severity -- a real, pre-existing gap this story surfaces rather than fixes. What would settle it: whichever future migration story (4.10, per this story's ledger) wires `/provider remove` through the real command-dispatch gate should also decide whether it needs an explicit confirmation step, or accept the risk deliberately with a stated reason.
+status: open
+
+### DW-36: `/owl edit` stays a single `write`-severity command type even though it can carry authority-widening fields (`--tools`/`--capability_profile`)
+origin: spec-4-2-every-tool-and-slash-command-declares-whether-it-changes-state.md, Design Notes (planning-time judgment call)
+location: src/stackowl/commands/state_census.py (SUBCOMMAND_CENSUS["owl.edit"] -> command type "owl.edit"); src/stackowl/commands/owls_command.py / owls_helpers.py (the actual edit handler, --tools/--capability_profile flags)
+source_spec: `spec-4-2-every-tool-and-slash-command-declares-whether-it-changes-state.md`
+severity: low
+reason: `/owl edit` is declared as one `write`-severity command type (`owl.edit`) covering every field it can change, including `--tools`/`--capability_profile` which WIDEN an owl's authority rather than merely renaming/reconfiguring it -- a materially different risk than, say, editing a description. This story's Design Notes flag the collapse deliberately rather than splitting it into a separate `consequential` authority-widening command type, since that classification-time call belongs to whichever story actually builds the real `/owl edit` command dispatch. What would settle it: Story 4.9 (owl/skill authority wave, which owns `owl.edit`'s migration per the ledger) deciding whether an authority-widening edit needs its own command type (e.g. `owl.widen_authority`) with a higher severity/consent requirement than a routine field edit.
+status: open

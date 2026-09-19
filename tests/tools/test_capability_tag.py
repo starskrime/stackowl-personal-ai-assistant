@@ -6,7 +6,7 @@ from stackowl.tools.base import ToolManifest
 
 
 def test_capability_tag_defaults_none() -> None:
-    m = ToolManifest(name="x", description="d", parameters={})
+    m = ToolManifest(name="x", description="d", parameters={}, action_severity="read")
     assert m.capability_tag is None
 
 

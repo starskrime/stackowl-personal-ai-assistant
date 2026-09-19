@@ -12,7 +12,7 @@ import pytest
 
 import stackowl.tools.base as base_mod
 from stackowl.pipeline.acceptance_authority import DeliveryAck, NonEmptyText
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.verification import is_trustworthy_success
 
 
@@ -29,6 +29,14 @@ class _TextTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(
@@ -52,6 +60,14 @@ class _PlainTool(Tool):
     def parameters(self) -> dict[str, object]:
         return {}
 
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
+
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="", duration_ms=1.0)
 
@@ -66,6 +82,14 @@ class _DeliveryTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="sent", duration_ms=1.0)

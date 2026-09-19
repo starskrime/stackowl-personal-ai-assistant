@@ -94,6 +94,7 @@ class ProcessTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("process.manage",),
             commit_coupling="unconfirmed",
             toolset_group=_TOOLSET_GROUP,
         )

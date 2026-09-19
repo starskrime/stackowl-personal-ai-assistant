@@ -591,6 +591,7 @@ class OwlBuildTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=("owls.build",),
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
             effect_class="creates_persistent_entity",

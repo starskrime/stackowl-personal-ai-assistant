@@ -53,7 +53,10 @@ class _StubTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
-        return ToolManifest(name=self._name, description=self.description, parameters=self.parameters)
+        return ToolManifest(
+            name=self._name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=1.0)

@@ -26,7 +26,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.sandbox.bwrap import BwrapSandbox
 from stackowl.sandbox.ptc.server import PtcServer
 from stackowl.sandbox.spec import ExecResult, ExecSpec
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 # --- a tiny REAL host tool surface for the callback ------------------------------
 
@@ -51,6 +51,14 @@ class _RealReadFile(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         try:

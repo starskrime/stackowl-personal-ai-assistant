@@ -168,6 +168,13 @@ class SkillManageTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=(
+                "skill.author_create",
+                "skill.author_edit",
+                "skill.author_patch",
+                "skill.delete",
+                "skill.set_enabled",
+            ),
             commit_coupling="transactional",
             # ESC-1 — makes line 20's "every write is consent-gated" TRUE again.
             # commit_coupling="transactional" is accurate (the write is a local,

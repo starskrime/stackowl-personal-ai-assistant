@@ -31,6 +31,15 @@ class _ReadTool(Tool):
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}, "required": []}
 
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default; declared
+        # explicitly here like every real read tool.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
+
     async def execute(self, **kwargs: object) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=0.0)
 
@@ -57,6 +66,7 @@ class _WriteToolCustomManifest(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("test.write",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -85,6 +95,7 @@ class _ConsequentialTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=("test.consequential",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -96,26 +107,47 @@ class _ConsequentialTool(Tool):
 # ---------------------------------------------------------------------------
 
 
-def test_tool_manifest_action_severity_default() -> None:
-    """ToolManifest.action_severity defaults to 'read'."""
-    manifest = ToolManifest(
-        name="example",
-        description="An example tool.",
-        parameters={"type": "object", "properties": {}},
-    )
-    assert manifest.action_severity == "read"
+def test_tool_manifest_action_severity_has_no_default() -> None:
+    """Story 4.2 — action_severity's field default was removed: every
+    ToolManifest must declare it explicitly, or construction fails loudly
+    (structural enforcement, not just a lint pass)."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="action_severity"):
+        ToolManifest(
+            name="example",
+            description="An example tool.",
+            parameters={"type": "object", "properties": {}},
+        )
 
 
 def test_tool_manifest_action_severity_explicit_values() -> None:
-    """ToolManifest accepts all three severity literals."""
+    """ToolManifest accepts all three severity literals, given command_types
+    whenever the severity is not 'read' (Story 4.2's model-validator)."""
     for severity in ("read", "write", "consequential"):
+        command_types = () if severity == "read" else ("test.example",)
         m = ToolManifest(
             name="t",
             description="d",
             parameters={},
             action_severity=severity,  # type: ignore[arg-type]
+            command_types=command_types,
         )
         assert m.action_severity == severity
+
+
+def test_tool_manifest_nonread_requires_command_types() -> None:
+    """Story 4.2 — a write/consequential ToolManifest with no command_types
+    fails construction, naming the tool."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="command_types"):
+        ToolManifest(
+            name="undeclared",
+            description="d",
+            parameters={},
+            action_severity="write",
+        )
 
 
 def test_tool_default_manifest_returns_read_severity() -> None:

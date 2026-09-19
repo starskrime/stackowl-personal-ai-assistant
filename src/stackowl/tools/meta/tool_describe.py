@@ -15,7 +15,7 @@ import time
 
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 __all__ = ["ToolDescribeTool"]
 
@@ -45,6 +45,20 @@ class ToolDescribeTool(Tool):
             },
             "required": ["name"],
         }
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — a 3rd tool found relying on ToolManifest's old "read"
+        # default beyond the spec's 2 grep-confirmed gaps (this file mentions the
+        # string "action_severity" only when reading OTHER tools' manifests, so
+        # `grep -rln action_severity` undercounted it as already-declared). Made
+        # explicit now that the default is gone.
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         name = str(kwargs.get("name", "")).strip()

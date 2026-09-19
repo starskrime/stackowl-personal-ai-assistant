@@ -65,6 +65,7 @@ class _Consequential(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            command_types=("test.stub_consequential",),
             consent_category=self._category,
             commit_coupling=self._coupling,  # type: ignore[arg-type]
         )

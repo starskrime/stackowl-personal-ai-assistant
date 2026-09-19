@@ -51,6 +51,7 @@ class _StubConsequentialTool(Tool):
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="consequential",
+            command_types=("messaging.send_file",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

@@ -290,6 +290,7 @@ class BrowserBrowseTool(Tool):
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="consequential",
+            command_types=("browser.browse",),
             commit_coupling="unconfirmed",
             toolset_group="browser",
             # D05.3 — needs the Camoufox runtime. Declared here rather than

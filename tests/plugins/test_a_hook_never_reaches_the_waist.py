@@ -22,7 +22,7 @@ from pathlib import Path
 
 from stackowl.plugins.hooks import HookRegistry
 from stackowl.plugins.local_loader import LocalPluginLoader
-from stackowl.tools.base import Tool
+from stackowl.tools.base import Tool, ToolManifest
 from stackowl.tools.registry import ToolRegistry
 
 
@@ -69,6 +69,14 @@ class _ProbeTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> object:  # pragma: no cover — never run
         raise AssertionError("this tool exists to be listed, not called")

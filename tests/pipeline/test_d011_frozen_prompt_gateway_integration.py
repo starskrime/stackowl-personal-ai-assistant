@@ -65,7 +65,7 @@ from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.openai_provider import OpenAIProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.sessions.prompt_store import SessionPromptStore
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -106,6 +106,14 @@ class _ProbeTool(Tool):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[dict[str, Any]] = []
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         self.calls.append(dict(kwargs))

@@ -127,6 +127,7 @@ class ApplyPatchTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("files.apply_patch",),
             commit_coupling="transactional",
             toolset_group="code",
         )

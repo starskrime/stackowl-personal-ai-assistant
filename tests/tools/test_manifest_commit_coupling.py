@@ -9,7 +9,7 @@ from stackowl.tools.base import ToolManifest
 
 
 def _manifest(**kw: object) -> ToolManifest:
-    base = dict(name="t", description="d", parameters={})
+    base = dict(name="t", description="d", parameters={}, action_severity="read")
     base.update(kw)
     return ToolManifest(**base)  # type: ignore[arg-type]
 

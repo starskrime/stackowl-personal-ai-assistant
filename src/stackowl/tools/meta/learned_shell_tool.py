@@ -81,11 +81,28 @@ class LearnedShellTool(Tool):
             if self._spec.action_severity == "consequential"
             else None
         )
+        # Story 4.2 — ToolManifest now REQUIRES non-empty command_types whenever
+        # action_severity != "read". Per spec-4-2's Boundaries, individual
+        # LearnedShellTool instances are explicitly OUT OF SCOPE for per-action
+        # command-type classification (dynamic, per-install, model-authored —
+        # there is no fixed future command surface to name). One shared,
+        # non-author-controlled placeholder satisfies the structural requirement
+        # without pretending to classify a specific action — same pattern as
+        # consent_category above, pinned by the TOOL OBJECT, not the author.
+        # Deliberately NOT added to authz/state_change_census.py's ledger: a
+        # LearnedShellTool is excluded from static discovery
+        # (tools/_infra/discovery.py::EXCLUDED_FROM_DISCOVERY) so it never
+        # appears in ToolRegistry.with_defaults().all(), and never enters either
+        # closure tripwire's population — adding it to the ledger would make it
+        # a stale entry the reverse tripwire (tests/authz/test_state_change_
+        # census_has_no_stale_entries.py) would immediately flag.
+        command_types = () if self._spec.action_severity == "read" else ("learned.dynamic_action",)
         return ToolManifest(
             name=self.name,
             description=self.description,
             parameters=self.parameters,
             action_severity=self._spec.action_severity,
+            command_types=command_types,
             consent_category=consent_category,
             toolset_group=_LEARNED_GROUP,
         )

@@ -190,6 +190,7 @@ class MemoryTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("memory.record_reflection",),
             commit_coupling="transactional",
             toolset_group="knowledge",
             progress_key="SAVE_MEMORY",

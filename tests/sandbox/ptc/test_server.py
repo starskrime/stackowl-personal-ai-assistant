@@ -20,7 +20,7 @@ import pytest
 
 from stackowl.sandbox.ptc.protocol import PtcLimits
 from stackowl.sandbox.ptc.server import PtcServer
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 _LEN = struct.Struct(">I")
 
@@ -57,6 +57,14 @@ class _SpyTool(Tool):
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         self.calls.append(dict(kwargs))

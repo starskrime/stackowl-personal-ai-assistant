@@ -52,6 +52,7 @@ class _T:
             name=self.name,
             description=f"{self.name} does a thing",
             parameters={},
+            action_severity="read",
             toolset_group="grp",
             presentation_priority=self._priority,
         )

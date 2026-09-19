@@ -21,7 +21,7 @@ import time
 
 from stackowl.infra.observability import log
 from stackowl.pipeline import lesson_context as lc
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 __all__ = ["NoteAppliedLessonTool"]
 
@@ -61,6 +61,17 @@ class NoteAppliedLessonTool(Tool):
             },
             "required": ["lesson_id", "what_you_did"],
         }
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 — was relying on ToolManifest's old "read" default (one of 2
+        # of 77 live tools that did); made explicit now that the default is gone.
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()

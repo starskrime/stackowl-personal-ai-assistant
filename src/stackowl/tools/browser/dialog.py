@@ -72,6 +72,7 @@ class BrowserDialogTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",  # gated on every call (always-ask)
+            command_types=("browser.handle_dialog",),
             commit_coupling="unconfirmed",
             toolset_group="browser",
             # D05.3 — needs the Camoufox runtime. Declared here rather than
