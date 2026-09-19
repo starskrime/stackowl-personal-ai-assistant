@@ -1198,6 +1198,19 @@ class StartupOrchestrator:
 
         set_needs_you_db_pool(db_pool)
 
+        # Story 3.3 (AD-28) -- at boot, resolve every still-open
+        # `waiter_kind="turn"` needs_you item as `expired`, BEFORE the
+        # gateway accepts any turn: the in-memory `asyncio.Future`/`Event`
+        # that opened each one belonged to the PRIOR process and is provably
+        # gone (spec Intent) -- Epic 4's durable COMMAND-task `waiter_kind`
+        # is the only kind that will ever re-materialise instead of
+        # stranding here.
+        from stackowl.journal.needs_you import (
+            expire_stranded_turn_waiters as _expire_stranded_turn_waiters,
+        )
+
+        await _expire_stranded_turn_waiters(db_pool)
+
         # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
         # "everything in md or sqlite. No data duplication."
         #
@@ -1682,7 +1695,11 @@ class StartupOrchestrator:
         from stackowl.interaction.clarify_gateway import ClarifyGateway
         from stackowl.interaction.intent_classifier import ClarifyIntentClassifier
 
-        clarify_gateway = ClarifyGateway()
+        # Story 3.3 (AD-28) -- thread the already-open db_pool through so a
+        # blocking ask() can open a durable `question` needs_you item and
+        # wait_for_answer() can resolve/settle it (mirrors ConsentAssembly's
+        # own db_pool wiring above).
+        clarify_gateway = ClarifyGateway(db_pool=db_pool)
         # Classifies a during-park typed reply as answer vs new-request (fast tier,
         # fail-safe→answer) so a user who pivots isn't silently answered with their
         # unrelated message. The clarify pumps consult it before resolving.
@@ -5342,7 +5359,7 @@ class StartupOrchestrator:
             # E5 — drop any pending clarifies (wakes parked blocking waiters so
             # their turns end cleanly rather than hanging on the park timeout).
             with contextlib.suppress(Exception):
-                clarify_gateway.clear_all()
+                await clarify_gateway.clear_all()
             # E8-S3 — clear every named session (draining each mailbox) so no
             # session or its A2A mailbox outlives the process.
             with contextlib.suppress(Exception):

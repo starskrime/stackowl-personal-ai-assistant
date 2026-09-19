@@ -25,6 +25,7 @@ import pytest
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.clarify_gateway import ClarifyGateway
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
@@ -114,14 +115,16 @@ def _live_io():  # noqa: ANN202
     TestModeGuard._active = prev  # type: ignore[attr-defined]
 
 
-def _build_env(*, timeout_s: float = 30.0) -> _Env:
+def _build_env(*, timeout_s: float = 30.0, db: DbPool | None = None) -> _Env:
     adapter = TelegramChannelAdapter(TelegramSettings(allowed_user_ids=frozenset({USER_ID})))
     bot = _FakeBot()
     adapter._bot_app = _FakeBotApp(bot)
     adapter._bot_user_id = 999
     adapter._bot_username = ""
     provider = _ScriptedProvider()
-    gateway = ClarifyGateway()
+    # Story 3.3 (AD-28) -- db_pool wired so a real Telegram-answered blocking
+    # clarify opens+resolves a durable needs_you `question` item (AC5).
+    gateway = ClarifyGateway(db_pool=db)
     gateway.register_adapter("telegram", adapter)
     registry = ToolRegistry.with_defaults()
     # with_defaults() already registers a clarify tool; swap in one with a test
@@ -166,9 +169,9 @@ async def _wait_until(predicate, *, tries: int = 300) -> bool:  # noqa: ANN001
     return False
 
 
-async def test_smoke_clarify_blocks_then_resumes_in_turn() -> None:
+async def test_smoke_clarify_blocks_then_resumes_in_turn(tmp_db: DbPool) -> None:
     """Turn parks on clarify, question is delivered, the reply resumes it in-turn."""
-    env = _build_env()
+    env = _build_env(db=tmp_db)
     msg = await _inbound(env, "help me pick")
     env.provider.script.append(
         ("clarify", {"question": "Which colour do you want?", "choices": ["red", "blue"]})
@@ -192,6 +195,23 @@ async def test_smoke_clarify_blocks_then_resumes_in_turn() -> None:
     await asyncio.wait_for(run_task, timeout=5.0)
     assert env.provider.results, "turn did not resume"
     assert "blue" in env.provider.results[0], "the user's answer did not reach the model"
+
+    # Story 3.3 (AD-28), AC5 -- the real Telegram-answered blocking clarify
+    # opened and resolved a durable needs_you `question` item, driven
+    # entirely through the genuine ClarifyGateway.ask()/wait_for_answer()
+    # path -- no direct needs_you call in this test.
+    opened_rows = await tmp_db.fetch_all(
+        "SELECT * FROM journal_events WHERE type = 'needs_you.opened'",
+    )
+    assert len(opened_rows) == 1
+    resolved_rows = await tmp_db.fetch_all(
+        "SELECT * FROM journal_events WHERE type = 'needs_you.resolved'",
+    )
+    assert len(resolved_rows) == 1
+    assert resolved_rows[0]["outcome"] == "ok"
+    item_rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE kind = 'question'")
+    assert len(item_rows) == 1
+    assert item_rows[0]["answer"] == "blue"
 
 
 async def test_smoke_clarify_graceful_timeout() -> None:

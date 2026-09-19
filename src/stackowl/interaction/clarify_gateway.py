@@ -52,9 +52,10 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from stackowl.infra.observability import log
+from stackowl.infra.observability import log, redact_secret_shapes
 from stackowl.interaction.reversibility_resolver import (
     Decision,
     Reversibility,
@@ -65,6 +66,7 @@ from stackowl.pipeline.budget.human_wait import record_human_wait
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.channels.base import ChannelAdapter
+    from stackowl.db.pool import DbPool
 
 # Entropy for clarify ids — token_urlsafe(_ID_BYTES) yields a non-sequential,
 # collision-resistant id (Security: never sequential, INC-3).
@@ -114,6 +116,12 @@ class PendingClarify:
     # TIMED_OUT sweep/clear/shutdown abandon. Cap-one replace / clear_session /
     # sweep_expired / clear_all leave this False → those wake as TIMED_OUT.
     cancelled: bool = False
+    # Story 3.3 (AD-28) -- the durable `question` needs_you item id bound to
+    # THIS entry's own waiter (blocking mode only -- see `ask()`), carried
+    # from open+bind time through to `wait_for_answer()`'s own resolve/settle
+    # points. `None` for a turn-yield entry, an F-71 auto-resolved entry, or
+    # when `db_pool` is unwired -- every one of those never opens an item.
+    needs_you_item_id: str | None = None
 
 
 @dataclass
@@ -130,6 +138,13 @@ class ClarifyGateway:
     # Clock is injectable for deterministic TTL tests; defaults to monotonic so
     # entries are never mis-aged by wall-clock jumps.
     time_fn: Callable[[], float] = time.monotonic
+    #: Story 3.3 (AD-28) -- wired once (`startup/orchestrator.py`, mirroring
+    #: `ConsentPolicy.db_pool`'s own seam), so a BLOCKING `ask()` can
+    #: additionally open a durable `question` needs_you item and
+    #: `wait_for_answer()` can resolve/settle it. `None` is the ordinary
+    #: state for every test and any caller that never wires one -- every
+    #: needs_you call below is then a no-op, byte-identical to today.
+    db_pool: DbPool | None = None
     _pending: dict[str, PendingClarify] = field(default_factory=dict)
     _adapters: dict[str, ChannelAdapter] = field(default_factory=dict)
 
@@ -314,7 +329,7 @@ class ClarifyGateway:
         for cid in replaced:
             prior = self._pending.pop(cid, None)
             if prior is not None:
-                self._abandon_waiter(prior, reason="superseded")
+                await self._abandon_waiter(prior, reason="superseded")
         if replaced:
             log.gateway.info(
                 "clarify_gateway.ask: replacing prior pending clarify (cap=1/session)",
@@ -323,6 +338,23 @@ class ClarifyGateway:
 
         # Create the Event inside this coroutine so it binds to the running loop.
         event = asyncio.Event() if blocking else None
+
+        # Story 3.3 (AD-28) -- BLOCKING mode only: open a durable `question`
+        # needs_you item and bind THIS coroutine's own in-memory wait as its
+        # `waiter_kind="turn"` waiter, alongside the Event above (spec Code
+        # Map: "alongside the existing event = asyncio.Event() construction").
+        # Placed AFTER the F-71 short-circuit (which returns early, above)
+        # and the cap-one replace -- neither of those ever opens an item
+        # (spec Boundaries). A no-op when `self.db_pool` is unwired.
+        needs_you_item_id: str | None = None
+        if blocking and self.db_pool is not None:
+            from stackowl.journal import interaction_events
+
+            expires_at = (datetime.now(UTC) + timedelta(seconds=CLARIFY_TTL_SECONDS)).isoformat()
+            needs_you_item_id = await interaction_events.record_clarify_raised(
+                self.db_pool, clarify_id=clarify_id, session_key=session_key,
+                channel=channel, expires_at=expires_at,
+            )
 
         self._pending[clarify_id] = PendingClarify(
             clarify_id=clarify_id,
@@ -333,6 +365,7 @@ class ClarifyGateway:
             awaiting_text=awaiting_text,
             created_at=self.time_fn(),
             event=event,
+            needs_you_item_id=needs_you_item_id,
         )
 
         # 3. STEP — deliver via the channel's adapter (self-healing on failure),
@@ -438,6 +471,11 @@ class ClarifyGateway:
                 "clarify_gateway.wait_for_answer: timed out — entry popped",
                 extra={"_fields": {"clarify_id": clarify_id, "timeout": timeout}},
             )
+            # Story 3.3 (AD-28), review pass 1 Group A -- this wait gave up
+            # WITHOUT a real answer (not a boot restart, not a TTL sweep) --
+            # a bound item must settle here, not sit open until its own
+            # expires_at + the periodic sweep.
+            await self._settle_needs_you_item(entry, resolved_by="system:clarify_timeout")
             return (None, OUTCOME_TIMED_OUT)
         except asyncio.CancelledError:  # cooperative cancellation must propagate
             # Pop the parked entry FIRST so a cancelled wait (shutdown teardown /
@@ -451,6 +489,10 @@ class ClarifyGateway:
                 "clarify_gateway.wait_for_answer: cancelled — entry popped, re-raising",
                 extra={"_fields": {"clarify_id": clarify_id}},
             )
+            # Settle AFTER the pop, BEFORE the re-raise (spec Code Map) --
+            # needs_you.settle_or_abandon() never raises, so it can never
+            # swallow the cooperative cancellation below.
+            await self._settle_needs_you_item(entry, resolved_by="system:clarify_cancelled")
             raise
         except Exception as exc:  # self-healing — never raise into the parked tool
             self._pending.pop(clarify_id, None)
@@ -459,6 +501,7 @@ class ClarifyGateway:
                 exc_info=exc,
                 extra={"_fields": {"clarify_id": clarify_id}},
             )
+            await self._settle_needs_you_item(entry, resolved_by="system:clarify_error")
             return (None, OUTCOME_TIMED_OUT)
         finally:
             # Record blocked-on-human seconds (runs before any except's return and
@@ -480,12 +523,80 @@ class ClarifyGateway:
                 "clarify_gateway.wait_for_answer: woken without answer (abandoned)",
                 extra={"_fields": {"clarify_id": clarify_id, "outcome": outcome}},
             )
+            # Story 3.3, review pass 1 Group A -- woken by cap-one replace /
+            # clear_session / sweep_expired / clear_all / cancel_pending, all
+            # of which set the event with no answer via _abandon_waiter --
+            # none of those is "the human answered" or "core restarted", so
+            # settle here too.
+            await self._settle_needs_you_item(
+                entry,
+                resolved_by=(
+                    "system:clarify_cancelled" if entry.cancelled
+                    else "system:clarify_abandoned"
+                ),
+            )
             return (None, outcome)
         log.gateway.info(
             "clarify_gateway.wait_for_answer: woken with answer",
             extra={"_fields": {"clarify_id": clarify_id}},
         )
-        return (entry.answer, OUTCOME_ANSWERED)
+        # Story 3.3 (AD-28) -- the answer goes only through needs_you.resolve()
+        # -- ITS returned outcome, never the raw local `entry.answer`, is what
+        # this turn acts on (spec Boundaries: "makes 'the first answer wins'
+        # true even against a concurrent boot-sweep/expiry"). A no-op (raw
+        # answer unchanged) when no item was ever bound (turn-yield, F-71
+        # auto-resolve, or `db_pool` unwired).
+        answer: str | None = entry.answer
+        if self.db_pool is not None and entry.needs_you_item_id is not None:
+            from stackowl.journal import needs_you
+
+            try:
+                async with self.db_pool.transaction() as conn:
+                    resolution = await needs_you.resolve(
+                        conn, item_id=entry.needs_you_item_id, answer=entry.answer,
+                        resolved_by=f"owner:{entry.channel}",
+                    )
+            except Exception as exc:  # self-healing — the turn must never block on a journaling failure
+                log.gateway.error(
+                    "clarify_gateway.wait_for_answer: needs_you.resolve() "
+                    "failed — returning the raw local answer instead",
+                    exc_info=exc,
+                    extra={"_fields": {"clarify_id": clarify_id}},
+                )
+            else:
+                # Review finding: `resolution.answer` is needs_you.resolve()'s
+                # own REDACTED copy (it scans `answer` for secret shapes
+                # before ever writing the row -- AD-4). Relaying that
+                # redacted copy operationally would silently corrupt a
+                # genuinely secret-shaped answer (an API key typed in reply
+                # to a question) before the model/tool ever sees it. If THIS
+                # call's own (possibly-redacted) answer is the one that won
+                # -- compare against the SAME redaction resolve() applied --
+                # return the RAW local `entry.answer` instead; only a
+                # DIFFERENT winner's answer (never seen raw here) falls back
+                # to the redacted copy, the best available.
+                if resolution.outcome == "resolved" and entry.answer is not None:
+                    redacted_local, _ = redact_secret_shapes(entry.answer)
+                    answer = entry.answer if resolution.answer == redacted_local else resolution.answer
+                else:
+                    answer = resolution.answer
+        return (answer, OUTCOME_ANSWERED)
+
+    # ----------------------------------------------------- _settle_needs_you_item
+
+    async def _settle_needs_you_item(self, entry: PendingClarify, *, resolved_by: str) -> None:
+        """Best-effort settle of ``entry``'s bound needs_you item on LOCAL
+        abandonment (timeout/cancel/woken-without-answer) -- a thin wrapper
+        around :func:`needs_you.settle_or_abandon`, which never raises on its
+        own. A no-op when ``self.db_pool`` is unwired or ``entry`` never had
+        an item bound (turn-yield, F-71 auto-resolve)."""
+        if self.db_pool is None or entry.needs_you_item_id is None:
+            return
+        from stackowl.journal import needs_you
+
+        await needs_you.settle_or_abandon(
+            self.db_pool, item_id=entry.needs_you_item_id, resolved_by=resolved_by,
+        )
 
     # ------------------------------------------------------------- try_resolve
 
@@ -716,7 +827,7 @@ class ClarifyGateway:
 
     # ----------------------------------------------------------- cancel_pending
 
-    def cancel_pending(self, session_key: str, channel: str) -> str | None:
+    async def cancel_pending(self, session_key: str, channel: str) -> str | None:
         """Cancel the pending clarify for ``session_key`` AND ``channel`` (a PIVOT).
 
         Called by the pump when a during-park typed reply is classified
@@ -746,7 +857,7 @@ class ClarifyGateway:
                 return None
             match.cancelled = True
             self._pending.pop(match.clarify_id, None)
-            self._abandon_waiter(match, reason="cancel_pending")
+            await self._abandon_waiter(match, reason="cancel_pending")
             log.gateway.info(
                 "clarify_gateway.cancel_pending: cancelled pending clarify (pivot)",
                 extra={
@@ -768,8 +879,7 @@ class ClarifyGateway:
 
     # --------------------------------------------------------- _abandon_waiter
 
-    @staticmethod
-    def _abandon_waiter(entry: PendingClarify, *, reason: str) -> None:
+    async def _abandon_waiter(self, entry: PendingClarify, *, reason: str) -> None:
         """Wake a parked blocking waiter without an answer so it cannot leak.
 
         If ``entry`` has an event that is still unset, set it (leaving
@@ -778,6 +888,29 @@ class ClarifyGateway:
         a pivot (cancel_pending set it True) → ``OUTCOME_CANCELLED``; any other
         abandon → ``OUTCOME_TIMED_OUT``. A no-op for turn-yield entries (no event)
         and for already-set events. Never raises.
+
+        Story 3.3 (AD-28), review finding -- this method's own callers
+        (cap-one replace in :meth:`ask`, :meth:`cancel_pending`,
+        :meth:`clear_session`, :meth:`clear_all`, :meth:`sweep_expired`) can
+        abandon an entry that already has a bound ``needs_you_item_id``
+        BEFORE :meth:`wait_for_answer` ever parks on it -- a real scheduler
+        window, since :meth:`ask` itself awaits
+        ``record_clarify_raised()``/``adapter.send_clarify()`` before
+        returning. Several of those callers POP the entry from ``_pending``
+        first, so a LATER :meth:`wait_for_answer` call for this
+        ``clarify_id`` would find nothing and never reach its own settle
+        logic -- orphaning the item until its own ``expires_at`` + the
+        periodic sweep. Settled HERE too -- this method (and its 5 callers)
+        is now ``async`` so the settle is DIRECTLY awaited (not a
+        fire-and-forget ``asyncio.ensure_future`` task, which was tried and
+        found unreliable: the untracked task can still be pending when the
+        caller's own DB connection/pool closes, e.g. at test teardown or
+        process shutdown, producing a "Cannot operate on a closed database"
+        failure instead of a clean settle). :func:`needs_you.settle_or_abandon`
+        never raises, so awaiting it here cannot propagate a failure into any
+        of the 5 callers. A settle already performed by :meth:`wait_for_answer`
+        itself for the SAME item (if it later runs) is a harmless no-op -- the
+        item is already resolved by then.
         """
         ev = entry.event
         if ev is not None and not ev.is_set():
@@ -787,10 +920,17 @@ class ClarifyGateway:
                 "clarify_gateway._abandon_waiter: woke parked waiter (no answer)",
                 extra={"_fields": {"clarify_id": entry.clarify_id, "reason": reason}},
             )
+        if self.db_pool is not None and entry.needs_you_item_id is not None:
+            from stackowl.journal import needs_you
+
+            await needs_you.settle_or_abandon(
+                self.db_pool, item_id=entry.needs_you_item_id,
+                resolved_by=f"system:clarify_{reason}",
+            )
 
     # ------------------------------------------------------------ clear_session
 
-    def clear_session(self, session_key: str) -> list[str]:
+    async def clear_session(self, session_key: str) -> list[str]:
         """Drop all pending entries for ``session_key``; return their ids.
 
         Wired into ``/new``, shutdown, and cached-agent eviction so an abandoned
@@ -804,7 +944,7 @@ class ClarifyGateway:
             for cid in dropped:
                 entry = self._pending.pop(cid, None)
                 if entry is not None:
-                    self._abandon_waiter(entry, reason="clear_session")
+                    await self._abandon_waiter(entry, reason="clear_session")
             if dropped:
                 log.gateway.info(
                     "clarify_gateway.clear_session: dropped pending clarifies",
@@ -821,7 +961,7 @@ class ClarifyGateway:
 
     # ---------------------------------------------------------------- clear_all
 
-    def clear_all(self) -> list[str]:
+    async def clear_all(self) -> list[str]:
         """Drop ALL pending entries across every session; return their ids.
 
         Shutdown-teardown counterpart to :meth:`clear_session`: wakes any parked
@@ -834,7 +974,7 @@ class ClarifyGateway:
             for cid in dropped:
                 entry = self._pending.pop(cid, None)
                 if entry is not None:
-                    self._abandon_waiter(entry, reason="clear_all")
+                    await self._abandon_waiter(entry, reason="clear_all")
             if dropped:
                 log.gateway.info(
                     "clarify_gateway.clear_all: dropped all pending clarifies",
@@ -851,7 +991,7 @@ class ClarifyGateway:
 
     # ------------------------------------------------------------ sweep_expired
 
-    def sweep_expired(self, ttl_seconds: float) -> int:
+    async def sweep_expired(self, ttl_seconds: float) -> int:
         """Drop entries older than ``ttl_seconds``; return the count dropped.
 
         Bounds the "next message is the answer" window (prevents a much-later
@@ -869,7 +1009,7 @@ class ClarifyGateway:
             for cid in expired:
                 entry = self._pending.pop(cid, None)
                 if entry is not None:
-                    self._abandon_waiter(entry, reason="sweep_expired")
+                    await self._abandon_waiter(entry, reason="sweep_expired")
             if expired:
                 log.gateway.info(
                     "clarify_gateway.sweep_expired: dropped expired clarifies",

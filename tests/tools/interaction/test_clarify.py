@@ -288,7 +288,7 @@ async def test_interactive_pivot_returns_cancelled(with_gateway: ClarifyGateway)
             ClarifyTool().execute(question="delete which file?"),
         )
         await asyncio.sleep(0)  # let it register + park on the waiter
-        cancelled_id = with_gateway.cancel_pending("s1", "cli")
+        cancelled_id = await with_gateway.cancel_pending("s1", "cli")
         assert cancelled_id is not None  # a parked waiter was woken (pivot)
         result = await task
     finally:

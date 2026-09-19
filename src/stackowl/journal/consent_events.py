@@ -37,7 +37,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from stackowl.health.status import remedy_for
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
-from stackowl.journal.enums import ActorKind, AttentionClass, Outcome, RecordKind
+from stackowl.journal import needs_you
+from stackowl.journal.enums import (
+    ActorKind,
+    AttentionClass,
+    Intensity,
+    NeedsYouKind,
+    Outcome,
+    RecordKind,
+)
 from stackowl.journal.health import note_failure
 from stackowl.journal.ids import new_event_id
 from stackowl.journal.models import JournalAttrsBase, JournalEvent, RecordRef
@@ -88,6 +96,21 @@ def _narrate_consent_decided(attrs: JournalAttrsBase, name: str) -> str:  # noqa
     return f"Consent {verb} for {a.tool_name} ({a.reason})."
 
 
+class ConsentRequestedAttrs(JournalAttrsBase):
+    """``consent.requested`` (Story 3.3, AD-28) -- a consent request began
+    waiting on the owner. Opens an ``approval`` needs_you item."""
+
+    tool_name: str = Field(max_length=_MAX_LABEL_LEN)
+    channel: str = Field(max_length=_MAX_LABEL_LEN)
+    session_key: str = Field(max_length=_MAX_LABEL_LEN)
+    category: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
+def _narrate_consent_requested(attrs: JournalAttrsBase, name: str) -> str:  # noqa: ARG001 -- no resolver registered for RecordKind.CONSENT (out of scope)
+    a = cast(ConsentRequestedAttrs, attrs)
+    return f"Consent requested for {a.tool_name} on {a.channel}."
+
+
 def _register() -> None:
     get_registry().register(EventTypeSpec(
         type="consent.decided", schema_version=1, attrs_model=ConsentDecisionAttrs,
@@ -95,9 +118,100 @@ def _register() -> None:
         attention_class=AttentionClass.AMBIENT, intensity=None,
         table=_TABLE, narrate=_narrate_consent_decided,
     ))
+    get_registry().register(EventTypeSpec(
+        type="consent.requested", schema_version=1, attrs_model=ConsentRequestedAttrs,
+        emitting_process="tools.consent", record_kind=RecordKind.CONSENT,
+        attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.NORMAL,
+        needs_you_kind=NeedsYouKind.APPROVAL,
+        # No single owning row -- the request IS the signal; the fresh
+        # per-request id (used as target_id below) is the only locator that
+        # matters, and it already lives on the event row (spec Design Notes,
+        # mirrors budget.warning's/link.hello_mismatch_standdown's own
+        # table=None rationale).
+        table=None, narrate=_narrate_consent_requested,
+    ))
 
 
 _register()
+
+
+async def record_consent_requested(
+    db_pool: DbPool | None,
+    *,
+    tool_name: str,
+    channel: str,
+    session_key: str,
+    category: str | None,
+    expires_at: str,
+) -> str | None:
+    """Record ``consent.requested`` and bind THIS wait's own
+    ``waiter_kind="turn"`` waiter onto the durable ``approval`` item it opens
+    -- in ONE transaction (AD-24). Called from ``ConsentPolicy.request()``
+    the moment it is about to await its prompter (spec Intent: "the moment
+    ... starts waiting").
+
+    Mints a FRESH per-request id, used as BOTH the triggering event's own
+    ``target_id`` and the item's dedupe-key target (spec Code Map/Design
+    Notes, review pass 1 Group C) -- NEVER ``session_key``, which would
+    collapse two distinct, concurrent decisions (including two session-less
+    callers that both default to ``session_key=""``) onto the SAME item, so
+    whichever ``resolve()`` call lands second would silently adopt the
+    first's unrelated answer.
+
+    Returns the bound item's id on success, or ``None`` on: no ``db_pool``
+    wired (mirrors :func:`record_consent_decision`'s convention -- every
+    unwired test/caller stays byte-identical); any failure along the way
+    (never raises -- B5, the decision itself must never block on this).
+    """
+    # 1. ENTRY
+    log.tool.debug(
+        "[journal] consent_events.record_consent_requested: entry",
+        extra={"_fields": {"tool": tool_name, "channel": channel}},
+    )
+    # 2. DECISION -- no DbPool wired is a silent no-op.
+    if db_pool is None:
+        log.tool.debug(
+            "[journal] consent_events.record_consent_requested: exit -- no "
+            "db_pool wired",
+            extra={"_fields": {"tool": tool_name}},
+        )
+        return None
+    try:
+        request_id = new_event_id()
+        occurred_at = _now_iso()
+        # 3. STEP -- record the triggering event (record()'s own NEEDS_YOU
+        # wiring opens the item), then bind THIS wait's waiter onto it, both
+        # inside the same transaction (AD-24).
+        async with db_pool.transaction() as conn:
+            await journal_record(conn, JournalEvent(
+                type="consent.requested", schema_version=1, occurred_at=occurred_at,
+                actor_kind=ActorKind.AUTONOMOUS, actor_id="tools.consent",
+                target_kind=ActorKind.OWNER, target_id=request_id,
+                outcome=Outcome.OK,
+                attrs=ConsentRequestedAttrs(
+                    tool_name=tool_name, channel=channel, session_key=session_key,
+                    category=category,
+                ),
+            ))
+            item_id = await needs_you.bind_waiter(
+                conn, kind=NeedsYouKind.APPROVAL, target_kind=ActorKind.OWNER.value,
+                target_id=request_id, waiter_kind=needs_you.WAITER_KIND_TURN,
+                waiter_id=request_id, expires_at=expires_at,
+            )
+    except Exception as exc:
+        log.tool.error(
+            "[journal] consent_events.record_consent_requested: FAILED -- "
+            "the prompt still proceeds; only its durable item is missing",
+            exc_info=exc,
+            extra={"_fields": {"tool": tool_name, "channel": channel}},
+        )
+        return None
+    # 4. EXIT
+    log.tool.debug(
+        "[journal] consent_events.record_consent_requested: exit",
+        extra={"_fields": {"tool": tool_name, "item_id": item_id}},
+    )
+    return item_id
 
 
 async def record_consent_decision(

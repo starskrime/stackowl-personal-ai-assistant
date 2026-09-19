@@ -19,12 +19,12 @@ subsystem.
 
 Importing this module imports ``task_events``, ``job_events``, ``heal_events``,
 ``health_events``, ``turn_events``, ``memory_events``, ``consent_events``,
-``delivery_events``, ``channel_events``, ``needs_you``, ``budget_events`` and
-``link_events`` for their side effect (registering the task, job, heal,
-health, turn, memory, consent, delivery/provider, channel, Needs-you item,
-budget-warning and gateway/core-link event types), so any importer of
-``journal`` gets a working registry with no separate registration step to
-remember.
+``delivery_events``, ``channel_events``, ``needs_you``, ``budget_events``,
+``link_events`` and ``interaction_events`` for their side effect (registering
+the task, job, heal, health, turn, memory, consent, delivery/provider,
+channel, Needs-you item, budget-warning, gateway/core-link and blocking-
+clarify event types), so any importer of ``journal`` gets a working registry
+with no separate registration step to remember.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from stackowl.journal import consent_events as _consent_events  # noqa: F401 -- 
 from stackowl.journal import delivery_events as _delivery_events  # noqa: F401 -- registration side effect
 from stackowl.journal import heal_events as _heal_events  # noqa: F401 -- registration side effect
 from stackowl.journal import health_events as _health_events  # noqa: F401 -- registration side effect
+from stackowl.journal import interaction_events as _interaction_events  # noqa: F401 -- registration side effect
 from stackowl.journal import job_events as _job_events  # noqa: F401 -- registration side effect
 from stackowl.journal import link_events as _link_events  # noqa: F401 -- registration side effect
 from stackowl.journal import memory_events as _memory_events  # noqa: F401 -- registration side effect
@@ -71,10 +72,14 @@ from stackowl.journal.narrator import (
     reset_name_resolvers_for_tests,
 )
 from stackowl.journal.needs_you import (
+    WAITER_KIND_TURN,
     NeedsYouResolution,
+    bind_waiter,
     compute_item_digest,
+    expire_stranded_turn_waiters,
     open_items,
     resolve,
+    settle_or_abandon,
     sweep_expired_items,
 )
 from stackowl.journal.recorder import record
@@ -84,6 +89,7 @@ from stackowl.journal.write_gate import reset_for_tests as reset_write_gate_for_
 
 __all__ = [
     "ATTENTION_POLICY_VERSION",
+    "WAITER_KIND_TURN",
     "ActorKind",
     "AttentionClass",
     "EventRegistry",
@@ -100,10 +106,12 @@ __all__ = [
     "RecordKind",
     "RecordRef",
     "RowFetcher",
+    "bind_waiter",
     "classify",
     "compute_item_digest",
     "compute_registry_digest",
     "current_max_cursor",
+    "expire_stranded_turn_waiters",
     "get_registry",
     "narrate",
     "narrate_full",
@@ -119,6 +127,7 @@ __all__ = [
     "reset_write_gate_for_tests",
     "resolve",
     "resume_writes",
+    "settle_or_abandon",
     "sweep_expired_items",
     "wait_for_commit",
     "writes_paused",

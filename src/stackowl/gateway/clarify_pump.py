@@ -117,7 +117,7 @@ class ClarifyPump:
         """
         if route == "command":
             if target == _RESET_COMMAND:
-                self._gateway.clear_session(session_key)
+                await self._gateway.clear_session(session_key)
             return False, input_text
 
         # Is there a pending clarify for this session+channel? (read-only)
@@ -138,7 +138,7 @@ class ClarifyPump:
                 # assumption) and run this message as a fresh turn. Use
                 # cancel_pending (a pivot), NOT clear_session (a teardown that
                 # wakes as TIMED_OUT and would wrongly invite a best-guess).
-                self._gateway.cancel_pending(session_key, channel)
+                await self._gateway.cancel_pending(session_key, channel)
                 log.gateway.info(
                     "clarify_pump.resolve_or_rewrite: reply classified NEW_REQUEST — "
                     "clarify cancelled, running as a fresh turn",

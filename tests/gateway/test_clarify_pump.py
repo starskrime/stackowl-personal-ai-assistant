@@ -44,11 +44,11 @@ class _FakeGateway:
         self.resolve_calls.append((session_key, channel, answer))
         return self.resolve_result
 
-    def clear_session(self, session_key: str) -> list[str]:
+    async def clear_session(self, session_key: str) -> list[str]:
         self.cleared.append(session_key)
         return []
 
-    def cancel_pending(self, session_key: str, channel: str) -> str | None:
+    async def cancel_pending(self, session_key: str, channel: str) -> str | None:
         self.cancelled.append((session_key, channel))
         return None
 

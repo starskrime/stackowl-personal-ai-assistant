@@ -66,7 +66,7 @@ class ClarifySweepHandler(JobHandler):
         dropped = 0
         try:
             # 3. STEP — drive the gateway sweep (never raises, but guard anyway).
-            dropped = self._gateway.sweep_expired(self._ttl)
+            dropped = await self._gateway.sweep_expired(self._ttl)
         except Exception as exc:  # self-healing — never raise into the scheduler loop
             log.scheduler.error(
                 "[scheduler] clarify_sweep.execute: sweep failed — treating as 0 dropped",

@@ -7,14 +7,20 @@ for Story 2.7's types.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
-from stackowl.journal import AttentionClass, RecordKind, classify
-from stackowl.journal.consent_events import ConsentDecisionAttrs, record_consent_decision
+from stackowl.journal import AttentionClass, Intensity, NeedsYouKind, RecordKind, classify
+from stackowl.journal.consent_events import (
+    ConsentDecisionAttrs,
+    ConsentRequestedAttrs,
+    record_consent_decision,
+    record_consent_requested,
+)
 from stackowl.journal.narrator import narrate_full
 from stackowl.journal.registry import get_registry
 
@@ -31,6 +37,15 @@ class TestTheTypeIsRegistered:
         assert spec.record_kind is RecordKind.CONSENT
         assert spec.emitting_process == "tools.consent"
         assert classify("consent.decided") == (AttentionClass.AMBIENT, None)
+
+    def test_consent_requested_is_consent_needs_you_approval(self) -> None:
+        """Story 3.3 (AD-28)."""
+        spec = get_registry().get("consent.requested")
+        assert spec.attrs_model is ConsentRequestedAttrs
+        assert spec.record_kind is RecordKind.CONSENT
+        assert spec.emitting_process == "tools.consent"
+        assert spec.needs_you_kind is NeedsYouKind.APPROVAL
+        assert classify("consent.requested") == (AttentionClass.NEEDS_YOU, Intensity.NORMAL)
 
 
 class TestNarration:
@@ -236,3 +251,88 @@ class TestCanarySecretsAreRedactedThroughARealEmitter:
         stored = rows[0]["attrs"]
         assert BEARER_CANARY not in stored
         assert json.loads(stored)["_redacted"] is True
+
+
+class TestRecordConsentRequested:
+    """Story 3.3 (AD-28): ``record_consent_requested`` opens+binds a durable
+    ``approval`` item in ONE transaction -- the open+bind point
+    ``ConsentPolicy.request()`` calls the moment it starts waiting."""
+
+    async def test_no_db_pool_is_a_silent_no_op(self) -> None:
+        item_id = await record_consent_requested(
+            None, tool_name="shell", channel="cli", session_key="s1",
+            category=None, expires_at="2099-01-01T00:00:00+00:00",
+        )
+        assert item_id is None
+
+    async def test_opens_and_binds_a_real_approval_item(self, tmp_db: DbPool) -> None:
+        item_id = await record_consent_requested(
+            tmp_db, tool_name="shell", channel="telegram", session_key="s1",
+            category=None, expires_at="2099-01-01T00:00:00+00:00",
+        )
+
+        assert item_id is not None
+        rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE id = ?", (item_id,))
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["kind"] == "approval"
+        assert row["waiter_kind"] == "turn"
+        assert row["waiter_id"] is not None
+        assert row["expires_at"] == "2099-01-01T00:00:00+00:00"
+        assert row["resolved_cursor"] is None
+
+        journal_rows = await tmp_db.fetch_all(
+            "SELECT * FROM journal_events WHERE type = 'consent.requested'",
+        )
+        assert len(journal_rows) == 1
+        opened_rows = await tmp_db.fetch_all(
+            "SELECT * FROM journal_events WHERE type = 'needs_you.opened'",
+        )
+        assert len(opened_rows) == 1
+
+    async def test_two_concurrent_requests_for_the_same_session_each_get_their_own_item(
+        self, tmp_db: DbPool,
+    ) -> None:
+        """Review pass 1 Group C -- the regression test for the cross-request
+        -contamination bug this pass found: TWO distinct, concurrent
+        `ConsentPolicy.request()` calls for the SAME (or both empty)
+        `session_key`, for DIFFERENT tools, must each get their OWN item, not
+        collide onto one via a `target_id` scoped to the bare session_key."""
+        item_id_a, item_id_b = await asyncio.gather(
+            record_consent_requested(
+                tmp_db, tool_name="shell", channel="cli", session_key="",
+                category=None, expires_at="2099-01-01T00:00:00+00:00",
+            ),
+            record_consent_requested(
+                tmp_db, tool_name="execute_code", channel="cli", session_key="",
+                category=None, expires_at="2099-01-01T00:00:00+00:00",
+            ),
+        )
+
+        assert item_id_a is not None
+        assert item_id_b is not None
+        assert item_id_a != item_id_b, (
+            "two distinct concurrent decisions must never collapse onto the "
+            "same needs_you item"
+        )
+        rows = await tmp_db.fetch_all("SELECT id FROM needs_you WHERE kind = 'approval'")
+        assert len(rows) == 2
+
+    async def test_a_journal_record_failure_never_raises_and_returns_none(
+        self, tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from stackowl.journal import consent_events as consent_events_module
+
+        async def _boom(*_args: object, **_kwargs: object) -> str:
+            raise RuntimeError("simulated journal.record failure")
+
+        monkeypatch.setattr(consent_events_module, "journal_record", _boom)
+
+        item_id = await record_consent_requested(
+            tmp_db, tool_name="rollback-tool", channel="cli", session_key="s9",
+            category=None, expires_at="2099-01-01T00:00:00+00:00",
+        )
+
+        assert item_id is None
+        rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE kind = 'approval'")
+        assert rows == []

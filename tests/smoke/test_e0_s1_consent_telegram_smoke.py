@@ -168,7 +168,12 @@ async def _build_env(db: DbPool, audit_path: Path, tool: _DangerTool) -> _Env:
     routing = RoutingPrompter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
     routing.register("telegram", prompter)
-    gate = ConsequentialActionGate(ConsentPolicy(prompter=routing, audit_logger=audit))
+    # Story 3.3 (AD-28) -- db_pool wired so a real Telegram-answered turn's
+    # consent request opens+resolves a durable needs_you `approval` item
+    # (AC5).
+    gate = ConsequentialActionGate(
+        ConsentPolicy(prompter=routing, audit_logger=audit, db_pool=db)
+    )
 
     router = CallbackRouter(db, adapter)
     await router.ensure_table()
@@ -291,6 +296,26 @@ async def test_smoke_user_approves_runs_tool_and_delivers(tmp_db: DbPool, tmp_pa
     import json
     decisions = _audit_decisions(env.audit)
     assert any(json.loads(d["details"])["decision"] == "allow" for d in decisions)
+
+    # Story 3.3 (AD-28), AC5 -- the real Telegram-answered consent request
+    # opened and resolved a durable needs_you `approval` item, driven
+    # entirely through the genuine ConsentPolicy.request() -> prompter ->
+    # needs_you.resolve() path -- no direct needs_you call in this test.
+    opened_rows = await tmp_db.fetch_all(
+        "SELECT * FROM journal_events WHERE type = 'needs_you.opened'",
+    )
+    assert len(opened_rows) == 1
+    resolved_rows = await tmp_db.fetch_all(
+        "SELECT * FROM journal_events WHERE type = 'needs_you.resolved'",
+    )
+    assert len(resolved_rows) == 1
+    assert resolved_rows[0]["outcome"] == "ok"
+    item_rows = await tmp_db.fetch_all(
+        "SELECT * FROM needs_you WHERE kind = 'approval'",
+    )
+    assert len(item_rows) == 1
+    assert item_rows[0]["resolved_cursor"] is not None
+    assert item_rows[0]["answer"] == "session"
 
 
 async def test_smoke_session_batch_suppresses_second_prompt(tmp_db: DbPool, tmp_path: Path) -> None:

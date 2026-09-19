@@ -373,7 +373,7 @@ async def test_clear_session_drops_and_returns_ids() -> None:
     cid_a = await gw.ask("s1", "cli", "qa?")
     await gw.ask("s2", "cli", "qb?")  # different session — must survive
 
-    dropped = gw.clear_session("s1")
+    dropped = await gw.clear_session("s1")
     assert dropped == [cid_a]
     # s1 gone, s2 intact.
     assert gw.try_resolve("s1", "cli", "a") is None
@@ -383,7 +383,7 @@ async def test_clear_session_drops_and_returns_ids() -> None:
 @pytest.mark.asyncio
 async def test_clear_session_no_entries_returns_empty() -> None:
     gw = ClarifyGateway()
-    assert gw.clear_session("nope") == []
+    assert await gw.clear_session("nope") == []
 
 
 # ----------------------------------------------------------- cancel_pending
@@ -403,7 +403,7 @@ async def test_cancel_pending_wakes_parked_waiter_with_cancelled() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)  # park on the entry's event
 
-    cancelled_id = gw.cancel_pending("s1", "cli")
+    cancelled_id = await gw.cancel_pending("s1", "cli")
     answer, outcome = await waiter
 
     assert cancelled_id == cid
@@ -417,10 +417,10 @@ async def test_cancel_pending_wakes_parked_waiter_with_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_cancel_pending_no_pending_returns_none() -> None:
     gw = ClarifyGateway()
-    assert gw.cancel_pending("s1", "cli") is None
+    assert await gw.cancel_pending("s1", "cli") is None
     # A different-channel pending is not cancelled (binding enforced).
     await gw.ask("s1", "telegram", "q?", blocking=True)
-    assert gw.cancel_pending("s1", "cli") is None
+    assert await gw.cancel_pending("s1", "cli") is None
     assert gw.peek_for_session("s1", "telegram") is not None
 
 
@@ -437,7 +437,7 @@ async def test_clear_session_wakes_as_timed_out_not_cancelled() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)
 
-    gw.clear_session("s1")
+    await gw.clear_session("s1")
     answer, outcome = await waiter
 
     assert answer is None
@@ -460,7 +460,7 @@ async def test_sweep_expired_drops_old_entries() -> None:
     # TTL=10s; at now=112 the first (created at 100, age 12) expires, the
     # second (created at 105, age 7) survives.
     clock.now = 112.0
-    n = gw.sweep_expired(10.0)
+    n = await gw.sweep_expired(10.0)
     assert n == 1
     assert gw.try_resolve("s1", "cli", "a") is None
     assert gw.try_resolve("s2", "cli", "a") is not None
@@ -473,7 +473,7 @@ async def test_sweep_expired_nothing_to_drop() -> None:
     clock.now = 100.0
     await gw.ask("s1", "cli", "q?")
     clock.now = 105.0
-    assert gw.sweep_expired(60.0) == 0
+    assert await gw.sweep_expired(60.0) == 0
     assert gw.try_resolve("s1", "cli", "a") is not None
 
 
@@ -604,7 +604,7 @@ async def test_abandon_while_parked_returns_timed_out() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)  # park on the entry's event
 
-    dropped = gw.clear_session("s1")
+    dropped = await gw.clear_session("s1")
     answer, outcome = await waiter
 
     assert dropped == [cid]
@@ -703,7 +703,7 @@ async def test_clear_session_wakes_blocking_waiter() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)
 
-    dropped = gw.clear_session("s1")
+    dropped = await gw.clear_session("s1")
     answer, outcome = await waiter
 
     assert dropped == [cid]
@@ -722,7 +722,7 @@ async def test_sweep_expired_wakes_blocking_waiter() -> None:
     await asyncio.sleep(0)
 
     clock.now = 200.0
-    n = gw.sweep_expired(10.0)
+    n = await gw.sweep_expired(10.0)
     answer, outcome = await waiter
 
     assert n == 1
@@ -740,7 +740,7 @@ async def test_clear_all_drops_every_session_and_returns_ids() -> None:
     cid_b = await gw.ask("s2", "cli", "qb?")
     cid_c = await gw.ask("s3", "telegram", "qc?")
 
-    dropped = gw.clear_all()
+    dropped = await gw.clear_all()
 
     # Every entry across every session+channel is returned.
     assert set(dropped) == {cid_a, cid_b, cid_c}
@@ -749,13 +749,13 @@ async def test_clear_all_drops_every_session_and_returns_ids() -> None:
     assert gw.try_resolve("s2", "cli", "a") is None
     assert gw.try_resolve("s3", "telegram", "a") is None
     # Second call is a no-op (idempotent teardown).
-    assert gw.clear_all() == []
+    assert await gw.clear_all() == []
 
 
 @pytest.mark.asyncio
 async def test_clear_all_no_entries_returns_empty() -> None:
     gw = ClarifyGateway()
-    assert gw.clear_all() == []
+    assert await gw.clear_all() == []
 
 
 @pytest.mark.asyncio
@@ -766,7 +766,7 @@ async def test_clear_all_wakes_parked_blocking_waiter() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)
 
-    dropped = gw.clear_all()
+    dropped = await gw.clear_all()
     answer, outcome = await waiter
 
     assert dropped == [cid]

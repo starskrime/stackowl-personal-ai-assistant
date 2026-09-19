@@ -85,6 +85,12 @@ class RecordKind(StrEnum):
     #: ``needs_you.resolved``), emitted from ``journal.recorder.record()``'s
     #: own generic open/close wiring, never from a subsystem call site.
     NEEDS_YOU = "needs_you"
+    #: Story 3.3 — the blocking-clarify domain (``clarify.raised``), emitted
+    #: from ``interaction.clarify_gateway``. No existing member fits: a
+    #: clarifying question is neither a consent decision (``CONSENT``) nor a
+    #: durable Needs-you item itself (``NEEDS_YOU``, reserved for the
+    #: ``needs_you.opened``/``.resolved`` bookkeeping types).
+    INTERACTION = "interaction"
 
 
 class NeedsYouKind(StrEnum):

@@ -24,6 +24,7 @@ import asyncio
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -872,6 +873,26 @@ class ConsentPolicy:
             allow_relaxation=not excluded,
             reversible=reversible,
         )
+        # Story 3.3 (AD-28) -- open a durable `approval` needs_you item and
+        # bind THIS coroutine's own in-memory wait as its `waiter_kind="turn"`
+        # waiter, the MOMENT the request starts waiting -- i.e. right here,
+        # before the prompter is ever awaited (spec Intent). A no-op when
+        # `self.db_pool` is unwired (byte-identical to today, mirrors
+        # `record_consent_decision`'s own convention) -- `item_id` stays
+        # `None` either way, or is only ever set once a real item is bound
+        # and ready to `resolve()` against.
+        item_id: str | None = None
+        if self.db_pool is not None:
+            from stackowl.journal import consent_events
+
+            expires_at = (
+                self.clock.now() + timedelta(seconds=HUMAN_DECISION_TIMEOUT_SECONDS)
+            ).isoformat()
+            item_id = await consent_events.record_consent_requested(
+                self.db_pool, tool_name=tool_name, channel=channel,
+                session_key=session_key, category=category, expires_at=expires_at,
+            )
+
         try:
             scope = await self.prompter.prompt(req)
         except Exception as exc:  # fail closed — never allow on a prompt error
@@ -880,7 +901,68 @@ class ConsentPolicy:
                 exc_info=exc,
                 extra={"_fields": {"tool": tool_name, "channel": channel}},
             )
+            # The prompter raised AFTER a real item was bound above (Group A,
+            # review pass 1) -- this wait gave up without a real answer, so
+            # the item must settle here rather than sit open until its own
+            # expiry. Never raises (needs_you.settle_or_abandon's own
+            # contract) -- a settle failure must never turn a fail-closed
+            # deny into something louder.
+            if item_id is not None and self.db_pool is not None:
+                from stackowl.journal import needs_you
+
+                await needs_you.settle_or_abandon(
+                    self.db_pool, item_id=item_id,
+                    resolved_by="system:consent_prompt_error",
+                )
             return await self._finalize(False, tool_name, channel, session_key, category, "prompt_error", None)
+
+        # The answer goes only through needs_you.resolve() -- ITS returned
+        # outcome, never the raw local `scope` above, is what this turn acts
+        # on from here down (spec Boundaries: "makes 'the first answer wins'
+        # true even against a concurrent boot-sweep/expiry"). A malformed or
+        # unexpected `resolution.answer` fails closed rather than raising
+        # into the caller.
+        if item_id is not None and self.db_pool is not None:
+            from stackowl.journal import needs_you
+
+            try:
+                async with self.db_pool.transaction() as conn:
+                    resolution = await needs_you.resolve(
+                        conn, item_id=item_id, answer=scope.value,
+                        # Neutral label, NOT "owner:{channel}" -- this call
+                        # fires on every non-exception prompter return,
+                        # including a prompter's own internal timeout/send
+                        # -failure fail-safe (e.g. TelegramConsentPrompter's
+                        # own DENY-on-timeout) where the human never saw or
+                        # answered the prompt. `_finalize`'s adjacent
+                        # "not_approved" (never "user_denied") reason string
+                        # exists for exactly this reason (2026-08-19/20
+                        # misattribution incident) -- this label must not
+                        # claim a real owner action happened either.
+                        resolved_by=f"consent_decision:{channel}",
+                    )
+            except Exception as exc:  # noqa: BLE001 — the decision must never block on a journaling failure
+                log.tool.error(
+                    "[consent] policy.request: needs_you.resolve() failed — "
+                    "acting on the raw prompter answer instead",
+                    exc_info=exc,
+                    extra={"_fields": {"tool": tool_name, "item_id": item_id}},
+                )
+            else:
+                try:
+                    if resolution.answer is None:
+                        raise ValueError("resolve() returned no answer")
+                    scope = ConsentScope(resolution.answer)
+                except ValueError:
+                    log.tool.error(
+                        "[consent] policy.request: resolve() returned a "
+                        "malformed answer — failing closed",
+                        extra={"_fields": {
+                            "tool": tool_name, "item_id": item_id,
+                            "answer": resolution.answer,
+                        }},
+                    )
+                    scope = ConsentScope.DENY
 
         if scope is ConsentScope.DENY:
             # "not_approved", not "user_denied". The prompter returns DENY for a

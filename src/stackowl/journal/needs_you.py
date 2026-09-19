@@ -18,9 +18,21 @@ every owner-facing surface -- Telegram, the Bridge strip, voice, a
 notification deep link -- calls to actually answer an item),
 :func:`compute_item_digest`, :func:`_expire_item` (shared by ``resolve()``'s
 own expiry branch and the sweep) and :func:`sweep_expired_items` (the seeded
-job's own body). No real caller wires :func:`resolve` in yet -- Stories
-3.3/3.4/3.6 do -- the same "ships correct, zero real callers" shape Story 3.1
-used for ``resolves`` and ``NeedsYouKind.DEVICE``.
+job's own body).
+
+STORY 3.3 gives ``resolve()`` its first real callers (``tools/consent.py``,
+``interaction/clarify_gateway.py``) and adds three more primitives:
+:func:`bind_waiter` (binds ``waiter_kind``/``waiter_id``/``expires_at`` onto
+an item ``record()``'s own generic wiring just opened, in the SAME
+transaction -- a second statement rather than widening ``open_item()`` or
+``journal.record()``'s own public signature); :func:`expire_stranded_turn_waiters`
+(the boot-time sweep that resolves every still-open ``waiter_kind="turn"``
+item as ``expired`` -- the in-memory waiter that opened it belonged to a now
+-gone process); and :func:`settle_or_abandon` (the shared, never-raising
+primitive both real call sites' non-happy-path exits use to settle a bound
+item when the local wait itself gives up -- timeout, cancel, or a
+prompter/gateway raising -- without a real answer, distinct from a boot
+restart or a TTL expiry only by its ``resolved_by`` label).
 
 RACE SAFETY. :func:`open_item` and :func:`_resolve_open_item` are each ONE
 SQL statement -- an ``INSERT ... ON CONFLICT(dedupe_key) WHERE resolved_cursor
@@ -95,6 +107,15 @@ _MAX_LABEL_LEN = 64
 _INTENSITY_ORDER_SQL = (
     f"CASE intensity WHEN '{Intensity.HIGH.value}' THEN 0 ELSE 1 END"
 )
+
+#: Story 3.3 -- the ONLY `waiter_kind` that exists until Epic 4's durable
+#: COMMAND-task waiters: an in-memory `asyncio.Future`/`asyncio.Event`
+#: belonging to a live turn, gone the moment its process restarts (spec
+#: Intent). Shared by :func:`bind_waiter`'s real callers,
+#: :func:`expire_stranded_turn_waiters`'s own query, and this module's
+#: settle-on-abandon primitive's docstring -- never a bare string literal
+#: repeated at each call site (review pass 1, low finding).
+WAITER_KIND_TURN = "turn"
 
 
 class NeedsYouOpenedAttrs(JournalAttrsBase):
@@ -250,6 +271,68 @@ async def _resolve_open_item(
     log.journal.info(
         "[journal] needs_you._resolve_open_item: exit",
         extra={"_fields": {"dedupe_key": dedupe_key, "resolved": item_id is not None}},
+    )
+    return item_id
+
+
+async def bind_waiter(
+    conn: aiosqlite.Connection,
+    *,
+    kind: NeedsYouKind,
+    target_kind: str,
+    target_id: str,
+    waiter_kind: str,
+    waiter_id: str,
+    expires_at: str,
+) -> str | None:
+    """Bind a waiter onto the item ``record()``'s own generic wiring just
+    opened for ``(kind, target_kind, target_id)`` -- a SECOND statement in
+    the SAME transaction as that opening event (Design Notes: "a second
+    statement, not a wider ``open_item()``" -- ``journal.record()``'s public
+    signature and ``open_item()``'s own parameters stay untouched; spec
+    Boundaries).
+
+    One conditional ``UPDATE ... WHERE dedupe_key = ? AND resolved_cursor IS
+    NULL RETURNING id`` -- the SAME race-safety shape
+    :func:`_resolve_open_item` already uses. ``dedupe_key`` is recomputed
+    here from ``(kind, target_kind, target_id)`` via :func:`_dedupe_key`, the
+    identical formula ``record()``'s own NEEDS_YOU wiring used to open the
+    row a moment earlier in this same transaction -- so the caller must pass
+    the SAME ``kind``/``target_kind``/``target_id`` it used to trigger that
+    opening event.
+
+    Returns the bound item's id, or ``None`` if nothing is open for this
+    ``dedupe_key`` (a caller bug -- the triggering event's own
+    ``journal.record()`` call must have opened it moments earlier in this
+    same transaction).
+    """
+    # Review finding: `journal.record()`'s own NEEDS_YOU wiring (recorder.py)
+    # computes the OPENING dedupe_key from the REDACTED target_id, not the
+    # raw one -- redact here too, or a target_id that ever matched a
+    # secret-shaped pattern would make the two keys diverge and this bind
+    # would silently fail to match the row `open_item()` just inserted.
+    redacted_target_id, _ = redact_secret_shapes(target_id)
+    dedupe_key = _dedupe_key(kind.value, target_kind, redacted_target_id)
+    # 1. ENTRY
+    log.journal.debug(
+        "[journal] needs_you.bind_waiter: entry",
+        extra={"_fields": {"dedupe_key": dedupe_key, "waiter_kind": waiter_kind}},
+    )
+    # 2. DECISION / 3. STEP -- one conditional UPDATE; `RETURNING id` answers
+    # "did this call actually bind something" from the statement's own
+    # result, same reasoning as `open_item`/`_resolve_open_item` above.
+    cursor = await conn.execute(
+        "UPDATE needs_you SET waiter_kind = ?, waiter_id = ?, expires_at = ? "
+        "WHERE dedupe_key = ? AND resolved_cursor IS NULL "
+        "RETURNING id",
+        (waiter_kind, waiter_id, expires_at, dedupe_key),
+    )
+    row = await cursor.fetchone()
+    item_id = row["id"] if row is not None else None
+    # 4. EXIT
+    log.journal.info(
+        "[journal] needs_you.bind_waiter: exit",
+        extra={"_fields": {"dedupe_key": dedupe_key, "bound": item_id is not None}},
     )
     return item_id
 
@@ -585,23 +668,36 @@ async def resolve(
 
 
 async def _expire_item(
-    conn: aiosqlite.Connection, *, item_id: str, now: datetime | None = None,
+    conn: aiosqlite.Connection,
+    *,
+    item_id: str,
+    now: datetime | None = None,
+    resolved_by: str = _EXPIRY_RESOLVED_BY,
 ) -> NeedsYouResolution:
     """Resolve one item as expired, through the SAME claim-then-fix-up shape
     :func:`resolve`'s own winning branch uses (Design Notes) -- shared by
-    that branch and :func:`sweep_expired_items`. No version/digest check:
-    expiry overrides whatever version the item was last shown at, and never
-    sets ``answer`` (Design Notes: "expiry never sets ``answer``... this lets
-    the 'already resolved' branch tell the two apart from one SELECT, with no
-    new column").
+    that branch, :func:`sweep_expired_items`, :func:`expire_stranded_turn_waiters`
+    and :func:`settle_or_abandon`. No version/digest check: expiry overrides
+    whatever version the item was last shown at, and never sets ``answer``
+    (Design Notes: "expiry never sets ``answer``... this lets the 'already
+    resolved' branch tell the two apart from one SELECT, with no new
+    column").
+
+    ``resolved_by`` defaults to the periodic sweep's own label
+    (:data:`_EXPIRY_RESOLVED_BY`) -- Story 3.3's other two callers pass their
+    own distinct label so a reader of a settled row can tell a
+    time-based expiry apart from a boot-detected stranded waiter or a local
+    abandonment (timeout/cancel/prompter error), even though all three settle
+    through this identical shape.
     """
     # 1. ENTRY
     log.journal.debug(
         "[journal] needs_you._expire_item: entry",
-        extra={"_fields": {"item_id": item_id}},
+        extra={"_fields": {"item_id": item_id, "resolved_by": resolved_by}},
     )
     _require_tz_aware_or_none(now, caller="_expire_item")
     now_iso = (now if now is not None else datetime.now(UTC)).isoformat()
+    resolved_by = resolved_by[:_MAX_LABEL_LEN]
 
     # 2/3. DECISION+STEP -- one conditional UPDATE, `RETURNING *` since
     # (unlike resolve()'s own winning branch) there is no prior SELECT to
@@ -610,7 +706,7 @@ async def _expire_item(
         "UPDATE needs_you SET resolved_cursor = ?, resolved_by = ? "
         "WHERE id = ? AND resolved_cursor IS NULL "
         "RETURNING *",
-        (_CLAIM_SENTINEL, _EXPIRY_RESOLVED_BY, item_id),
+        (_CLAIM_SENTINEL, resolved_by, item_id),
     )
     claimed = await claim_cursor.fetchone()
     if claimed is None:
@@ -634,14 +730,14 @@ async def _expire_item(
         JournalEvent(
             type="needs_you.resolved", schema_version=1,
             occurred_at=now_iso,
-            actor_kind=ActorKind.AUTONOMOUS, actor_id="needs_you_expiry_sweep",
+            actor_kind=ActorKind.AUTONOMOUS, actor_id=resolved_by,
             target_kind=ActorKind.OWNER, target_id=item_id,
             outcome=Outcome.EXPIRED,
             record_ref=RecordRef(
                 kind="sqlite", locator={"table": "needs_you", "id": item_id},
             ),
             attrs=NeedsYouResolvedAttrs(
-                item_id=item_id, kind=kind, resolved_by=_EXPIRY_RESOLVED_BY,
+                item_id=item_id, kind=kind, resolved_by=resolved_by,
             ),
         ),
     )
@@ -720,6 +816,140 @@ async def sweep_expired_items(db_pool: DbPool, *, now: datetime | None = None) -
         }},
     )
     return expired_ids
+
+
+#: Story 3.3 (AD-28) -- the fixed ``resolved_by`` label the BOOT sweep stamps
+#: on every stranded ``waiter_kind="turn"`` item -- distinct from
+#: :data:`_EXPIRY_RESOLVED_BY` (the PERIODIC time-based sweep's own label) so
+#: a reader of a settled row can tell "this process restarted and the waiter
+#: was provably gone" apart from an ordinary TTL expiry.
+_BOOT_STRANDED_RESOLVED_BY = "system:expire_stranded_turn_waiters"
+
+
+async def expire_stranded_turn_waiters(db_pool: DbPool) -> list[str]:
+    """At boot, resolve every still-open ``waiter_kind="turn"`` item as
+    ``expired`` UNCONDITIONALLY -- ignoring ``expires_at`` entirely (spec
+    Intent): the in-memory ``asyncio.Future``/``asyncio.Event`` that opened
+    it belonged to a process that is now provably gone, whether or not its
+    own TTL has technically elapsed yet. Called once, at boot, BEFORE the
+    gateway starts accepting turns (``startup/orchestrator.py``'s
+    ``_phase_gateway``, right after :func:`set_db_pool`) -- Epic 4's durable
+    COMMAND-task ``waiter_kind`` is the only kind that will ever
+    re-materialise instead of stranding here.
+
+    Same shape as :func:`sweep_expired_items` (Code Map: "never-raise shape
+    mirroring ``sweep_expired_items()``"): one item per own transaction, a
+    per-item or candidate-query failure is logged and never fatal -- a single
+    bad row must never be able to sink boot. Returns the ids that actually
+    expired this pass.
+    """
+    # 1. ENTRY
+    log.journal.debug("[journal] needs_you.expire_stranded_turn_waiters: entry")
+    try:
+        candidates = await db_pool.fetch_all(
+            "SELECT id FROM needs_you WHERE resolved_cursor IS NULL "
+            "AND waiter_kind = ?",
+            (WAITER_KIND_TURN,),
+        )
+    except Exception as exc:  # noqa: BLE001 -- never raise out of boot
+        log.journal.warning(
+            "[journal] needs_you.expire_stranded_turn_waiters: candidate "
+            "query failed -- treating this pass as zero candidates",
+            exc_info=exc,
+        )
+        return []
+    # 2. DECISION -- one item at a time, each its own transaction, exactly
+    # like sweep_expired_items() -- a per-item failure is logged and skipped,
+    # never fatal to the rest of boot.
+    expired_ids: list[str] = []
+    for candidate in candidates:
+        item_id = candidate["id"]
+        try:
+            # 3. STEP
+            async with db_pool.transaction() as conn:
+                result = await _expire_item(
+                    conn, item_id=item_id, resolved_by=_BOOT_STRANDED_RESOLVED_BY,
+                )
+            if result.outcome == "expired":
+                expired_ids.append(item_id)
+        except Exception as exc:  # noqa: BLE001 -- one bad row must not sink boot
+            log.journal.warning(
+                "[journal] needs_you.expire_stranded_turn_waiters: one item "
+                "failed to expire -- continuing with the rest of boot",
+                exc_info=exc, extra={"_fields": {"item_id": item_id}},
+            )
+    # 4. EXIT
+    log.journal.info(
+        "[journal] needs_you.expire_stranded_turn_waiters: exit",
+        extra={"_fields": {
+            "candidate_count": len(candidates), "expired_count": len(expired_ids),
+        }},
+    )
+    return expired_ids
+
+
+async def settle_or_abandon(
+    db_pool: DbPool | None,
+    *,
+    item_id: str | None,
+    resolved_by: str,
+    now: datetime | None = None,
+) -> NeedsYouResolution | None:
+    """Settle a bound item that stopped being waited on LOCALLY without a
+    real answer -- a prompter/gateway raising, a timeout, a cancellation, or
+    any other abandoned-wake (spec Design Notes: "abandonment ... must settle
+    the item"). Reuses :func:`_expire_item`'s own claim-then-fix-up shape
+    directly -- the settled-with-no-answer signature is identical to a
+    time-based or boot-detected expiry, only ``resolved_by`` differs, so a
+    reader of the row can tell the three apart.
+
+    NEVER RAISES -- unlike :func:`resolve`/:func:`_expire_item` (which raise
+    for a genuine caller bug), this is called from exception-handling and
+    cleanup paths at every real call site
+    (``tools.consent.ConsentPolicy.request``,
+    ``interaction.clarify_gateway.ClarifyGateway.wait_for_answer``),
+    including immediately before a re-raised ``asyncio.CancelledError`` --a
+    settle failure here must never itself raise, or it would swallow that
+    re-raise. A missing ``db_pool`` or ``item_id`` is a no-op (mirrors every
+    other ``db_pool``-unwired convention in this codebase) -- returns
+    ``None`` on either that or a genuine failure; returns the settled
+    :class:`NeedsYouResolution` on success.
+    """
+    # 1. ENTRY
+    log.journal.debug(
+        "[journal] needs_you.settle_or_abandon: entry",
+        extra={"_fields": {"item_id": item_id, "resolved_by": resolved_by}},
+    )
+    # 2. DECISION -- unwired/unbound is a safe no-op, not a caller bug here:
+    # both real call sites only HAVE an item_id when their own earlier
+    # open+bind succeeded, and only HAVE a db_pool when one was wired at all.
+    if db_pool is None or item_id is None:
+        log.journal.debug(
+            "[journal] needs_you.settle_or_abandon: exit -- no db_pool or "
+            "item_id",
+            extra={"_fields": {"item_id": item_id}},
+        )
+        return None
+    try:
+        # 3. STEP
+        async with db_pool.transaction() as conn:
+            result = await _expire_item(
+                conn, item_id=item_id, now=now, resolved_by=resolved_by,
+            )
+    except Exception as exc:  # noqa: BLE001 -- see docstring: never raise, never swallow a re-raise
+        log.journal.warning(
+            "[journal] needs_you.settle_or_abandon: failed -- the item may "
+            "remain open until its own expiry",
+            exc_info=exc,
+            extra={"_fields": {"item_id": item_id, "resolved_by": resolved_by}},
+        )
+        return None
+    # 4. EXIT
+    log.journal.info(
+        "[journal] needs_you.settle_or_abandon: exit",
+        extra={"_fields": {"item_id": item_id, "outcome": result.outcome}},
+    )
+    return result
 
 
 class NeedsYouItemView(BaseModel):

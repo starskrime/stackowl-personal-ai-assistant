@@ -25,6 +25,7 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import NeedsYouItemNotFoundError
 from stackowl.journal import ActorKind, JournalEvent, Outcome, needs_you, record
 from stackowl.journal.budget_events import BudgetWarningAttrs
+from stackowl.journal.consent_events import ConsentRequestedAttrs
 from stackowl.journal.heal_events import HealExhaustedAttrs
 from stackowl.journal.retention_holds import get_retention_hold_registry
 
@@ -692,3 +693,230 @@ class TestRetentionHold:
 class TestDedupeKey:
     def test_dedupe_key_shape(self) -> None:
         assert needs_you._dedupe_key("incident", "owner", "db") == "incident:owner:db"
+
+
+async def _open_approval_item(db: DbPool, target_id: str) -> None:
+    """Open a real `approval` item via the REGISTERED `consent.requested`
+    type (Story 3.3) -- the same generic NEEDS_YOU wiring inside record()
+    every other opening event in this file already uses."""
+    async with db.transaction() as conn:
+        await record(conn, JournalEvent(
+            type="consent.requested", schema_version=1,
+            actor_kind=ActorKind.AUTONOMOUS, actor_id="tools.consent",
+            target_kind=ActorKind.OWNER, target_id=target_id,
+            outcome=Outcome.OK,
+            attrs=ConsentRequestedAttrs(
+                tool_name="shell", channel="cli", session_key="s1", category=None,
+            ),
+        ))
+
+
+class TestBindWaiter:
+    """Story 3.3 (AD-28): bind_waiter() binds waiter_kind/waiter_id/expires_at
+    onto the item record()'s own generic wiring just opened, in the SAME
+    transaction -- a second conditional UPDATE on the identical dedupe_key,
+    mirroring _resolve_open_item's own shape."""
+
+    async def test_binds_onto_the_item_just_opened_in_the_same_transaction(
+        self, tmp_db: DbPool,
+    ) -> None:
+        target_id = "bind-waiter-target"
+        async with tmp_db.transaction() as conn:
+            await record(conn, JournalEvent(
+                type="consent.requested", schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS, actor_id="tools.consent",
+                target_kind=ActorKind.OWNER, target_id=target_id,
+                outcome=Outcome.OK,
+                attrs=ConsentRequestedAttrs(
+                    tool_name="shell", channel="cli", session_key="s1", category=None,
+                ),
+            ))
+            item_id = await needs_you.bind_waiter(
+                conn, kind=needs_you.NeedsYouKind.APPROVAL,
+                target_kind="owner", target_id=target_id,
+                waiter_kind=needs_you.WAITER_KIND_TURN, waiter_id="waiter-1",
+                expires_at="2099-01-01T00:00:00+00:00",
+            )
+
+        assert item_id is not None
+        rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE id = ?", (item_id,))
+        row = rows[0]
+        assert row["waiter_kind"] == "turn"
+        assert row["waiter_id"] == "waiter-1"
+        assert row["expires_at"] == "2099-01-01T00:00:00+00:00"
+
+    async def test_returns_none_when_nothing_is_open_for_the_dedupe_key(
+        self, tmp_db: DbPool,
+    ) -> None:
+        async with tmp_db.transaction() as conn:
+            item_id = await needs_you.bind_waiter(
+                conn, kind=needs_you.NeedsYouKind.APPROVAL,
+                target_kind="owner", target_id="never-opened",
+                waiter_kind=needs_you.WAITER_KIND_TURN, waiter_id="waiter-x",
+                expires_at="2099-01-01T00:00:00+00:00",
+            )
+        assert item_id is None
+
+    async def test_never_binds_onto_an_already_resolved_item(
+        self, tmp_db: DbPool,
+    ) -> None:
+        target_id = "bind-waiter-resolved"
+        await _open_approval_item(tmp_db, target_id)
+        dedupe_key = f"approval:owner:{target_id}"
+        async with tmp_db.transaction() as conn:
+            await needs_you._resolve_open_item(
+                conn, dedupe_key=dedupe_key, resolved_cursor=999_999,
+                resolved_by="system:test",
+            )
+
+        async with tmp_db.transaction() as conn:
+            item_id = await needs_you.bind_waiter(
+                conn, kind=needs_you.NeedsYouKind.APPROVAL,
+                target_kind="owner", target_id=target_id,
+                waiter_kind=needs_you.WAITER_KIND_TURN, waiter_id="waiter-late",
+                expires_at="2099-01-01T00:00:00+00:00",
+            )
+        assert item_id is None
+
+
+class TestExpireStrandedTurnWaiters:
+    """Story 3.3 (AD-28), AC4: the boot sweep resolves every still-open
+    ``waiter_kind="turn"`` item as ``expired`` UNCONDITIONALLY -- ignoring
+    ``expires_at`` entirely (the in-memory waiter that opened it is provably
+    gone at boot)."""
+
+    async def test_expires_every_open_turn_waiter_ignoring_expires_at(
+        self, tmp_db: DbPool,
+    ) -> None:
+        item_id = await _open_incident_item(tmp_db, "stranded-turn")
+        await tmp_db.execute(
+            "UPDATE needs_you SET waiter_kind = ?, waiter_id = ?, "
+            "expires_at = ? WHERE id = ?",
+            ("turn", "turn-1", "2099-01-01T00:00:00+00:00", item_id),
+        )
+
+        expired_ids = await needs_you.expire_stranded_turn_waiters(tmp_db)
+
+        assert expired_ids == [item_id]
+        rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE id = ?", (item_id,))
+        row = rows[0]
+        assert row["resolved_cursor"] is not None
+        assert row["resolved_by"] == "system:expire_stranded_turn_waiters"
+        assert row["answer"] is None
+
+        resolved_events = await tmp_db.fetch_all(
+            "SELECT * FROM journal_events WHERE type = 'needs_you.resolved' "
+            "AND target_id = ?", (item_id,),
+        )
+        assert len(resolved_events) == 1
+        assert resolved_events[0]["outcome"] == "expired"
+
+    async def test_leaves_items_with_no_turn_waiter_untouched(
+        self, tmp_db: DbPool,
+    ) -> None:
+        no_waiter_id = await _open_incident_item(tmp_db, "no-waiter")
+        durable_id = await _open_incident_item(tmp_db, "durable-waiter")
+        await tmp_db.execute(
+            "UPDATE needs_you SET waiter_kind = ?, waiter_id = ? WHERE id = ?",
+            ("durable", "cmd-1", durable_id),
+        )
+
+        expired_ids = await needs_you.expire_stranded_turn_waiters(tmp_db)
+
+        assert expired_ids == []
+        for item_id in (no_waiter_id, durable_id):
+            rows = await tmp_db.fetch_all(
+                "SELECT resolved_cursor FROM needs_you WHERE id = ?", (item_id,),
+            )
+            assert rows[0]["resolved_cursor"] is None
+
+    async def test_one_bad_row_does_not_sink_the_rest_of_the_pass(
+        self, tmp_db: DbPool,
+    ) -> None:
+        """Verification-gap: expire_stranded_turn_waiters's per-item failure
+        handling (one bad row among several candidates) must never sink the
+        rest of boot. A row with a corrupted `kind` value fails INSIDE
+        _expire_item's own attrs construction (NeedsYouKind(claimed["kind"])
+        raises ValueError) -- a real per-item failure, not a mock."""
+        good_id = await _open_incident_item(tmp_db, "boot-sweep-good")
+        bad_id = await _open_incident_item(tmp_db, "boot-sweep-bad")
+        await tmp_db.execute(
+            "UPDATE needs_you SET waiter_kind = 'turn' WHERE id IN (?, ?)",
+            (good_id, bad_id),
+        )
+        await tmp_db.execute(
+            "UPDATE needs_you SET kind = 'not-a-real-kind' WHERE id = ?",
+            (bad_id,),
+        )
+
+        expired_ids = await needs_you.expire_stranded_turn_waiters(tmp_db)
+
+        assert expired_ids == [good_id]
+        rows = await tmp_db.fetch_all(
+            "SELECT resolved_cursor FROM needs_you WHERE id = ?", (bad_id,),
+        )
+        assert rows[0]["resolved_cursor"] is None, (
+            "the bad row's own transaction must have rolled back -- never "
+            "left half-claimed"
+        )
+
+
+class TestSettleOrAbandon:
+    """Story 3.3, review pass 1 Groups A+B: the shared settle-on-abandon
+    primitive both real call sites' non-happy-path exits use to mark a bound
+    item settled when there is no real answer."""
+
+    async def test_settles_a_bound_item_with_no_answer(self, tmp_db: DbPool) -> None:
+        item_id = await _open_incident_item(tmp_db, "settle-abandon")
+
+        result = await needs_you.settle_or_abandon(
+            tmp_db, item_id=item_id, resolved_by="system:consent_prompt_error",
+        )
+
+        assert result is not None
+        assert result.outcome == "expired"
+        assert result.answer is None
+        rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE id = ?", (item_id,))
+        row = rows[0]
+        assert row["answer"] is None
+        assert row["resolved_by"] == "system:consent_prompt_error"
+        assert row["resolved_cursor"] is not None
+
+    async def test_is_a_no_op_with_no_db_pool(self) -> None:
+        result = await needs_you.settle_or_abandon(
+            None, item_id="whatever", resolved_by="system:test",
+        )
+        assert result is None
+
+    async def test_is_a_no_op_with_no_item_id(self, tmp_db: DbPool) -> None:
+        result = await needs_you.settle_or_abandon(
+            tmp_db, item_id=None, resolved_by="system:test",
+        )
+        assert result is None
+
+    async def test_never_raises_on_an_unknown_item_id(self, tmp_db: DbPool) -> None:
+        """Unlike resolve(), which raises NeedsYouItemNotFoundError for a
+        genuine caller bug, settle_or_abandon() must never raise -- called
+        from exception-handling paths at both real call sites, it must never
+        become a second failure itself."""
+        result = await needs_you.settle_or_abandon(
+            tmp_db, item_id="does-not-exist-at-all", resolved_by="system:test",
+        )
+        assert result is None
+
+    async def test_settling_an_already_resolved_item_returns_its_real_outcome(
+        self, tmp_db: DbPool,
+    ) -> None:
+        item_id = await _open_incident_item(tmp_db, "settle-already-resolved")
+        first = await _resolve_in_own_transaction(
+            tmp_db, item_id=item_id, answer="already answered", resolved_by="owner",
+        )
+        assert first.outcome == "resolved"
+
+        result = await needs_you.settle_or_abandon(
+            tmp_db, item_id=item_id, resolved_by="system:consent_prompt_error",
+        )
+
+        assert result is not None
+        assert result.outcome == "resolved"
+        assert result.answer == "already answered", "must never overwrite a real answer"

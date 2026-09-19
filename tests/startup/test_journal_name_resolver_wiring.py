@@ -192,6 +192,97 @@ def test_phase_gateway_wires_needs_you_db_pool_after_db_pool_exists() -> None:
     )
 
 
+def test_phase_gateway_expires_stranded_turn_waiters_after_needs_you_db_pool_is_wired() -> None:
+    """``expire_stranded_turn_waiters(db_pool)`` (Story 3.3, AD-28) is wired
+    into ``_phase_gateway``, unconditionally, right after
+    ``set_needs_you_db_pool(db_pool)`` -- so the boot sweep runs before the
+    gateway accepts any turn (spec AC4).
+
+    THE BUG THIS GUARDS AGAINST: if this call is silently removed, reordered
+    above ``set_needs_you_db_pool(db_pool)``, or wrapped in a conditional,
+    an item bound to a PRIOR process's in-memory turn waiter is never
+    resolved as ``expired`` at boot -- it stays open, indistinguishable from
+    a genuinely still-live wait, with nothing else catching the regression
+    (``expire_stranded_turn_waiters`` itself never raises on an unwired
+    pool). Same AST-guard rationale as the tests above.
+    """
+    fn = _phase_gateway_ast()
+
+    call = _find_call_by_name(fn, "_expire_stranded_turn_waiters")
+
+    assert len(call.args) == 1, (
+        "expire_stranded_turn_waiters must take exactly one argument"
+    )
+    arg = call.args[0]
+    assert isinstance(arg, ast.Name) and arg.id == "db_pool", (
+        f"expire_stranded_turn_waiters must be called with the local "
+        f"`db_pool`, got: {ast.dump(arg)}"
+    )
+
+    db_pool_lineno = _find_assignment_lineno(fn, "db_pool")
+    assert call.lineno > db_pool_lineno, (
+        "expire_stranded_turn_waiters(db_pool) must run AFTER `db_pool` is "
+        f"bound. call at line {call.lineno}, db_pool assigned at line "
+        f"{db_pool_lineno}."
+    )
+
+    set_needs_you_call = _find_call_by_name(fn, "set_needs_you_db_pool")
+    assert call.lineno > set_needs_you_call.lineno, (
+        "expire_stranded_turn_waiters(db_pool) must run AFTER "
+        "set_needs_you_db_pool(db_pool) -- the boot sweep needs the pool "
+        f"wired first. call at line {call.lineno}, set_needs_you_db_pool at "
+        f"line {set_needs_you_call.lineno}."
+    )
+
+    # Unconditional -- a bare, top-level `await expire_stranded_turn_waiters(...)`
+    # statement in the function body, not nested inside an `if`/`try` that
+    # could skip it silently on some branch. The call is awaited, so its
+    # enclosing statement is `Expr(value=Await(value=Call))`, not a bare
+    # `Expr(value=Call)` like the two synchronous wiring calls above.
+    is_top_level = any(
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Await)
+        and stmt.value.value is call
+        for stmt in fn.body
+    )
+    assert is_top_level, (
+        "expire_stranded_turn_waiters(db_pool) must be a plain, "
+        "unconditional, top-level `await` statement in _phase_gateway, not "
+        "nested inside an if/try/etc."
+    )
+
+
+def test_phase_gateway_constructs_clarify_gateway_with_db_pool() -> None:
+    """Story 3.3 (AD-28) -- the one real ``ClarifyGateway(...)`` construction
+    inside ``_phase_gateway`` passes ``db_pool=db_pool``, so a real blocking
+    clarify can open+resolve a durable ``question`` needs_you item.
+
+    THE BUG THIS GUARDS AGAINST: a silently dropped ``db_pool=`` keyword
+    here would make ``ClarifyGateway.db_pool`` default to ``None`` forever in
+    production -- every blocking clarify would then silently skip the
+    needs_you wiring entirely (the exact same "ships correct, wired to
+    nothing" failure mode the sibling AST guards above exist to catch), with
+    nothing else in the suite catching it, since ``ClarifyGateway`` itself
+    never raises on an unwired pool.
+    """
+    fn = _phase_gateway_ast()
+
+    call = _find_call_by_name(fn, "ClarifyGateway")
+
+    kwarg = next((kw for kw in call.keywords if kw.arg == "db_pool"), None)
+    assert kwarg is not None, "ClarifyGateway must be constructed with a db_pool= keyword argument"
+    assert isinstance(kwarg.value, ast.Name) and kwarg.value.id == "db_pool", (
+        f"ClarifyGateway's db_pool= must be the local `db_pool`, got: "
+        f"{ast.dump(kwarg.value)}"
+    )
+
+    db_pool_lineno = _find_assignment_lineno(fn, "db_pool")
+    assert call.lineno > db_pool_lineno, (
+        "ClarifyGateway(db_pool=db_pool) must run AFTER `db_pool` is bound. "
+        f"call at line {call.lineno}, db_pool assigned at line {db_pool_lineno}."
+    )
+
+
 def test_phase_gateway_calls_supervise_core_with_db_pool() -> None:
     """Story 3.1 (AD-28), review-pass amendment -- the one real
     ``_supervise_core(...)`` call site inside ``_phase_gateway`` passes
