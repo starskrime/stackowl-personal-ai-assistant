@@ -386,7 +386,17 @@ class ClarifyGateway:
             )
         else:
             try:
-                await adapter.send_clarify(session_key, question, choices, clarify_id)
+                # Story 3.6 -- thread the durable `question` needs_you item id
+                # (when one was opened, blocking mode only) so the split-mode
+                # gateway-side delivery (`GatewayLink._deliver_clarify`) can
+                # register its own sent message against it. Mono-mode/rich-
+                # button adapters accept and ignore it (Boundaries: no real
+                # Telegram BUTTON delivery for clarify in split mode; question
+                # delivery itself is unchanged by this story).
+                await adapter.send_clarify(
+                    session_key, question, choices, clarify_id,
+                    needs_you_item_id=needs_you_item_id,
+                )
             except Exception as exc:  # self-healing — delivery must not crash the turn
                 log.gateway.error(
                     "clarify_gateway.ask: delivery failed — entry kept",
@@ -549,12 +559,23 @@ class ClarifyGateway:
         answer: str | None = entry.answer
         if self.db_pool is not None and entry.needs_you_item_id is not None:
             from stackowl.journal import needs_you
+            from stackowl.journal.enums import NeedsYouKind
 
             try:
                 async with self.db_pool.transaction() as conn:
                     resolution = await needs_you.resolve(
                         conn, item_id=entry.needs_you_item_id, answer=entry.answer,
                         resolved_by=f"owner:{entry.channel}",
+                        # Story 3.6 -- makes the version/digest CHECK real,
+                        # same reasoning/shape as `ConsentPolicy.request()`'s
+                        # own call: version is always 1 at open
+                        # (`open_item`'s own INSERT) and `record_ref_json` is
+                        # always `None` for `interaction.clarify_raised`, a
+                        # `table=None` event type (mirrors `consent.requested`).
+                        expected_version=1,
+                        expected_digest=needs_you.compute_item_digest(
+                            NeedsYouKind.QUESTION, None, 1,
+                        ),
                     )
             except Exception as exc:  # self-healing — the turn must never block on a journaling failure
                 log.gateway.error(

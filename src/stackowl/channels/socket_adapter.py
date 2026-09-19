@@ -226,12 +226,18 @@ class SocketChannelAdapter(ChannelAdapter):
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,
+        needs_you_item_id: str | None = None,
     ) -> None:
         """Emit a ClarifyAskFrame so the gateway renders it on the real channel.
 
         Carries the originating channel + choices so the gateway can render
         tap-buttons (the answer round-trips as a ClarifyReplyFrame). The core's
         ClarifyGateway has the parked turn keyed by clarify_id.
+
+        Story 3.6 — also carries the durable `question` needs_you item id
+        (when one was opened, blocking mode only) so the gateway-side
+        delivery (`GatewayLink._deliver_clarify`) can register its own sent
+        message against it.
         """
         await self._conn.send(
             ClarifyAskFrame(
@@ -241,6 +247,7 @@ class SocketChannelAdapter(ChannelAdapter):
                 trace_id="",
                 channel=self._channel,
                 choices=tuple(choices),
+                needs_you_item_id=needs_you_item_id,
             )
         )
 

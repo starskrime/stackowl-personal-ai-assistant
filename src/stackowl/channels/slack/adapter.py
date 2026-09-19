@@ -495,6 +495,7 @@ class SlackChannelAdapter(ChannelAdapter):
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,
+        needs_you_item_id: str | None = None,  # noqa: ARG002 — Story 3.6: split-mode-only wiring; this mono-mode button delivery is unaffected (Boundaries)
     ) -> None:
         """Deliver a clarify question as tap-buttons (one Block Kit button/choice).
 

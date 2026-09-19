@@ -54,9 +54,9 @@ from stackowl.ipc.frames import (
 from stackowl.ipc.stream_bridge import StreamDemux
 from stackowl.journal import fanout as journal_fanout
 from stackowl.journal import write_gate
-from stackowl.journal.enums import ActorKind, Outcome
+from stackowl.journal.enums import ActorKind, NeedsYouKind, Outcome
 from stackowl.journal.models import JournalEvent, RecordRef
-from stackowl.journal.narrator import narrate
+from stackowl.journal.narrator import NarrationResult, narrate
 from stackowl.journal.registry import get_registry
 from stackowl.runtime import link_auth, link_health
 from stackowl.runtime.hello import evaluate_hello
@@ -80,7 +80,7 @@ class _Adapter(Protocol):
 
     async def send_text(  # noqa: D102
         self, text: str, *, chat_id: str | int | None = ...
-    ) -> None: ...
+    ) -> object: ...
 
     async def send_file(  # noqa: D102
         self, file_path: str, caption: str | None = ..., *, chat_id: str | int | None = ...
@@ -101,6 +101,15 @@ class _ConsentRouter(Protocol):
     """The gateway's RoutingPrompter slice used to resolve a consent request."""
 
     async def prompt(self, req: ConsentRequest) -> ConsentScope: ...  # noqa: D102
+
+
+class _NeedsYouNotifier(Protocol):
+    """The gateway's TelegramIncidentAlertNotifier slice — pushes a newly
+    -opened `incident`/`alert` item that has no live waiter (Story 3.6)."""
+
+    async def deliver_opened(  # noqa: D102
+        self, item_id: str, kind: NeedsYouKind, chat_id: int, text: str,
+    ) -> None: ...
 
 
 # F-38 — user-facing notice when a buffered turn can no longer be resumed after a
@@ -158,6 +167,7 @@ class GatewayLink:
         *,
         link_secret: str,
         journal_fetcher: RowFetcher | None = None,
+        needs_you_notifier: _NeedsYouNotifier | None = None,
     ) -> None:
         # Spec 2.4 — this gateway boot's per-boot secret (runtime.link_auth),
         # verified against every connected core's real Hello in `_route`
@@ -175,6 +185,12 @@ class GatewayLink:
         self._recovery = recovery
         self._demux = demux if demux is not None else StreamDemux()
         self._event_bus = event_bus
+        # Story 3.6 — the gateway's TelegramIncidentAlertNotifier, pushed to on
+        # `needs_you.opened` for `incident`/`alert` items (the two kinds with
+        # no live waiter of their own). `None` in tests / CLI-only configs /
+        # a gateway with no Telegram adapter configured — the delivery
+        # branch below is then a no-op, never a crash.
+        self._needs_you_notifier = needs_you_notifier
         # The gateway's RoutingPrompter (holds the real per-channel consent UI).
         # None in tests / CLI-only configs.
         self._consent_router = consent_router
@@ -254,6 +270,15 @@ class GatewayLink:
             "[ipc] gateway link: channel adapter registered",
             extra={"_fields": {"channel": channel_name}},
         )
+
+    def set_needs_you_notifier(self, notifier: _NeedsYouNotifier) -> None:
+        """Wire the TelegramIncidentAlertNotifier once the Telegram adapter is
+        up (Story 3.6) — mirrors ``register_adapter``'s own post-construction
+        wiring seam: ``GatewayLink`` is constructed before the per-channel
+        blocks that build the real Telegram adapter run (``_phase_gateway``).
+        """
+        self._needs_you_notifier = notifier
+        log.gateway.info("[ipc] gateway link: needs_you incident/alert notifier wired")
 
     # --- connection lifecycle (driven by the gateway accept handler) -------
 
@@ -840,6 +865,15 @@ class GatewayLink:
             self._last_delivered_cursor = cursor
             return
         self._last_delivered_cursor = cursor
+        # Story 3.6 — the two needs_you-specific Telegram delivery hooks,
+        # riding this SAME journal fan-out path (every committed row, live
+        # push or reconnect catch-up alike) so they see every resolution
+        # regardless of which process/surface produced it. Best-effort: never
+        # allowed to raise into the fan-out loop below.
+        if event_type == "needs_you.opened":
+            await self._deliver_needs_you_opened(event, narration)
+        elif event_type == "needs_you.resolved":
+            await self._edit_needs_you_resolved(event, narration)
         if self._event_bus is not None:
             # `cursor` is a global, ever-growing counter — never a per-turn
             # step count — so it must not be emitted as `step_index`/
@@ -863,6 +897,103 @@ class GatewayLink:
             extra={"_fields": {"cursor": cursor, "event_id": event_id}},
         )
 
+    async def _deliver_needs_you_opened(
+        self, event: JournalEvent, narration: NarrationResult,
+    ) -> None:
+        """Push a newly-opened `incident`/`alert` item to Telegram (Story 3.6).
+
+        `approval`/`question` items are excluded here — they are already
+        delivered by their own live prompters (a turn is BLOCKED waiting for
+        them), and delivering them again here would double-send. Best-effort:
+        a missing notifier/adapter, an unresolved owner chat, or a send
+        failure is logged and swallowed — the item stays open until its own
+        expiry (I/O matrix), this is only its notification.
+        """
+        from stackowl.journal.needs_you import NeedsYouOpenedAttrs
+
+        attrs = cast(NeedsYouOpenedAttrs, event.attrs)
+        if attrs.kind not in (NeedsYouKind.INCIDENT, NeedsYouKind.ALERT):
+            return
+        if self._needs_you_notifier is None:
+            log.gateway.debug(
+                "[ipc] gateway link: needs_you.opened for incident/alert — no "
+                "notifier wired, skipped",
+                extra={"_fields": {"item_id": attrs.item_id, "kind": attrs.kind.value}},
+            )
+            return
+        try:
+            from stackowl.config.settings import cached_settings
+            from stackowl.notifications.recipient import resolve_owner_addresses
+
+            addresses = resolve_owner_addresses(cached_settings(), ["telegram"])
+            raw_chat_id = addresses.get("telegram")
+            if raw_chat_id is None:
+                log.gateway.warning(
+                    "[ipc] gateway link: needs_you.opened for incident/alert — "
+                    "no owner Telegram chat resolved, skipped",
+                    extra={"_fields": {"item_id": attrs.item_id, "kind": attrs.kind.value}},
+                )
+                return
+            await self._needs_you_notifier.deliver_opened(
+                attrs.item_id, attrs.kind, int(raw_chat_id), narration.full,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, must never block fan-out
+            log.gateway.error(
+                "[ipc] gateway link: needs_you.opened incident/alert push failed",
+                exc_info=exc,
+                extra={"_fields": {"item_id": attrs.item_id, "kind": attrs.kind.value}},
+            )
+
+    async def _edit_needs_you_resolved(
+        self, event: JournalEvent, narration: NarrationResult,
+    ) -> None:
+        """Cross-surface edit-on-resolve (Story 3.6): whatever Telegram message
+        the registry has for this item id (registered by ANY surface — an
+        approval's own live prompter, the split-mode clarify text delivery,
+        or the incident/alert pusher above) is edited to show the outcome and
+        loses its keyboard, regardless of which surface resolved the item.
+
+        A resolving TAP already edited its own message locally and popped the
+        registry first (`TelegramConsentPrompter.handle_callback`), so this
+        finds nothing registered for that item and is a no-op — it only fires
+        for a resolution this process did NOT already show locally (a local
+        timeout, the periodic expiry sweep, a future non-Telegram surface).
+
+        Best-effort — matches `_edit_to_decision`'s own fail-open convention:
+        a missing adapter or an edit failure is logged and swallowed.
+        """
+        from stackowl.channels.telegram.needs_you_registry import (
+            get_registry as get_needs_you_registry,
+        )
+        from stackowl.journal.needs_you import NeedsYouResolvedAttrs
+
+        attrs = cast(NeedsYouResolvedAttrs, event.attrs)
+        found = get_needs_you_registry().forget(attrs.item_id)
+        if found is None:
+            return
+        chat_id, message_id = found
+        adapter = self._adapters.get("telegram")
+        edit = getattr(adapter, "edit_message", None)
+        if edit is None:
+            log.gateway.debug(
+                "[ipc] gateway link: needs_you.resolved — no Telegram adapter "
+                "with edit_message, skipped",
+                extra={"_fields": {"item_id": attrs.item_id}},
+            )
+            return
+        symbol = "✅" if event.outcome is Outcome.OK else "⏳"
+        text = f"{symbol} {narration.full}"
+        try:
+            await edit(chat_id, message_id, text, reply_markup=None)
+        except Exception as exc:  # noqa: BLE001 — fail-open, matches _edit_to_decision
+            log.gateway.error(
+                "[ipc] gateway link: needs_you.resolved cross-surface edit failed",
+                exc_info=exc,
+                extra={"_fields": {
+                    "item_id": attrs.item_id, "chat_id": chat_id, "message_id": message_id,
+                }},
+            )
+
     async def _deliver_clarify(self, frame: ClarifyAskFrame) -> None:
         # Route by the originating channel (falls back to the only adapter for the
         # CLI-only case). Render the question + any choices as a numbered list;
@@ -877,7 +1008,27 @@ class GatewayLink:
             lines = [f"{i + 1}. {c}" for i, c in enumerate(frame.choices)]
             text = frame.question + "\n" + "\n".join(lines)
         with contextlib.suppress(Exception):
-            await adapter.send_text(text)
+            sent = await adapter.send_text(text)
+            # Story 3.6 -- register the sent message against the durable
+            # `question` needs_you item (when one was opened, blocking mode
+            # only), so the generic cross-surface `needs_you.resolved` hook
+            # (`_deliver_journal_row`, below) can find and edit it later.
+            # Defensive getattr throughout: `_Adapter`'s own protocol
+            # declares `send_text` -> None, but the real adapters return the
+            # sent Message; a missing/absent identity simply skips
+            # registration (the split-mode text delivery itself is
+            # unaffected either way).
+            if frame.needs_you_item_id is not None:
+                message_id = getattr(sent, "message_id", None)
+                chat_id = getattr(sent, "chat_id", None)
+                if message_id is not None and chat_id is not None:
+                    from stackowl.channels.telegram.needs_you_registry import (
+                        get_registry as get_needs_you_registry,
+                    )
+
+                    get_needs_you_registry().remember(
+                        frame.needs_you_item_id, chat_id=chat_id, message_id=message_id,
+                    )
 
     async def _handle_consent(self, frame: ConsentRequestFrame) -> None:
         """Rebuild the request from the wire and route it to the real prompter.
@@ -919,6 +1070,7 @@ class GatewayLink:
                         channel=frame.channel,
                         session_key=frame.session_key,
                         reply_target=frame.reply_target,
+                        item_id=frame.item_id,
                         category=frame.category,
                         summary=frame.summary,
                         allow_relaxation=frame.allow_relaxation,

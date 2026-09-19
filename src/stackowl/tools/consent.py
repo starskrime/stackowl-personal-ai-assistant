@@ -416,6 +416,15 @@ class ConsentRequest:
     # rollback-able). Informational for the prompter; the policy uses it to
     # auto-allow-with-undo. Defaults False (when in doubt, ask).
     reversible: bool = False
+    #: Story 3.6 -- the already-open durable `approval` needs_you item id
+    #: (Story 3.3/AD-28) THIS request is bound to, when one was opened
+    #: (``db_pool`` wired). Lets a channel-side prompter (Telegram) register
+    #: its own sent message against the item id itself, not only the
+    #: per-request opaque token it already mints -- so a later cross-surface
+    #: ``needs_you.resolved`` (a local timeout, the periodic expiry sweep, a
+    #: future non-Telegram surface) can find and edit that exact message.
+    #: ``None`` when no item was opened -- never a reason to deny.
+    item_id: str | None = None
 
 
 @runtime_checkable
@@ -928,6 +937,44 @@ class ConsentPolicy:
                 return await self._finalize(True, tool_name, channel, session_key, category, "session_batch", None)
 
         # 3. STEP — must ask the user (fail closed if the prompter errors).
+        # Story 3.3 (AD-28) -- open a durable `approval` needs_you item and
+        # bind THIS coroutine's own in-memory wait as its `waiter_kind="turn"`
+        # waiter, the MOMENT the request starts waiting -- i.e. right here,
+        # before the prompter is ever awaited (spec Intent). A no-op when
+        # `self.db_pool` is unwired (byte-identical to today, mirrors
+        # `record_consent_decision`'s own convention) -- `item_id` stays
+        # `None` either way, or is only ever set once a real item is bound
+        # and ready to `resolve()` against.
+        #
+        # Story 3.6 -- moved AHEAD of building `req` (was after) so `item_id`
+        # can be threaded onto the request itself: the gateway-side prompter
+        # needs it to register its own sent message against the item, not
+        # only the per-tap opaque token it already mints. `expected_version`/
+        # `expected_digest` are computed HERE too, once, right after a real
+        # item opens (version is always 1 at open -- `open_item`'s own INSERT
+        # -- and `record_ref_json` is always `None` for `consent.requested`,
+        # a `table=None` event type) -- reused unchanged by the
+        # `needs_you.resolve()` call below.
+        item_id: str | None = None
+        expected_version: int | None = None
+        expected_digest: str | None = None
+        if self.db_pool is not None:
+            from stackowl.journal import consent_events, needs_you
+            from stackowl.journal.enums import NeedsYouKind
+
+            expires_at = (
+                self.clock.now() + timedelta(seconds=HUMAN_DECISION_TIMEOUT_SECONDS)
+            ).isoformat()
+            item_id = await consent_events.record_consent_requested(
+                self.db_pool, tool_name=tool_name, channel=channel,
+                session_key=session_key, category=category, expires_at=expires_at,
+            )
+            if item_id is not None:
+                expected_version = 1
+                expected_digest = needs_you.compute_item_digest(
+                    NeedsYouKind.APPROVAL, None, expected_version,
+                )
+
         req = ConsentRequest(
             tool_name=tool_name,
             channel=channel,
@@ -937,26 +984,8 @@ class ConsentPolicy:
             summary=summary,
             allow_relaxation=not excluded,
             reversible=reversible,
+            item_id=item_id,
         )
-        # Story 3.3 (AD-28) -- open a durable `approval` needs_you item and
-        # bind THIS coroutine's own in-memory wait as its `waiter_kind="turn"`
-        # waiter, the MOMENT the request starts waiting -- i.e. right here,
-        # before the prompter is ever awaited (spec Intent). A no-op when
-        # `self.db_pool` is unwired (byte-identical to today, mirrors
-        # `record_consent_decision`'s own convention) -- `item_id` stays
-        # `None` either way, or is only ever set once a real item is bound
-        # and ready to `resolve()` against.
-        item_id: str | None = None
-        if self.db_pool is not None:
-            from stackowl.journal import consent_events
-
-            expires_at = (
-                self.clock.now() + timedelta(seconds=HUMAN_DECISION_TIMEOUT_SECONDS)
-            ).isoformat()
-            item_id = await consent_events.record_consent_requested(
-                self.db_pool, tool_name=tool_name, channel=channel,
-                session_key=session_key, category=category, expires_at=expires_at,
-            )
 
         # Story 3.4 -- an EXPLICIT, trigger-set principal bypasses
         # `self.prompter` (usually `RoutingPrompter`, channel-keyed) entirely
@@ -1020,6 +1049,14 @@ class ConsentPolicy:
                         # misattribution incident) -- this label must not
                         # claim a real owner action happened either.
                         resolved_by=f"consent_decision:{channel}",
+                        # Story 3.6 -- makes the version/digest CHECK real
+                        # (built Story 3.2, never called with it until now):
+                        # a tap whose shown request no longer matches the
+                        # item's current (kind, record_ref, version) is
+                        # refused by resolve()'s own conditional check, never
+                        # an application-level guess.
+                        expected_version=expected_version,
+                        expected_digest=expected_digest,
                     )
             except Exception as exc:  # noqa: BLE001 — the decision must never block on a journaling failure
                 log.tool.error(

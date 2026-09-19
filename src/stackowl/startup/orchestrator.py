@@ -4031,6 +4031,22 @@ class StartupOrchestrator:
                 tg_consent_prompter = TelegramConsentPrompter(telegram_adapter)
                 consent_routing.register("telegram", tg_consent_prompter)
 
+                # Story 3.6 — wire the incident/alert pusher the SAME way, and
+                # only onto a real ``GatewayLink`` (split-mode gateway role;
+                # in mono/core there is no split fan-out to push through, and
+                # `_deliver_journal_row`'s own needs_you.opened branch never
+                # runs there). ``gateway_link`` is ``None`` for every other
+                # role (declared at this function's top, mirrors the
+                # `register_adapter` precedent below).
+                if self._role == "gateway" and gateway_link is not None:
+                    from stackowl.channels.telegram.needs_you_notifier import (
+                        TelegramIncidentAlertNotifier,
+                    )
+
+                    gateway_link.set_needs_you_notifier(
+                        TelegramIncidentAlertNotifier(telegram_adapter)
+                    )
+
                 # Voice transcription (opt-in, transcription.enabled): build the
                 # local-first STT selector + voice handler BEFORE start() so the
                 # filters.VOICE handler is registered inside start() (same reason

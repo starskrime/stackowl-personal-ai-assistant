@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from stackowl.channels.chat_id import chat_id_from_session
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
+from stackowl.channels.telegram.needs_you_registry import get_registry
 from stackowl.infra.observability import log
 from stackowl.tools.consent import (
     HUMAN_DECISION_TIMEOUT_SECONDS,
@@ -79,6 +80,13 @@ class _Pending:
     chat_id: int
     message_id: int | None
     summary: str
+    #: Story 3.6 -- the durable `approval` needs_you item id THIS request is
+    #: bound to (`req.item_id`), when one was opened. Lets `handle_callback`
+    #: pop the shared cross-surface registry (`needs_you_registry`) for the
+    #: SAME item id `prompt()` registered into, before its own local edit --
+    #: so the later generic `needs_you.resolved` hook never re-edits this
+    #: message with worse (generic) text. `None` when no item was opened.
+    item_id: str | None = None
 
 
 class _SupportsInlineKeyboard(Protocol):
@@ -182,7 +190,8 @@ class TelegramConsentPrompter:
         # "{symbol} {summary}" without re-deriving it. message_id is filled in
         # once the send returns the Message.
         self._pending[rid] = _Pending(
-            future=future, chat_id=chat_id, message_id=None, summary=req.summary
+            future=future, chat_id=chat_id, message_id=None, summary=req.summary,
+            item_id=req.item_id,
         )
 
         keyboard = self._build_keyboard(rid, req)
@@ -200,7 +209,16 @@ class TelegramConsentPrompter:
             # Capture the message identity so the tap handler can edit it later.
             # Defensive getattr: a no-target/best-effort send may return None, and
             # a missing id simply skips the cosmetic edit (decision still works).
-            self._pending[rid].message_id = getattr(message, "message_id", None)
+            message_id = getattr(message, "message_id", None)
+            self._pending[rid].message_id = message_id
+            # Story 3.6 -- ALSO register into the shared cross-surface registry,
+            # keyed by the durable item id (not the per-tap `rid`), so a
+            # resolution from ANY surface (a local timeout, the periodic expiry
+            # sweep) can find and edit this exact message too. Only when a real
+            # item was opened (`req.item_id` set, `db_pool` wired) and the send
+            # returned a real message identity.
+            if req.item_id is not None and message_id is not None:
+                get_registry().remember(req.item_id, chat_id=chat_id, message_id=message_id)
         except Exception as exc:
             self._pending.pop(rid, None)
             log.telegram.error(
@@ -306,6 +324,14 @@ class TelegramConsentPrompter:
             "[telegram] consent.handle_callback: resolved",
             extra={"_fields": {"rid": rid, "scope": scope.value}},
         )
+        # Story 3.6 -- pop the shared cross-surface registry for THIS item id
+        # FIRST, before our own local edit below. The tap already won locally
+        # (this IS the resolving surface) — popping here means the later,
+        # generic `needs_you.resolved` hook (any process, any surface) finds
+        # nothing registered and never re-edits this same message with its
+        # own, worse (generic) text.
+        if pending.item_id is not None:
+            get_registry().forget(pending.item_id)
         # UX: rewrite the original prompt to the chosen decision and drop the
         # keyboard so it reads as resolved and can't be re-tapped. Best-effort —
         # the decision is already recorded; a failed edit must never lose it.

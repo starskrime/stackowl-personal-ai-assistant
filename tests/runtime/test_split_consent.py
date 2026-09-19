@@ -136,6 +136,25 @@ async def test_consent_reply_target_survives_the_link_group(socket_path) -> None
     assert router.seen and router.seen[0].reply_target == -100123456789
 
 
+async def test_consent_item_id_survives_the_link(socket_path) -> None:
+    # Story 3.6 — the already-open needs_you item id crosses the gateway/core
+    # link unchanged, so the gateway-side prompter can register its own sent
+    # message against it.
+    router = _FakeRouter(ConsentScope.SESSION)
+    prompter, _link, stop = await _wire(socket_path, router)
+    try:
+        req = ConsentRequest(
+            tool_name="shell", channel="telegram", session_key="123",
+            reply_target=555, summary="run ls", item_id="item-42",
+        )
+        scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
+    finally:
+        await stop()
+
+    assert scope == ConsentScope.SESSION
+    assert router.seen and router.seen[0].item_id == "item-42"
+
+
 async def test_consent_denied_round_trip(socket_path) -> None:
     router = _FakeRouter(ConsentScope.DENY)
     prompter, _link, stop = await _wire(socket_path, router)

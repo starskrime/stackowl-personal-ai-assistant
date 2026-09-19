@@ -13,7 +13,9 @@ from stackowl.interaction.clarify_gateway import ClarifyGateway
 class _SpyAdapter:
     def __init__(self): self.sent = []
 
-    async def send_clarify(self, session_key, question, choices, clarify_id):
+    async def send_clarify(
+        self, session_key, question, choices, clarify_id, needs_you_item_id=None,
+    ):
         self.sent.append((session_key, question, clarify_id))
 
 

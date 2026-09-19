@@ -24,12 +24,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.commands.response import Action
 
-#: Spec 3.5 — bumped from 4 (Spec 2.3/2.4/2.5's own precedent: any frame-shape
-#: change bumps this). ``ConsentRequestFrame`` gains ``reply_target``. Both sides
-#: refuse to talk when their Hello's ``protocol_version`` disagrees
+#: Spec 3.6 — bumped from 5 (Spec 2.3/2.4/2.5/3.5's own precedent: any
+#: frame-shape change bumps this). ``ConsentRequestFrame`` gains ``item_id``
+#: (Story 3.6: threads the already-open needs_you item id so the gateway-side
+#: prompter can register its own sent message against it). Both sides refuse
+#: to talk when their Hello's ``protocol_version`` disagrees
 #: (``runtime.hello.evaluate_hello``); this is the ONE place that number is
 #: declared, so a future wire-shape change need only change this constant.
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 
 class _Frame(BaseModel):
@@ -237,6 +239,15 @@ class ClarifyAskFrame(_Frame):
     channel: str = ""
     choices: tuple[str, ...] = ()
     target: int | str | None = None
+    #: Story 3.6 -- the durable `question` needs_you item id bound to this
+    #: clarify's blocking-mode wait (``ClarifyGateway.ask()``), when one was
+    #: opened. Lets the gateway-side delivery (``GatewayLink._deliver_clarify``)
+    #: register its own sent message against the item, so a later cross-surface
+    #: ``needs_you.resolved`` can find and edit it. ``None`` for a turn-yield
+    #: entry, an F-71 auto-resolved entry, or when ``db_pool`` is unwired --
+    #: every one of those never opens an item (mirrors ``PendingClarify.
+    #: needs_you_item_id``'s own docstring).
+    needs_you_item_id: str | None = None
 
 
 class ClarifyReplyFrame(_Frame):
@@ -266,6 +277,16 @@ class ConsentRequestFrame(_Frame):
     #: ``None``; ``GatewayLink._handle_consent`` refuses rather than guessing a
     #: chat id from ``session_key``.
     reply_target: int | str | None = None
+    #: Story 3.6 -- the already-open durable `approval` needs_you item id
+    #: (``ConsentPolicy.request()`` opens it before ever awaiting a prompter,
+    #: Story 3.3/AD-28). Lets the gateway-side ``TelegramConsentPrompter``
+    #: register its own sent message against THIS item id (not just the
+    #: opaque, per-tap ``rid``), so a later cross-surface ``needs_you.resolved``
+    #: (a local timeout, the periodic expiry sweep, a future non-Telegram
+    #: surface) can find and edit that exact message. ``None`` when
+    #: ``db_pool`` is unwired (mirrors ``reply_target``'s own decode-to-None
+    #: convention) -- never a reason to refuse the request.
+    item_id: str | None = None
     category: str | None = None
     summary: str = ""
     allow_relaxation: bool = True

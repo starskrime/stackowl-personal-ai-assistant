@@ -640,5 +640,6 @@ class _NoOpClarifyAdapter:
         question: str,
         choices: list[str] | None,
         clarify_id: str,
+        needs_you_item_id: str | None = None,
     ) -> None:
         pass

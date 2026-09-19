@@ -63,6 +63,7 @@ class SocketConsentPrompter:
                     tool_name=req.tool_name,
                     session_key=req.session_key,
                     reply_target=req.reply_target,
+                    item_id=req.item_id,
                     category=req.category,
                     summary=req.summary,
                     allow_relaxation=req.allow_relaxation,

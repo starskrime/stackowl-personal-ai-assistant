@@ -160,6 +160,50 @@ class TestMalformedResolutionAnswerFailsClosed:
         assert allowed is False, "a malformed resolution.answer must fail closed"
 
 
+class TestVersionDigestCheckIsReal:
+    """Story 3.6 -- the version/digest CHECK ``needs_you.resolve()`` has had
+    since Story 3.2 is finally called with real values from
+    ``ConsentPolicy.request()``. A prompter that observes ``req.item_id``
+    (Story 3.6's own new field) and manually advances that item's version --
+    simulating a concurrent resolve landing between prompt-build and the
+    tap -- must cause ``resolve()`` to refuse; ``ConsentPolicy.request()``
+    must fail closed (``not_approved``), never silently grant."""
+
+    async def test_stale_version_refuses_and_fails_closed(
+        self, tmp_db: DbPool,
+    ) -> None:
+        class _StaleVersionPrompter:
+            def __init__(self) -> None:
+                self.req: ConsentRequest | None = None
+
+            async def prompt(self, req: ConsentRequest) -> ConsentScope:
+                self.req = req
+                assert req.item_id is not None, (
+                    "Story 3.6: item_id must be threaded onto the request"
+                )
+                await tmp_db.execute(
+                    "UPDATE needs_you SET version = version + 1 WHERE id = ?",
+                    (req.item_id,),
+                )
+                return ConsentScope.ONCE
+
+        prompter = _StaleVersionPrompter()
+        policy = ConsentPolicy(prompter=prompter, db_pool=tmp_db)
+
+        allowed = await policy.request(
+            tool_name="shell", channel="cli", session_key="s8",
+        )
+
+        assert allowed is False, "a stale version must refuse, never silently grant"
+        assert prompter.req is not None and prompter.req.item_id is not None
+        rows = await tmp_db.fetch_all(
+            "SELECT * FROM needs_you WHERE id = ?", (prompter.req.item_id,),
+        )
+        assert rows[0]["resolved_cursor"] is None, (
+            "a refused item stays open, re-shown at its current true version"
+        )
+
+
 class TestResolveOutcomeWinsOverRawPrompterAnswer:
     """Boundaries: resolve()'s own returned outcome -- never the raw local
     prompter answer -- is what the turn acts on. Simulated by settling the

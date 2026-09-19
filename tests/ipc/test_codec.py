@@ -54,6 +54,11 @@ ALL_FRAMES = [
         duration_ms=12,
     ),
     ClarifyAskFrame(clarify_id="c1", session_key="s1", question="which one?", trace_id="t1"),
+    # Story 3.6 — needs_you_item_id carried on a blocking clarify's frame.
+    ClarifyAskFrame(
+        clarify_id="c2", session_key="s1", question="which one?", trace_id="t1",
+        needs_you_item_id="item-abc",
+    ),
     ClarifyReplyFrame(clarify_id="c1", answer="the first"),
     ConsentRequestFrame(
         consent_id="cr-1", channel="telegram", tool_name="shell", session_key="s1",
@@ -63,6 +68,11 @@ ALL_FRAMES = [
     ConsentRequestFrame(
         consent_id="cr-2", channel="telegram", tool_name="shell", session_key="s1",
         reply_target=-100123456789,
+    ),
+    # Story 3.6 — item_id carried across the link.
+    ConsentRequestFrame(
+        consent_id="cr-3", channel="telegram", tool_name="shell", session_key="s1",
+        reply_target=72055773, item_id="item-xyz",
     ),
     ConsentResponseFrame(consent_id="cr-1", scope="session"),
     AckFrame(ref="t1", status="deferred", detail="quiescing"),
@@ -141,3 +151,15 @@ def test_consent_request_frame_without_reply_target_decodes_to_none() -> None:
     frame = decode_frame(wire)
     assert isinstance(frame, ConsentRequestFrame)
     assert frame.reply_target is None
+
+
+def test_consent_request_frame_without_item_id_decodes_to_none() -> None:
+    """Story 3.6 — an old-protocol (pre-3.6) peer's wire bytes omit
+    ``item_id`` entirely; the field default fills it in as None."""
+    wire = (
+        b'{"type":"consent_request","consent_id":"cr-4","channel":"telegram",'
+        b'"tool_name":"shell","session_key":"s1","reply_target":42}\n'
+    )
+    frame = decode_frame(wire)
+    assert isinstance(frame, ConsentRequestFrame)
+    assert frame.item_id is None

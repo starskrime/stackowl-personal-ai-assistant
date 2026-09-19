@@ -36,6 +36,7 @@ class _FakeAdapter:
 
     async def send_clarify(
         self, session_key: str, question: str, choices: tuple[str, ...], clarify_id: str,
+        needs_you_item_id: str | None = None,
     ) -> None:
         self.calls.append((session_key, question, tuple(choices), clarify_id))
 

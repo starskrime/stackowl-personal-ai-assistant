@@ -169,6 +169,7 @@ class ChannelAdapter(ABC):
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,  # noqa: ARG002 — id carried for rich (button) channels
+        needs_you_item_id: str | None = None,  # noqa: ARG002 — Story 3.6: split-mode-only wiring (see socket_adapter.py); the default text delivery is unaffected
     ) -> None:
         """Deliver a clarify question to the user (turn-yield model).
 

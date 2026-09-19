@@ -337,6 +337,47 @@ async def test_smoke_session_batch_suppresses_second_prompt(tmp_db: DbPool, tmp_
     assert prompts_after_turn2 == prompts_after_turn1, "must NOT re-prompt within the granted session"
 
 
+async def test_smoke_local_prompter_timeout_still_settles_the_needs_you_item(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """Story 3.6 — a local prompter timeout (no tap at all) is one of the
+    THREE non-tap resolution paths this story's generic cross-surface hook
+    exists for (Intent: "a local prompter timeout, the periodic expiry
+    sweep, or a future non-Telegram surface"). In THIS mono-mode env there
+    is no split-mode ``GatewayLink`` to carry the cross-surface Telegram
+    edit (that hook lives on the gateway/core link — proven directly in
+    ``tests/channels/telegram/test_needs_you_incident_alert_delivery.py``),
+    but the underlying durable item must still settle correctly through
+    ``needs_you.resolve()`` — never left open, never silently mis-attributed
+    to a real user decision (the 2026-08-19/20 misattribution incident this
+    codebase already guards against elsewhere)."""
+    tool = _DangerTool()
+    env = await _build_env(tmp_db, tmp_path / "audit.db", tool)
+    # Rebuild the prompter with a short timeout so the wait actually expires
+    # instead of hanging for the real HUMAN_DECISION_TIMEOUT_SECONDS.
+    fast_prompter = TelegramConsentPrompter(env.adapter, timeout_seconds=0.05)
+    env.callback_router.register("consent:", fast_prompter.handle_callback)
+    gate = ConsequentialActionGate(
+        ConsentPolicy(
+            prompter=fast_prompter, audit_logger=env.audit, db_pool=tmp_db,
+        )
+    )
+    env.backend._services.consent_gate = gate  # type: ignore[attr-defined]
+
+    out = await _turn(env, "run the dangerous thing", tap=None)
+
+    assert tool.executed is False, "an unanswered (timed out) request must never grant"
+    assert "DANGERDONE" not in out
+
+    rows = await tmp_db.fetch_all("SELECT * FROM needs_you WHERE kind = 'approval'")
+    assert len(rows) == 1
+    assert rows[0]["resolved_cursor"] is not None, "a timed-out item must settle, never stay open"
+    assert rows[0]["answer"] == "deny"
+    assert rows[0]["resolved_by"] == "consent_decision:telegram", (
+        "never mis-attributed as though the owner actually declined"
+    )
+
+
 async def test_smoke_excluded_tool_reprompts_despite_session(tmp_db: DbPool, tmp_path: Path) -> None:
     # A lock-category tool must always re-prompt, even after a session grant.
     tool = _DangerTool(name="ha_lock", category="lock")
