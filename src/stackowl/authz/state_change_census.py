@@ -26,8 +26,11 @@ burns this list down, rather than deleting it — deleting it here would either 
 make the closure tripwire in ``tests/authz/test_state_change_census_has_no_stale_
 entries.py`` immediately fail (the tool/command still declares the type) or (b)
 require deleting the tool/command's own declaration in lockstep, which is scope
-those future stories own, not this one. Nothing in this dict is ``"migrated"``
-yet — Story 4.2 only declares, per its own Boundaries.
+those future stories own, not this one. Story 4.2 shipped with nothing
+``"migrated"`` (it only declares, per its own Boundaries); Story 4.3 is the
+first to flip entries — its pilot pair, ``scheduling.pause_job``/
+``scheduling.resume_job`` — once ``cronjob.py``'s pause/resume actually ran
+through ``commands/spec/submit.py::submit_command``.
 
 Cross-referenced by two independent tripwires (deliberately, so a story error in
 either direction is caught):
@@ -68,11 +71,12 @@ class CommandTypeMigration:
 # single reviewable reason per class rather than N hand-typed sentences that
 # would all say the same thing.
 # ---------------------------------------------------------------------------
-_REASON_4_3 = (
-    "Story 4.3's pilot migration target — the cronjob pause/resume pair, chosen "
-    "as the first real command-dispatch path Epic 4 builds end to end. Still "
-    "'pending' here: Story 4.2 only declares, it does not migrate (see this "
-    "story's Boundaries)."
+_REASON_4_3_MIGRATED = (
+    "Story 4.3 migrated this: cronjob's pause/resume actions now call "
+    "commands/spec/submit.py::submit_command, which runs a COMMAND task "
+    "through scheduler/commands.py's registered CommandSpec + handler — "
+    "JobScheduler.pause/.resume are called only from that handler, never "
+    "directly by cronjob.py any more."
 )
 _REASON_4_7 = (
     "Story 4.7's wave — 'any slash command/tool that changes schedules' per "
@@ -100,8 +104,12 @@ _REASON_4_10 = (
 #: ``"migrated"`` yet (Story 4.2 boundary: declare, never migrate).
 COMMAND_TYPE_MIGRATIONS: dict[str, CommandTypeMigration] = {
     # ------------------------------------------------------------------ 4.3
-    "scheduling.pause_job": CommandTypeMigration("4.3", reason=_REASON_4_3),
-    "scheduling.resume_job": CommandTypeMigration("4.3", reason=_REASON_4_3),
+    "scheduling.pause_job": CommandTypeMigration(
+        "4.3", status="migrated", reason=_REASON_4_3_MIGRATED,
+    ),
+    "scheduling.resume_job": CommandTypeMigration(
+        "4.3", status="migrated", reason=_REASON_4_3_MIGRATED,
+    ),
     # ------------------------------------------------------------------ 4.7
     "scheduling.create_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
     "scheduling.edit_job": CommandTypeMigration("4.7", reason=_REASON_4_7),

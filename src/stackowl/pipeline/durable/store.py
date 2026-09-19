@@ -29,6 +29,11 @@ from stackowl.journal import (
 )
 from stackowl.journal import fanout as journal_fanout
 from stackowl.journal import record as journal_record
+from stackowl.journal.command_events import (
+    CommandCompletedAttrs,
+    CommandEnqueuedAttrs,
+    CommandFailedAttrs,
+)
 from stackowl.journal.task_events import (
     TaskClaimedAttrs,
     TaskDeadLetteredAttrs,
@@ -55,7 +60,12 @@ _SELECT_FIELDS = (
     "task_id, owner_id, goal, status, current_step, "
     "thread_id, result, owl_name, channel, creation_ceiling, task_envelope, "
     "parent_task_id, parent_owl, delegate_key, lease_owner, superseded, "
-    "created_at, updated_at, session_key"
+    "created_at, updated_at, session_key, "
+    # Migration 0151 (Story 4.3) — the COMMAND task kind. `claimable()`'s
+    # reserved-slot logic and `_row_to_task` both need these; a select list
+    # that omitted them would silently claim a command row as a goal.
+    "kind, command_type, command_payload, command_id, requester_kind, "
+    "nonce, utterance_id"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -385,27 +395,130 @@ class DurableTaskStore(OwnedRepository):
             "decomposition_depth": task.decomposition_depth,
             "worktree_path": task.worktree_path,
             "story_branch": task.story_branch,
+            # Migration 0151 (Story 4.3) — the COMMAND task kind. `kind`
+            # defaults to 'goal' on the model, so every existing caller that
+            # never sets it writes exactly what it always wrote.
+            "kind": task.kind,
+            "command_type": task.command_type,
+            "command_payload": task.command_payload,
+            "command_id": task.command_id,
+            "requester_kind": task.requester_kind,
+            "nonce": task.nonce,
+            "utterance_id": task.utterance_id,
         }
 
     async def create(self, task: DurableTask) -> None:
         """Insert a new task. ``owner_id`` is stamped from the bound owner.
 
         Raises if ``task.owner_id`` disagrees with the bound owner (the
-        OwnedRepository insert helper rejects cross-owner writes loudly).
+        OwnedRepository insert helper rejects cross-owner writes loudly), or
+        (a ``kind='command'`` row only) if ``task.command_id`` collides with
+        an already-recorded row — ``idx_tasks_command_id`` (migration 0151)
+        is what makes that raise; the caller (``commands/spec/submit.py::
+        submit_command``) catches it and re-fetches via
+        :meth:`get_by_command_id` — the SAME "insert-or-existing, re-SELECT"
+        shape :meth:`create_child_task` already uses for a delegated child.
         """
         # 1. ENTRY
         log.tasks.debug(
             "[tasks] store.create: entry",
             extra={"_fields": {
                 "task_id": task.task_id, "owner_id": self._owner_id,
-                "status": task.status,
+                "status": task.status, "kind": task.kind,
             }},
         )
-        await self._insert_owned(self._table, self._task_insert_columns(task))
+        if task.kind == "command":
+            await self._create_command_row(task)
+        else:
+            await self._insert_owned(self._table, self._task_insert_columns(task))
         # 4. EXIT
         log.tasks.info(
             "[tasks] store.create: created",
             extra={"_fields": {"task_id": task.task_id, "owner_id": self._owner_id}},
+        )
+
+    async def _create_command_row(self, task: DurableTask) -> None:
+        """The ``kind='command'`` half of :meth:`create`: the base INSERT and
+        the ``command.enqueued`` journal row commit in ONE transaction
+        (mirrors :meth:`enqueue`'s own AD-24 shape). A ``command_id``
+        collision raises straight out of the INSERT — no journal row is
+        written for a call that inserted nothing.
+        """
+        row = task.model_copy(update={"owner_id": self._owner_id})
+        insert_sql, insert_params = _insert_stmt(
+            self._table, self._task_insert_columns(row)
+        )
+        async with self._db.transaction() as conn:
+            await conn.execute(insert_sql, insert_params)
+            await journal_record(conn, JournalEvent(
+                type="command.enqueued",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id=self._owner_id,
+                target_kind=ActorKind.OWNER,
+                target_id=task.task_id,
+                outcome=Outcome.PENDING,
+                record_ref=RecordRef(
+                    kind="sqlite", locator={"table": self._table, "task_id": task.task_id},
+                ),
+                attrs=CommandEnqueuedAttrs(
+                    command_type=(task.command_type or "")[:64],
+                    requester_kind=(task.requester_kind or "")[:64],
+                ),
+            ))
+        journal_fanout.notify_committed()
+
+    async def record_command_failed(
+        self, task_id: str, *, command_type: str, failure_class: str,
+    ) -> None:
+        """Best-effort ``command.failed`` lifecycle event for a COMMAND
+        task's inline execution attempt (Story 4.3, AD-26) — called from
+        ``commands/spec/submit.py``'s failure branches, alongside the
+        ``fail_and_requeue`` call that actually requeues the row (this method
+        touches only the journal, never the row's status — the caller owns
+        that separately, same split as :meth:`_create_command_row` leaving
+        status alone).
+
+        Never raises: telemetry must not mask or replace the real failure the
+        caller is already handling.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[commands] store.record_command_failed: entry",
+            extra={"_fields": {
+                "task_id": task_id, "command_type": command_type,
+                "failure_class": failure_class,
+            }},
+        )
+        try:
+            async with self._db.transaction() as conn:
+                await journal_record(conn, JournalEvent(
+                    type="command.failed",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=self._owner_id,
+                    target_kind=ActorKind.OWNER,
+                    target_id=task_id,
+                    outcome=Outcome.FAILED,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                    ),
+                    attrs=CommandFailedAttrs(
+                        command_type=command_type[:64], failure_class=failure_class[:64],
+                    ),
+                ))
+            journal_fanout.notify_committed()
+        except Exception as exc:  # noqa: BLE001 — telemetry must never mask the real failure
+            log.tasks.error(
+                "[commands] store.record_command_failed: could not record "
+                "command.failed — the failure itself is still handled by the caller",
+                exc_info=exc, extra={"_fields": {"task_id": task_id}},
+            )
+            return
+        # 4. EXIT
+        log.tasks.info(
+            "[commands] store.record_command_failed: exit",
+            extra={"_fields": {"task_id": task_id, "failure_class": failure_class}},
         )
 
     async def get(self, task_id: str) -> DurableTask:
@@ -1289,6 +1402,22 @@ class DurableTaskStore(OwnedRepository):
                                "depends_on": list(task.depends_on)}},
         )
 
+    #: The columns `claimable()`'s explicit SELECT adds on top of
+    #: `_SELECT_FIELDS` — shared with the reserved-COMMAND-slot query below so
+    #: the two never drift into reading a different row shape.
+    _CLAIMABLE_EXTRA_COLUMNS = (
+        "destination, achievement, delivered_at, "
+        "attempt_count, max_attempts, last_error, last_failure_class, "
+        "banned_capabilities, next_attempt_at, lease_expires_at, depends_on, "
+        "trigger_kind, idempotency_key, "
+        # Migration 0126 — the loop decides what to run from THIS list, so a
+        # field missing here is a field the objective work does not have,
+        # however faithfully it was stored. `get()` goes through SELECT * and
+        # would hide the omission.
+        "position, verified, estimated_complexity, decomposition_depth, "
+        "worktree_path, story_branch"
+    )
+
     async def claimable(
         self, *, limit: int = 10, now: datetime | None = None
     ) -> builtins.list[DurableTask]:
@@ -1301,19 +1430,18 @@ class DurableTaskStore(OwnedRepository):
 
         Deliberately returns them UNORDERED beyond the query's own ordering —
         Bakir: "five pending, five loops parallel... there's no ordering."
+
+        AD-26 (Story 4.3) — RESERVES ONE SLOT for a ``kind='command'`` row: a
+        batch of pure goal work must never starve a pending command, which is
+        exactly what "at least one worker slot is reserved for COMMAND tasks"
+        means. The ordinary query above already returns command rows mixed in
+        by ``created_at`` order like anything else; this only acts when NONE
+        of that batch happened to be one, which is the one case a goal-only
+        rush could otherwise starve a pending command indefinitely.
         """
         stamp = (now or datetime.now(UTC)).isoformat()
         rows = await self._db.fetch_all(
-            f"SELECT {_SELECT_FIELDS}, destination, achievement, delivered_at, "  # noqa: S608
-            "attempt_count, max_attempts, last_error, last_failure_class, "
-            "banned_capabilities, next_attempt_at, lease_expires_at, depends_on, "
-            "trigger_kind, idempotency_key, "
-            # Migration 0126 — the loop decides what to run from THIS list, so a
-            # field missing here is a field the objective work does not have,
-            # however faithfully it was stored. `get()` goes through SELECT * and
-            # would hide the omission.
-            "position, verified, estimated_complexity, decomposition_depth, "
-            "worktree_path, story_branch "
+            f"SELECT {_SELECT_FIELDS}, {self._CLAIMABLE_EXTRA_COLUMNS} "  # noqa: S608
             f"FROM {self._table} WHERE {CLAIMABLE_WHERE} "  # noqa: S608
             "ORDER BY created_at LIMIT ?",
             (self._owner_id, stamp, self._owner_id, int(limit)),
@@ -1324,7 +1452,78 @@ class DurableTaskStore(OwnedRepository):
             if deps and not await self._deps_satisfied(r["task_id"], deps):
                 continue
             out.append(_row_to_task(r))
+        if limit > 0 and not any(t.kind == "command" for t in out):
+            reserved = await self._reserved_command_row(stamp)
+            if reserved is not None:
+                if len(out) >= limit:
+                    log.tasks.debug(
+                        "[loop] claimable: reserved COMMAND slot evicted a "
+                        "goal row from an already-full batch",
+                        extra={"_fields": {
+                            "evicted_task_id": out[-1].task_id,
+                            "command_task_id": reserved.task_id,
+                        }},
+                    )
+                    out[-1] = reserved
+                else:
+                    out.append(reserved)
         return out
+
+    #: How many candidate COMMAND rows the reserved-slot query considers
+    #: before giving up — a `depends_on`-blocked row must not be the only one
+    #: it ever looks at, or "always reserves a slot" is false the moment the
+    #: EARLIEST pending command has unmet deps and a LATER one is ready.
+    _RESERVED_COMMAND_CANDIDATES = 5
+
+    async def _reserved_command_row(self, stamp: str) -> DurableTask | None:
+        """One claimable ``kind='command'`` row, or None — the AD-26 reserved
+        slot's own query, split out so :meth:`claimable` only pays for it when
+        the ordinary batch did not already include one. Considers up to
+        :data:`_RESERVED_COMMAND_CANDIDATES` rows (oldest first) and returns
+        the first whose dependencies are satisfied, mirroring the ordinary
+        query's own per-row ``_deps_satisfied`` check above — a single
+        blocked candidate must not starve every command behind it.
+        """
+        rows = await self._db.fetch_all(
+            f"SELECT {_SELECT_FIELDS}, {self._CLAIMABLE_EXTRA_COLUMNS} "  # noqa: S608
+            f"FROM {self._table} WHERE {CLAIMABLE_WHERE} AND kind = 'command' "  # noqa: S608
+            "ORDER BY created_at LIMIT ?",
+            (self._owner_id, stamp, self._owner_id, self._RESERVED_COMMAND_CANDIDATES),
+        )
+        for r in rows:
+            deps = _split(r.get("depends_on"))
+            if deps and not await self._deps_satisfied(r["task_id"], deps):
+                continue
+            return _row_to_task(r)
+        return None
+
+    async def get_by_command_id(self, command_id: str) -> DurableTask:
+        """The row a ``command_id`` names, owner-scoped — the re-SELECT half
+        of :func:`~stackowl.commands.spec.submit.submit_command`'s
+        insert-or-existing pattern (mirrors :meth:`create_child_task`'s own
+        ``ON CONFLICT ... `` + re-``get`` shape). Raises
+        :class:`DurableTaskNotFoundError` on a miss, same contract as
+        :meth:`get`.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.get_by_command_id: entry",
+            extra={"_fields": {"command_id": command_id, "owner_id": self._owner_id}},
+        )
+        rows = await self._fetch_owned(self._table, "command_id = ?", (command_id,))
+        if not rows:
+            log.tasks.warning(
+                "[tasks] store.get_by_command_id: not found for owner",
+                extra={"_fields": {"command_id": command_id, "owner_id": self._owner_id}},
+            )
+            raise DurableTaskNotFoundError(command_id)
+        task = _row_to_task(rows[0])
+        # 4. EXIT
+        log.tasks.debug(
+            "[tasks] store.get_by_command_id: exit — hit",
+            extra={"_fields": {"command_id": command_id, "task_id": task.task_id}},
+        )
+        return task
 
     async def _deps_satisfied(self, task_id: str, deps: tuple[str, ...]) -> bool:
         """True when every dependency DELIVERED. A dead-lettered dependency
@@ -2097,11 +2296,19 @@ class DurableTaskStore(OwnedRepository):
             cursor = await conn.execute(
                 f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
                 "delivered_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
-                "WHERE task_id=? AND owner_id=?",
+                "WHERE task_id=? AND owner_id=? "
+                # Story 4.3 — RETURNING the row's kind/command_type so this ONE
+                # call site can ALSO record `command.completed` for a COMMAND
+                # row, in the SAME transaction as `task.finished`, without a
+                # second SELECT. `pipeline/durable/store.py` is the one place
+                # allowed to know both events (`commands/spec/` never imports
+                # `journal` — AD-7's import boundary).
+                "RETURNING kind, command_type",
                 (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
             )
+            returned = await cursor.fetchone()
             affected = cursor.rowcount
-            if affected:
+            if affected and returned is not None:
                 await journal_record(conn, JournalEvent(
                     type="task.finished",
                     schema_version=1,
@@ -2115,6 +2322,29 @@ class DurableTaskStore(OwnedRepository):
                     ),
                     attrs=TaskFinishedAttrs(completion_mode="delivered"),
                 ))
+                # `returned` is the RETURNING row from the UPDATE above, whose
+                # column list this method itself wrote two lines up (`kind,
+                # command_type`) — both are always present, so a direct index
+                # is correct (no `in` check needed; a sqlite3.Row/aiosqlite.Row's
+                # own `__contains__` checks its VALUES, not its column names —
+                # a real gotcha worth not reaching for here at all).
+                row_kind = returned["kind"]
+                row_command_type = returned["command_type"]
+                if row_kind == "command" and row_command_type:
+                    await journal_record(conn, JournalEvent(
+                        type="command.completed",
+                        schema_version=1,
+                        actor_kind=ActorKind.AUTONOMOUS,
+                        actor_id=self._owner_id,
+                        target_kind=ActorKind.OWNER,
+                        target_id=task_id,
+                        outcome=Outcome.OK,
+                        record_ref=RecordRef(
+                            kind="sqlite",
+                            locator={"table": self._table, "task_id": task_id},
+                        ),
+                        attrs=CommandCompletedAttrs(command_type=str(row_command_type)[:64]),
+                    ))
         # Spec 2.5 — wake the core push loop after commit (see `create()`).
         journal_fanout.notify_committed()
         if not affected:
@@ -2310,6 +2540,22 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
                       else str(row["trigger_kind"])),
         idempotency_key=(None if row.get("idempotency_key") is None
                          else str(row["idempotency_key"])),
+        # Migration 0151 (Story 4.3) — .get()-safe like every other field in
+        # this function: a legacy row (or a narrower select list) has no
+        # `kind` column value read here, and 'goal' — the model's own
+        # default — is the correct reading of that, never a KeyError.
+        kind=(str(row["kind"]) if row.get("kind") else "goal"),  # type: ignore[arg-type]
+        command_type=(None if row.get("command_type") is None
+                      else str(row["command_type"])),
+        command_payload=(None if row.get("command_payload") is None
+                         else str(row["command_payload"])),
+        command_id=(None if row.get("command_id") is None
+                    else str(row["command_id"])),
+        requester_kind=(None if row.get("requester_kind") is None
+                        else str(row["requester_kind"])),
+        nonce=(None if row.get("nonce") is None else str(row["nonce"])),
+        utterance_id=(None if row.get("utterance_id") is None
+                      else str(row["utterance_id"])),
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
         goal=str(row["goal"]),

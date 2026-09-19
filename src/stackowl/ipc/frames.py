@@ -5,7 +5,7 @@ The set mirrors the existing in-process seams so the live-path code (``backend.r
 writing chunks, the receive loops dispatching ``IngressMessage``) maps onto frames
 with no semantic change:
 
-  gateway -> core : ingress, clarify_reply
+  gateway -> core : ingress, clarify_reply, tasks_enqueued
   core -> gateway : chunk, send_text, journal_event, clarify_ask,
                     restart_notice, goodbye
   either way      : hello, ack
@@ -24,14 +24,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.commands.response import Action
 
-#: Spec 3.6 — bumped from 5 (Spec 2.3/2.4/2.5/3.5's own precedent: any
-#: frame-shape change bumps this). ``ConsentRequestFrame`` gains ``item_id``
-#: (Story 3.6: threads the already-open needs_you item id so the gateway-side
-#: prompter can register its own sent message against it). Both sides refuse
-#: to talk when their Hello's ``protocol_version`` disagrees
+#: Story 4.3 — bumped from 6 (adds ``TasksEnqueuedFrame``, a new frame shape,
+#: same precedent as every prior bump: Spec 2.3/2.4/2.5/3.5/3.6). Both sides
+#: refuse to talk when their Hello's ``protocol_version`` disagrees
 #: (``runtime.hello.evaluate_hello``); this is the ONE place that number is
 #: declared, so a future wire-shape change need only change this constant.
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 
 
 class _Frame(BaseModel):
@@ -300,6 +298,21 @@ class ConsentResponseFrame(_Frame):
     scope: str
 
 
+class TasksEnqueuedFrame(_Frame):
+    """Gateway -> core: "work is waiting, wake the loop now" (Story 4.3, AD-1).
+
+    Deliberately payload-free — the durable ``tasks`` row IS the state (its
+    ``command_id``/``command_type`` etc. already live in the database both
+    processes share), so this frame carries nothing to keep in sync with
+    that row's shape. Core's receipt calls ``TaskLoop.wake()`` (best-effort,
+    never blocks — mirrors ``pipeline/durable/turn_task.py``'s existing
+    in-process ``loop.wake()`` precedent), so a COMMAND task a gateway-role
+    surface enqueues does not wait out the tick.
+    """
+
+    type: Literal["tasks_enqueued"] = "tasks_enqueued"
+
+
 class AckFrame(_Frame):
     """Either direction: generic acknowledgement / deferred notice.
 
@@ -329,6 +342,7 @@ Frame = Annotated[
     | ClarifyReplyFrame
     | ConsentRequestFrame
     | ConsentResponseFrame
+    | TasksEnqueuedFrame
     | AckFrame,
     Field(discriminator="type"),
 ]

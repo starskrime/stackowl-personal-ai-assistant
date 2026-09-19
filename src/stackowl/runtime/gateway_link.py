@@ -50,6 +50,7 @@ from stackowl.ipc.frames import (
     SendEphemeralFrame,
     SendFileFrame,
     SendTextFrame,
+    TasksEnqueuedFrame,
 )
 from stackowl.ipc.stream_bridge import StreamDemux
 from stackowl.journal import fanout as journal_fanout
@@ -367,6 +368,33 @@ class GatewayLink:
         self._send_tasks.add(task)
         task.add_done_callback(self._make_send_cleanup(msg))
         await self._conn.send(ingress_to_frame(msg))
+
+    async def notify_tasks_enqueued(self) -> None:
+        """Tell core "work is waiting, wake the loop now" (Story 4.3, AD-1).
+
+        For a gateway-role caller of ``commands/spec/submit.py::
+        submit_command(..., run_inline=False, notify_enqueued=...)`` — a
+        process with no in-process ``TaskLoop`` to claim against. Sends the
+        payload-free ``TasksEnqueuedFrame``; core's ``_core_frame_loop`` wakes
+        its own loop on receipt. Best-effort, mirroring ``_handle_consent``'s
+        own "no connection, or the send itself fails -> log and move on"
+        shape — a lost wake costs one tick of latency, never the row (the
+        tick is still the safety net).
+        """
+        if self._conn is None:
+            log.gateway.debug(
+                "[ipc] gateway link: notify_tasks_enqueued: no connection — "
+                "the tick loop will still pick this up",
+            )
+            return
+        try:
+            await self._conn.send(TasksEnqueuedFrame())
+        except Exception as exc:  # noqa: BLE001 — best-effort, never the row's problem
+            log.gateway.warning(
+                "[ipc] gateway link: notify_tasks_enqueued: send failed — "
+                "the tick loop will still pick this up",
+                exc_info=exc,
+            )
 
     def _make_send_cleanup(
         self, msg: IngressMessage,

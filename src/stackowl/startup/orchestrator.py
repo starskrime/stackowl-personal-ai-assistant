@@ -1027,6 +1027,7 @@ class StartupOrchestrator:
             IngressFrame,
             JournalEventFrame,
             RestartNoticeFrame,
+            TasksEnqueuedFrame,
         )
         from stackowl.ipc.server import IpcServer
         from stackowl.ipc.stream_bridge import SocketStreamRegistry
@@ -2290,6 +2291,12 @@ class StartupOrchestrator:
         # Single registration point for ALL slash commands (Epic A spine).
         # Must run AFTER SchedulerAssembly.build() so morning_brief_handler
         # and scheduler are available. See Epic B batch-1.
+        # Story 4.3 — registers the two pilot CommandSpecs (scheduling.pause_job/
+        # resume_job) + their handlers as an import-time side effect (mirrors
+        # journal/task_events.py's own "importing this module registers ..."
+        # shape). Imported here, beside register_all_commands, per this story's
+        # Code Map: "do not invent a second registration hook."
+        import stackowl.scheduler.commands  # noqa: F401
         from stackowl.commands.assembly import CommandDeps, register_all_commands
         from stackowl.integrations.registry import IntegrationRegistry
         from stackowl.plugins.registry import PluginRegistry
@@ -3778,6 +3785,24 @@ class StartupOrchestrator:
                         # send_ephemeral (e.g. telegram_canary) — resolve it so
                         # the caller can delete the probe for real.
                         resolve_ephemeral_sent(frame.request_id, frame.message_id)
+                        continue
+                    if isinstance(frame, TasksEnqueuedFrame):
+                        # Story 4.3 (AD-1) — payload-free wake: a gateway-role
+                        # surface enqueued a durable task and wants the core
+                        # loop to claim it now rather than wait out the tick.
+                        # Best-effort, mirrors turn_task.py's own in-process
+                        # `loop.wake()` precedent — a failed wake costs one
+                        # tick of latency, never the row.
+                        task_loop = getattr(services, "task_loop", None)
+                        if task_loop is not None:
+                            try:
+                                task_loop.wake()
+                            except Exception as exc:
+                                log.warning(
+                                    "[startup] core: could not wake the task "
+                                    "loop on tasks_enqueued — next tick covers it",
+                                    exc_info=exc,
+                                )
                         continue
                     if isinstance(frame, ClarifyReplyFrame):
                         # A tapped clarify button on the gateway — resolve the

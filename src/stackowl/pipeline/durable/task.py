@@ -192,6 +192,33 @@ class DurableTask(BaseModel):
     #: Thirty retries must not mean thirty side effects.
     idempotency_key: str | None = None
 
+    # ---- the COMMAND task kind (migration 0151, Story 4.3) ----------------
+    #: 'goal' (this file's original, and every existing caller's) or
+    #: 'command' -- a row `commands/spec/submit.py::submit_command` enqueued.
+    #: `task_loop_runner.py` branches on this to route a claimed row to either
+    #: the retry actuator (goal) or `commands/spec/execute.py::
+    #: execute_command_task` (command) -- the loop itself stays kind-agnostic.
+    kind: Literal["goal", "command"] = "goal"
+    #: The declared `CommandSpec.command_type` this row submits (e.g.
+    #: 'scheduling.pause_job'). None for a goal task.
+    command_type: str | None = None
+    #: The ALREADY-VALIDATED payload, as JSON text -- mirrors
+    #: `creation_ceiling`/`task_envelope`'s own JSON-text convention on this
+    #: same table. None for a goal task.
+    command_payload: str | None = None
+    #: The idempotency identity a caller may re-submit under
+    #: (`idx_tasks_command_id`, migration 0151, is what makes a retry with the
+    #: same value a no-op rather than a duplicate row). None for a goal task.
+    command_id: str | None = None
+    #: Set from ingress/trace provenance (`authz.requester.
+    #: requester_kind_from_trace`), NEVER from the caller-supplied payload —
+    #: AD-1. None for a goal task.
+    requester_kind: str | None = None
+    #: Declared for voice (4.4+); stored, unused beyond that, this story.
+    nonce: str | None = None
+    #: Declared for voice (4.4+); stored, unused beyond that, this story.
+    utterance_id: str | None = None
+
     # Defaulted so a caller enqueuing a task states only what it MEANS, not the
     # bookkeeping. The store still stamps updated_at on every transition.
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

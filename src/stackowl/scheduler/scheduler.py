@@ -8,6 +8,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from stackowl.commands.spec.context import CommandContext
+from stackowl.commands.spec.idempotency import record_command_execution
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.infra import retry_ledger
@@ -20,6 +22,8 @@ from stackowl.journal.job_events import (
     JobFailedAttrs,
     JobFinishedAttrs,
     JobParkedAttrs,
+    JobPausedAttrs,
+    JobResumedAttrs,
     JobStartedAttrs,
 )
 
@@ -56,6 +60,24 @@ def _job_record_ref(job_id: str) -> RecordRef:
     Notes: AD-4's disclosed "target already gone -> expired" contract covers
     that, not a defect)."""
     return RecordRef(kind="sqlite", locator={"table": "jobs", "job_id": job_id})
+
+
+#: Story 4.3 -- ``authz.requester.RequesterKind`` -> ``journal.ActorKind``,
+#: the ONE mapping a COMMAND-driven mutator needs to attribute the domain
+#: event it alone records (``journal/enums.py::ActorKind``'s own docstring
+#: named this gap: "``CommandContext`` ... does not exist yet -- Epic 4").
+#: An unrecognized value (never produced by ``requester_kind_from_trace``
+#: today) falls back to AUTONOMOUS -- fail-safe, never a KeyError.
+_REQUESTER_KIND_TO_ACTOR_KIND: dict[str, ActorKind] = {
+    "owner": ActorKind.OWNER,
+    "owl": ActorKind.OWL,
+    "autonomous": ActorKind.AUTONOMOUS,
+    "voice-unverified": ActorKind.VOICE_WORKER,
+}
+
+
+def _actor_kind_for_requester(requester_kind: str) -> ActorKind:
+    return _REQUESTER_KIND_TO_ACTOR_KIND.get(requester_kind, ActorKind.AUTONOMOUS)
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only import (no runtime cost / cycle)
     from stackowl.notifications.proactive_job import ProactiveJobDeliverer
@@ -1530,18 +1552,68 @@ class JobScheduler(SupervisedTask):
                 extra={"_fields": {"job_id": job.job_id}},
             )
 
-    async def pause(self, job_id: str) -> None:
-        """Pause a job — sets status='failed', enabled=0. Idempotent."""
+    async def pause(
+        self, job_id: str, *, context: CommandContext | None = None,
+    ) -> None:
+        """Pause a job — sets status='failed', enabled=0. Idempotent.
+
+        ``context=None`` (every caller before Story 4.3) keeps this method's
+        EXACT prior behavior — a direct, non-transactional UPDATE + a
+        separate ``write_audit`` call. Passing a ``context`` (only
+        ``scheduler/commands.py``'s ``scheduling.pause_job`` handler does,
+        via the COMMAND task the ``cronjob`` tool now submits) instead runs
+        the AD-26 shape: the idempotency receipt, the UPDATE and the
+        ``job.paused`` journal row commit in ONE transaction, and
+        ``context.command_id`` already having a receipt makes a lease-reclaim
+        re-run a no-op — nothing is applied or recorded twice.
+        """
         log.scheduler.debug("[scheduler] pause: entry", extra={"_fields": {"job_id": job_id}})
-        await self._db.execute(
-            "UPDATE jobs SET status = 'failed', enabled = 0 WHERE job_id = ?",
-            (job_id,),
-        )
-        await write_audit(self._db, "job_paused", job_id)
+        if context is None:
+            await self._db.execute(
+                "UPDATE jobs SET status = 'failed', enabled = 0 WHERE job_id = ?",
+                (job_id,),
+            )
+            await write_audit(self._db, "job_paused", job_id)
+            log.scheduler.info("[scheduler] pause: exit", extra={"_fields": {"job_id": job_id}})
+            return
+        async with self._db.transaction() as conn:
+            newly = await record_command_execution(
+                conn, context.command_id, context.command_type,
+            )
+            if not newly:
+                log.scheduler.info(
+                    "[scheduler] pause: command already executed — no-op "
+                    "(lease-reclaim re-run)",
+                    extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+                )
+                return
+            await conn.execute(
+                "UPDATE jobs SET status = 'failed', enabled = 0 WHERE job_id = ?",
+                (job_id,),
+            )
+            # AD-26 — the mutator ALONE records the domain event, carrying
+            # CommandContext; the COMMAND task wrapper never records this.
+            await journal_record(conn, JournalEvent(
+                type="job.paused",
+                schema_version=1,
+                actor_kind=_actor_kind_for_requester(context.requester_kind),
+                actor_id=context.requester_kind,
+                target_kind=ActorKind.OWNER,
+                target_id=job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job_id),
+                attrs=JobPausedAttrs(command_id=context.command_id),
+            ))
+            await write_audit(
+                self._db, "job_paused", job_id, actor=context.requester_kind, conn=conn,
+            )
         log.scheduler.info("[scheduler] pause: exit", extra={"_fields": {"job_id": job_id}})
 
-    async def resume(self, job_id: str) -> None:
-        """Resume a job — clears failure_count/last_error and recomputes next_run_at."""
+    async def resume(
+        self, job_id: str, *, context: CommandContext | None = None,
+    ) -> None:
+        """Resume a job — clears failure_count/last_error and recomputes
+        next_run_at. See :meth:`pause` for the ``context`` contract."""
         log.scheduler.debug("[scheduler] resume: entry", extra={"_fields": {"job_id": job_id}})
         rows = await self._db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
         if not rows:
@@ -1554,12 +1626,49 @@ class JobScheduler(SupervisedTask):
             compute_next_run(job.schedule, tz=self._tz) if self._is_recurring(job)
             else job.next_run_at
         )
-        await self._db.execute(
-            "UPDATE jobs SET status = 'pending', enabled = 1, failure_count = 0, "
-            "last_error = NULL, circuit_broken_at = NULL, next_run_at = ? WHERE job_id = ?",
-            (next_run, job_id),
-        )
-        await write_audit(self._db, "job_resumed", job_id, details={"next_run_at": next_run})
+        if context is None:
+            await self._db.execute(
+                "UPDATE jobs SET status = 'pending', enabled = 1, failure_count = 0, "
+                "last_error = NULL, circuit_broken_at = NULL, next_run_at = ? WHERE job_id = ?",
+                (next_run, job_id),
+            )
+            await write_audit(self._db, "job_resumed", job_id, details={"next_run_at": next_run})
+            log.scheduler.info(
+                "[scheduler] resume: exit",
+                extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
+            )
+            return
+        async with self._db.transaction() as conn:
+            newly = await record_command_execution(
+                conn, context.command_id, context.command_type,
+            )
+            if not newly:
+                log.scheduler.info(
+                    "[scheduler] resume: command already executed — no-op "
+                    "(lease-reclaim re-run)",
+                    extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+                )
+                return
+            await conn.execute(
+                "UPDATE jobs SET status = 'pending', enabled = 1, failure_count = 0, "
+                "last_error = NULL, circuit_broken_at = NULL, next_run_at = ? WHERE job_id = ?",
+                (next_run, job_id),
+            )
+            await journal_record(conn, JournalEvent(
+                type="job.resumed",
+                schema_version=1,
+                actor_kind=_actor_kind_for_requester(context.requester_kind),
+                actor_id=context.requester_kind,
+                target_kind=ActorKind.OWNER,
+                target_id=job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job_id),
+                attrs=JobResumedAttrs(command_id=context.command_id),
+            ))
+            await write_audit(
+                self._db, "job_resumed", job_id, actor=context.requester_kind,
+                details={"next_run_at": next_run}, conn=conn,
+            )
         log.scheduler.info(
             "[scheduler] resume: exit",
             extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},

@@ -82,6 +82,22 @@ _REASON_JOURNAL_EVENTS = (
     "covers the journal', only events the journal contains."
 )
 
+#: Story 4.3 (AD-26) -- ``command_receipts`` is a plain INSERT-OR-IGNORE
+#: idempotency-receipt table (``commands/spec/idempotency.py::
+#: record_command_execution``), the same shape ``idx_tasks_idempotency_live``
+#: (migration 0124) already gives the durable task loop's own idempotency
+#: guard -- neither is a target any event's record_ref points at. The COMMAND
+#: task lifecycle it guards IS journaled (``command.enqueued``/
+#: ``command.completed``, ``journal/command_events.py``, both pointing at
+#: ``tasks``, registry-covered); this row is the guard beside it, not a
+#: second domain to cover.
+_REASON_COMMAND_RECEIPTS = (
+    "command_receipts is a plain INSERT-OR-IGNORE idempotency-receipt table "
+    "(commands/spec/idempotency.py::record_command_execution), the same "
+    "shape idx_tasks_idempotency_live already gives the durable task loop's "
+    "own guard -- not a target any event's record_ref points at."
+)
+
 #: Every currently-live table this story's nine ``*_events.py`` registrations
 #: do not cover, mapped to a stated, reviewable reason it is not a coverage
 #: gap (AD-3). Registry-covered tables (``tasks``, ``jobs``, ``heal_attempts``,
@@ -96,6 +112,7 @@ UNJOURNALED_TABLES: dict[str, str] = {
     "cache_breakpoint_probes": _REASON_PRE_EPOCH,
     "callback_log": _REASON_PRE_EPOCH,
     "channel_liveness": _REASON_PRE_EPOCH,
+    "command_receipts": _REASON_COMMAND_RECEIPTS,
     "command_sequence_edges": _REASON_PRE_EPOCH,
     "command_sequence_last": _REASON_PRE_EPOCH,
     "committed_facts": _REASON_PRE_EPOCH,

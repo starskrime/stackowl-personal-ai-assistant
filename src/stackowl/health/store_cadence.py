@@ -299,6 +299,14 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _on_demand("parliament_sessions", "started_at", "written when a session is convened"),
     _on_demand("command_sequence_edges", "updated_at", "written when a person runs commands"),
     _on_demand("command_sequence_last", "updated_at", "written when a person runs commands"),
+    # Story 4.3 — the AD-26 idempotency-receipt guard
+    # (commands/spec/idempotency.py::record_command_execution). Written once
+    # per COMMAND task a mutator actually executes; today that is only
+    # cronjob's pause/resume pilot, so silence is ordinary, not a defect.
+    _on_demand(
+        "command_receipts", "executed_at",
+        "written when a subsystem mutator executes a COMMAND task",
+    ),
     _periodic("notification_queue", "created_at", "written by the proactive delivery path"),
     _periodic("cache_breakpoint_probes", "last_confirmed_at", "written by the cache probe"),
     # Spec 2.1 (AD-2) — append-only, never UPDATEd, so `occurred_at` is set once

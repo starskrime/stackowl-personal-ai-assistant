@@ -675,12 +675,41 @@ class CronjobTool(Tool):
         # Ownership gate — foreign/missing job_id rejected identically (no oracle).
         if find_owned_job(await scheduler.list_jobs(), args.job_id, owl) is None:
             return self._err(f"no such job: {args.job_id!r}", t0)
-        if args.action == "pause":
-            await scheduler.pause(args.job_id)
-        elif args.action == "resume":
-            await scheduler.resume(args.job_id)
-        else:  # remove
-            await scheduler.stop_job(args.job_id)
+        if args.action in ("pause", "resume"):
+            # Story 4.3 (AD-1) — pause/resume run through the one door;
+            # `remove` (stop_job) is untouched, owned by Story 4.7 per the
+            # 4.2 census.
+            return await self._submit_lifecycle_command(args, t0)
+        await scheduler.stop_job(args.job_id)  # remove
+        return self._ok({args.action: True, "job_id": args.job_id}, t0)
+
+    async def _submit_lifecycle_command(self, args: CronjobArgs, t0: float) -> ToolResult:
+        """``pause``/``resume`` submit through ``commands/spec/submit.py::
+        submit_command`` and await its inline execution, never calling
+        ``JobScheduler.pause``/``.resume`` directly (AD-1) — the pilot
+        migration this story ships."""
+        from stackowl.commands.spec.submit import submit_command
+
+        assert args.job_id is not None  # caller already checked
+        command_type = f"scheduling.{args.action}_job"
+        db = get_services().db_pool
+        if db is None:
+            return self._err("scheduling unavailable (no database configured)", t0)
+        submission = await submit_command(db, command_type, {"job_id": args.job_id})
+        outcome = submission.outcome
+        if outcome is None:
+            # Lost the inline-claim race (another worker/process claimed the
+            # same freshly-created row first — rare) or replayed an
+            # already-minted command_id with no fresh outcome to report. The
+            # tick-driven TaskLoop is the fallback; this call did not OBSERVE
+            # the mutation, so it must not claim it happened.
+            return self._err(
+                f"{args.action} was submitted (command_id={submission.command_id}) "
+                "but this call could not confirm it ran",
+                t0,
+            )
+        if not outcome.success:
+            return self._err(f"{args.action} failed: {outcome.error or 'command refused'}", t0)
         return self._ok({args.action: True, "job_id": args.job_id}, t0)
 
     # ---------------------------------------------------------------- helpers

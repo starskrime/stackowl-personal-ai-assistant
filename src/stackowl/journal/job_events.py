@@ -1,11 +1,11 @@
-"""Attrs models for the four scheduler job-lifecycle events, and their
-registration (Story 2.6).
+"""Attrs models for the scheduler job-lifecycle events, and their
+registration (Story 2.6; ``job.paused``/``job.resumed`` added by Story 4.3).
 
-One emitting process for all four: ``scheduler`` -- ``scheduler.py`` and
+One emitting process for all six: ``scheduler`` -- ``scheduler.py`` and
 ``scheduler_mutations.py`` are the only two places a job's own lifecycle
 transitions, and both record at the exact call site the state change commits
 (AD-24), mirroring ``task_events.py``'s shape for the durable task loop.
-Importing this module registers all four types as a side effect;
+Importing this module registers all six types as a side effect;
 ``journal/__init__.py`` imports it for exactly that reason.
 """
 
@@ -75,6 +75,26 @@ class JobParkedAttrs(JournalAttrsBase):
     attempt_count: int
 
 
+class JobPausedAttrs(JournalAttrsBase):
+    """``job.paused`` -- Story 4.3: ``JobScheduler.pause`` committed, driven
+    through a COMMAND task (``scheduling.pause_job``). Did not exist before
+    this story -- ``ActorKind``'s own docstring named ``CommandContext`` as
+    the reason: pause/resume had no actor/requester-kind carrier to record
+    against until this one did. ``command_id`` is ``None`` only for a legacy
+    direct call (``context=None`` -- every caller before this story, none of
+    which produced a COMMAND row to attribute this event to)."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
+class JobResumedAttrs(JournalAttrsBase):
+    """``job.resumed`` -- Story 4.3: ``JobScheduler.resume`` committed,
+    driven through a COMMAND task (``scheduling.resume_job``). See
+    :class:`JobPausedAttrs` for why this did not exist before this story."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
 def _narrate_started(attrs: JournalAttrsBase, name: str) -> str:
     return f"Job {name} started."
 
@@ -92,6 +112,14 @@ def _narrate_parked(attrs: JournalAttrsBase, name: str) -> str:
 
     parked = cast(JobParkedAttrs, attrs)
     return f"Job {name} gave up after {parked.attempt_count} attempts."
+
+
+def _narrate_paused(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Job {name} paused."
+
+
+def _narrate_resumed(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Job {name} resumed."
 
 
 def _register() -> None:
@@ -123,6 +151,18 @@ def _register() -> None:
         # Story 3.1 (AD-28) -- a give-up opens a durable `incident` item.
         needs_you_kind=NeedsYouKind.INCIDENT,
         table=_TABLE, narrate=_narrate_parked,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.paused", schema_version=1, attrs_model=JobPausedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_paused,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.resumed", schema_version=1, attrs_model=JobResumedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_resumed,
     ))
 
 

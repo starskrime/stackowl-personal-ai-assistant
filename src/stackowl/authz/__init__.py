@@ -19,6 +19,11 @@ from stackowl.authz.bounds_guard import (
     check_tool_bounds,
     effective_bounds,
 )
+from stackowl.authz.requester import (
+    RequesterKind,
+    principal_for,
+    requester_kind_from_trace,
+)
 from stackowl.authz.severity import (
     ALL_SEVERITIES,
     CONSEQUENTIAL,
@@ -43,9 +48,12 @@ __all__ = [
     "MIGRATION_STORIES",
     "NetworkRule",
     "READ",
+    "RequesterKind",
     "ResourceCaps",
     "WRITE",
     "check_effective_bounds",
     "check_tool_bounds",
     "effective_bounds",
+    "principal_for",
+    "requester_kind_from_trace",
 ]

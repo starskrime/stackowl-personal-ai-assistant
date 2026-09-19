@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from stackowl.authz.requester import principal_for, requester_kind_from_trace
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.dry_run import build_preview, strip_sigil
 from stackowl.commands.metadata import SubCommand, resolve_path
 from stackowl.commands.response import CommandResponse
+from stackowl.commands.spec.errors import CommandRefusedError
+from stackowl.commands.state_census import COMMAND_CENSUS
 from stackowl.exceptions import CommandNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
@@ -61,6 +64,32 @@ class CommandRegistry:
         if name not in self._commands:
             raise CommandNotFoundError(name)
         cmd = self._commands[name]
+
+        # Story 4.3 (AD-1) — the severity check runs before EITHER the `??`
+        # dry-run preview or the real handler below: "no preview/dry-run
+        # returns before the severity check." Closes the slash-command half
+        # of "one door" (commands/spec/'s COMMAND-task path is the other
+        # half). `COMMAND_CENSUS` covers the BARE top-level command's
+        # worst-case severity only — per-subcommand severity is out of this
+        # story's scope (spec-4-3 Design Notes: `dispatch()` operates at that
+        # granularity already; a finer-grained routing-time check needs
+        # `commands/base.py`'s `handle()` contract to change, which no story
+        # before 4.4-4.10 asks for). A command absent from the census (e.g. a
+        # plugin-registered command the 4.2 census never enumerated) defaults
+        # to `read` — a no-op default, since nothing in this story's scope
+        # adds it there.
+        declaration = COMMAND_CENSUS.get(name)
+        severity = declaration.action_severity if declaration is not None else "read"
+        requester_kind = requester_kind_from_trace()
+        principal = principal_for(requester_kind)
+        if not principal.may(severity):
+            log.gateway.warning(
+                "[commands] registry.dispatch: severity check refused",
+                extra={"_fields": {
+                    "command": name, "severity": severity, "requester_kind": requester_kind,
+                }},
+            )
+            raise CommandRefusedError(name, severity, requester_kind)
 
         # Dry-run: a trailing `??` previews what the command WOULD do without
         # running the handler — honest by construction (no handler, no side

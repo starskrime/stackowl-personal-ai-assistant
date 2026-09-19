@@ -19,6 +19,7 @@ from stackowl.ipc.frames import (
     JournalEventFrame,
     RestartNoticeFrame,
     SendTextFrame,
+    TasksEnqueuedFrame,
 )
 
 ALL_FRAMES = [
@@ -75,6 +76,8 @@ ALL_FRAMES = [
         reply_target=72055773, item_id="item-xyz",
     ),
     ConsentResponseFrame(consent_id="cr-1", scope="session"),
+    # Story 4.3 — gateway -> core, payload-free by design.
+    TasksEnqueuedFrame(),
     AckFrame(ref="t1", status="deferred", detail="quiescing"),
 ]
 
@@ -82,6 +85,17 @@ ALL_FRAMES = [
 @pytest.mark.parametrize("frame", ALL_FRAMES, ids=lambda f: f.type)
 def test_round_trip(frame) -> None:
     assert decode_frame(encode_frame(frame)) == frame
+
+
+def test_tasks_enqueued_frame_round_trips_through_pydantic_directly() -> None:
+    """Story 4.3 — the pydantic-level round trip (model_dump_json ->
+    model_validate_json), distinct from the codec-level ``test_round_trip``
+    above: proves the frame is well-formed on its own, with no dependence on
+    the newline-delimited wire framing."""
+    frame = TasksEnqueuedFrame()
+    restored = TasksEnqueuedFrame.model_validate_json(frame.model_dump_json())
+    assert restored == frame
+    assert restored.type == "tasks_enqueued"
 
 
 def test_encoded_frame_is_single_newline_terminated_line() -> None:

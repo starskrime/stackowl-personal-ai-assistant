@@ -67,6 +67,27 @@ def actuator_row_for(task: Any) -> Any:
 _chat_id_of = address_of
 
 
+async def _run_command(task: DurableTask) -> str:
+    """Run a claimed ``kind='command'`` row through
+    ``commands/spec/execute.py::execute_command_task`` and adapt its
+    :class:`~stackowl.commands.spec.context.CommandOutcome` onto the loop's
+    ``TaskRunner`` contract (return the delivered result, or RAISE).
+
+    Lazy import — same style as :func:`actuator_row_for`'s own
+    ``from stackowl.pipeline.retry_attempt import RetryAttempt`` — this
+    module stays importable without pulling in the command-dispatch chain
+    for a caller that only drives goal tasks (e.g. a unit test double).
+    """
+    from stackowl.commands.spec.execute import execute_command_task
+
+    outcome = await execute_command_task(task)
+    if not outcome.success:
+        raise RuntimeError(
+            outcome.error or f"command {task.command_type} did not succeed"
+        )
+    return f"command {task.command_type} completed ({task.command_id})"
+
+
 def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
     """Return the coroutine the loop calls for one claimed task.
 
@@ -76,6 +97,13 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
     """
 
     async def _run(task: DurableTask) -> str:
+        # Story 4.3 — the loop's ONE runner now serves both task shapes. A
+        # COMMAND row never touches the retry actuator (no model call, ever —
+        # AD-26); `TaskLoop` itself stays kind-agnostic, so the branch lives
+        # here, at the one place the loop's generic `TaskRunner` contract
+        # meets a concrete task.
+        if getattr(task, "kind", "goal") == "command":
+            return await _run_command(task)
         if actuator is None:
             # Refuse loudly. Returning quietly would have the loop mark every
             # recovered task delivered while doing nothing — silent, and worse than
