@@ -63,6 +63,7 @@ class _WriteClaimsButNoArtifact(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",   # effectful — an unverified failure must floor
+            command_types=("test.report",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

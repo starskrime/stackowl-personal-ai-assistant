@@ -70,7 +70,8 @@ class _ConsequentialTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self._name, description=self.description, parameters=self.parameters,
-            action_severity="consequential", capability_tag=None,
+            action_severity="consequential", command_types=(f"test.{self._name}",),
+            capability_tag=None,
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

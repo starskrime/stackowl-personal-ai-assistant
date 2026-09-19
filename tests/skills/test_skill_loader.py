@@ -227,7 +227,7 @@ async def test_loader_registers_tool_subclass_from_sidecar(tmp_path: Path) -> No
     tools_dir.mkdir()
     (tools_dir / "demo.py").write_text(
         '''from __future__ import annotations
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 class DemoTool(Tool):
     @property
@@ -241,6 +241,14 @@ class DemoTool(Tool):
     @property
     def parameters(self) -> dict:
         return {}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # Story 4.2 -- ToolManifest.action_severity has no default.
+        return ToolManifest(
+            name=self.name, description=self.description, parameters=self.parameters,
+            action_severity="read",
+        )
 
     async def execute(self, **kwargs) -> ToolResult:
         return ToolResult(success=True, output="ok", duration_ms=0.0)

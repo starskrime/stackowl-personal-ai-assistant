@@ -62,11 +62,13 @@ class _FakeTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        command_types = () if self._severity == "read" else (f"test.{self._name}",)
         return ToolManifest(
             name=self._name,
             description=self.description,
             parameters=self._params,
             action_severity=self._severity,  # type: ignore[arg-type]
+            command_types=command_types,
             capability_tag=self._tag,
         )
 

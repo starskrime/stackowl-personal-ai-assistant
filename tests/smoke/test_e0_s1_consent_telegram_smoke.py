@@ -91,7 +91,8 @@ class _DangerTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self._name, description=self.description, parameters=self.parameters,
-            action_severity="consequential", consent_category=self._category,
+            action_severity="consequential", command_types=(f"test.{self._name}",),
+            consent_category=self._category,
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

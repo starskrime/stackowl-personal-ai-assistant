@@ -51,7 +51,7 @@ class _NoopTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
-            action_severity="write",
+            action_severity="write", command_types=("test.skill_manage",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

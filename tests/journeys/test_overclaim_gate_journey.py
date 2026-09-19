@@ -128,6 +128,7 @@ class _BounceToolCommittedFalse(Tool):
         return ToolManifest(
             name=self._name, description=self.description,
             parameters=self.parameters, action_severity="write",
+            command_types=(f"test.{self._name}",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

@@ -131,6 +131,7 @@ class _WriteW(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("test.report",),
             commit_coupling="transactional",
         )
 

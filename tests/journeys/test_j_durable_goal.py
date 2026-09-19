@@ -107,6 +107,7 @@ class _StatusNoteTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("test.status_note",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

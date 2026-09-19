@@ -80,6 +80,7 @@ class _WriteToolNeedingAction(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("test.memory",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -287,6 +288,7 @@ class _WriteToolEmptyStringOk(Tool):
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="write",
+            command_types=("test.write_file",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -359,6 +361,7 @@ class _GenuinelyFailingWriteTool(Tool):
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="write",
+            command_types=("test.note",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

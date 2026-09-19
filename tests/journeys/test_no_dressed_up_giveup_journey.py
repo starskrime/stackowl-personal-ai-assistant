@@ -85,11 +85,13 @@ class _ConsequentialTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        command_types = () if self._severity == "read" else (f"test.{self._name}",)
         return ToolManifest(
             name=self._name,
             description=self.description,
             parameters=self.parameters,
             action_severity=self._severity,  # type: ignore[arg-type]
+            command_types=command_types,
             capability_tag=None,  # no sibling → no substitution
         )
 

@@ -80,7 +80,7 @@ class _FailingSendImageTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
-            action_severity="consequential",
+            action_severity="consequential", command_types=("test.send_image",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -107,7 +107,7 @@ class _IncidentalWriteTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
-            action_severity="write",
+            action_severity="write", command_types=("test.write_file",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -135,7 +135,7 @@ class _DelegateTaskTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
-            action_severity="write",
+            action_severity="write", command_types=("test.delegate_task",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -161,7 +161,7 @@ class _DeliveredSendTool(Tool):
     def manifest(self) -> ToolManifest:
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
-            action_severity="consequential",
+            action_severity="consequential", command_types=("test.send_image",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

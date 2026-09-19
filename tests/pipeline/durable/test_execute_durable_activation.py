@@ -93,6 +93,7 @@ class _SideEffectTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            command_types=("test.write_file",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

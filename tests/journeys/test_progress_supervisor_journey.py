@@ -81,9 +81,11 @@ class _SimpleTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        command_types = () if self._severity == "read" else (f"test.{self._name}",)
         return ToolManifest(
             name=self._name, description=self.description,
             parameters=self.parameters, action_severity=self._severity,
+            command_types=command_types,
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -124,6 +126,7 @@ class _SlowTool(Tool):
         return ToolManifest(
             name=self._name, description=self.description,
             parameters=self.parameters, action_severity="write",
+            command_types=(f"test.{self._name}",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -157,6 +160,7 @@ class _ScriptedTool(Tool):
         return ToolManifest(
             name=self._name, description=self.description,
             parameters=self.parameters, action_severity="write",
+            command_types=(f"test.{self._name}",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

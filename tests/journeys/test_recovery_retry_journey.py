@@ -70,6 +70,7 @@ class _WriteFailsThenSucceeds(Tool):
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
             action_severity="write",
+            command_types=("test.report",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -111,6 +112,7 @@ class _WriteNeverSucceeds(Tool):
         return ToolManifest(
             name=self.name, description=self.description, parameters=self.parameters,
             action_severity="write",
+            command_types=("test.report",),
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

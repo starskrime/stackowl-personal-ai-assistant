@@ -439,11 +439,13 @@ class _FlakyTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        command_types = () if self._severity == "read" else ("test.flaky",)
         return ToolManifest(
             name=self.name,
             description=self.description,
             parameters=self.parameters,
             action_severity=self._severity,  # type: ignore[arg-type]
+            command_types=command_types,
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
