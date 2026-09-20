@@ -17,6 +17,16 @@ from typing import Any
 
 import pytest
 
+# Registration side effect (mirrors journal/task_events.py's own shape) — the
+# two pilot CommandSpecs/handlers pause/resume submit through (Story 4.3).
+# Production gets this for free from startup/orchestrator.py's
+# `_phase_gateway` boot import; a test that builds CronjobTool directly, with
+# no orchestrator boot, needs it explicitly — same precedent as
+# `tests/tools/test_cronjob_pause_resume_go_through_commands.py`. Its absence
+# here (pre-existing, predating Story 4.5) made this file's own pause/resume
+# tests fail with `CommandTypeNotDeclaredError` whenever no earlier-collected
+# test module happened to import `scheduler.commands` first.
+import stackowl.scheduler.commands  # noqa: F401
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.services import StepServices, reset_services, set_services

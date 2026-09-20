@@ -1,11 +1,11 @@
 """Attrs models for the COMMAND-task lifecycle events, and their
 registration (Story 4.3, AD-26; ``command.pending_approval`` added Story
-4.4, AD-27/AD-28).
+4.4, AD-27/AD-28; ``command.undo_refused`` added Story 4.5, FR88).
 
 One emitting process: ``pipeline.durable`` -- the same durable task loop
 ``task_events.py`` already emits from, since a COMMAND row IS a ``tasks`` row
 (migration 0151's ``kind='command'``), not a second table.
-``pipeline/durable/store.py`` is the ONE writer of all four:
+``pipeline/durable/store.py`` is the ONE writer of all five:
 ``command.enqueued`` inside :meth:`~stackowl.pipeline.durable.store.
 DurableTaskStore.create` (its ``kind='command'`` branch), ``command.completed``
 inside :meth:`~stackowl.pipeline.durable.store.DurableTaskStore.mark_delivered`
@@ -15,14 +15,17 @@ inside :meth:`~stackowl.pipeline.durable.store.DurableTaskStore.mark_delivered`
 ``command.pending_approval`` inside :meth:`~stackowl.pipeline.durable.store.
 DurableTaskStore.park_for_decision` (called from both this task kind's
 callers -- ``submit.py``'s inline path, ``loop.py``'s tick-driven dispatch --
-when the action-policy gate decides a command may not run at once)
+when the action-policy gate decides a command may not run at once),
+``command.undo_refused`` inside :meth:`~stackowl.pipeline.durable.store.
+DurableTaskStore.record_undo_refused` (called from ``commands/spec/undo.py::
+request_undo`` when ``authz.undo.decide_undo`` refuses)
 -- deliberately NOT emitted from ``commands/spec/`` itself, which stays inside
 AD-7's import boundary (``authz/`` + ``pipeline/durable`` only) by never
-importing ``journal`` directly. All four are the COMMAND TASK WRAPPER's own
+importing ``journal`` directly. All five are the COMMAND TASK WRAPPER's own
 lifecycle bookkeeping, never the domain event a mutator's own commit records
 (e.g. ``job.paused``) -- AD-26: "the COMMAND handler itself records only
 ``command.*`` lifecycle events, never the domain event (no double-recording)."
-Importing this module registers all four as a side effect; ``journal/
+Importing this module registers all five as a side effect; ``journal/
 __init__.py`` imports it for exactly that reason.
 
 Reuses ``RecordKind.TASK`` and ``table="tasks"`` rather than declaring a new
@@ -93,6 +96,22 @@ class CommandFailedAttrs(JournalAttrsBase):
     failure_class: str = Field(max_length=_MAX_LABEL_LEN)
 
 
+class CommandUndoRefusedAttrs(JournalAttrsBase):
+    """``command.undo_refused`` (Story 4.5, FR88) -- ``authz.undo.decide_undo``
+    refused an undo request: either the target was superseded by a later
+    command, or the 24-hour undo window already passed. ``command_type`` is
+    the ORIGINAL command's type (the one undo was requested for, not the
+    undo command itself, which never runs); ``code``/``reason`` mirror
+    :class:`~stackowl.authz.undo.UndoDecision`'s own closed vocabulary and
+    human-readable text -- the same "record the decision, not just its
+    aftermath" shape ``command.pending_approval`` already uses for the
+    action-policy gate's own refusals."""
+
+    command_type: str = Field(max_length=_MAX_LABEL_LEN)
+    code: str = Field(max_length=_MAX_LABEL_LEN)
+    reason: str = Field(max_length=_MAX_PAYLOAD_SUMMARY_LEN)
+
+
 class CommandPendingApprovalAttrs(JournalAttrsBase):
     """``command.pending_approval`` (Story 4.4, AD-27/AD-28) -- the
     action-policy gate decided this command may not run at once; the row
@@ -128,6 +147,11 @@ def _narrate_pending_approval(attrs: JournalAttrsBase, name: str) -> str:  # noq
     return f"Command {a.command_type} needs your decision: {a.payload_summary}"
 
 
+def _narrate_undo_refused(attrs: JournalAttrsBase, name: str) -> str:  # noqa: ARG001 -- `name` is the task_id, same precedent as the narrators above
+    a = cast(CommandUndoRefusedAttrs, attrs)
+    return f"Undo of {a.command_type} was refused: {a.reason}"
+
+
 def _register() -> None:
     registry = get_registry()
     registry.register(EventTypeSpec(
@@ -155,6 +179,13 @@ def _register() -> None:
         attention_class=AttentionClass.NEEDS_YOU, intensity=Intensity.NORMAL,
         needs_you_kind=NeedsYouKind.APPROVAL,
         table=_TABLE, narrate=_narrate_pending_approval,
+    ))
+    registry.register(EventTypeSpec(
+        type="command.undo_refused", schema_version=1,
+        attrs_model=CommandUndoRefusedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.TASK,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_undo_refused,
     ))
 
 

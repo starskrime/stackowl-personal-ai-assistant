@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from stackowl.authz.bounds import BoundsSpec
+from stackowl.authz.undo import COMMAND_PRUNE_FLOOR_DAYS
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
@@ -27,15 +28,16 @@ from stackowl.journal import (
     NeedsYouKind,
     Outcome,
     RecordRef,
+    needs_you,
 )
 from stackowl.journal import fanout as journal_fanout
-from stackowl.journal import needs_you
 from stackowl.journal import record as journal_record
 from stackowl.journal.command_events import (
     CommandCompletedAttrs,
     CommandEnqueuedAttrs,
     CommandFailedAttrs,
     CommandPendingApprovalAttrs,
+    CommandUndoRefusedAttrs,
 )
 from stackowl.journal.task_events import (
     TaskClaimedAttrs,
@@ -1677,6 +1679,92 @@ class DurableTaskStore(OwnedRepository):
         )
         return task
 
+    async def has_later_completed_command(
+        self, *, payload: str, after: datetime, exclude_task_id: str,
+    ) -> bool:
+        """True when a DIFFERENT completed COMMAND row shares *payload* and
+        completed strictly after *after* -- FR88's "a later command that
+        changes the same target" (Story 4.5), called by ``commands/spec/
+        undo.py::request_undo`` to decide whether the original command was
+        superseded.
+
+        "Same target" is *payload* itself (the row's own stored
+        ``command_payload`` JSON text): today's only two registered command
+        types (``scheduling.pause_job``/``resume_job``) share one payload
+        shape keyed on ``job_id``, so exact ``command_payload`` equality
+        already IS target equality. A future command type whose payload
+        carries more than its target's identity (e.g. an edit command with a
+        new title) will need its own target derivation -- flagged, not
+        built, since no such ``CommandSpec`` is registered yet (mirrors
+        spec-4-3's own "declared, structurally correct, not yet load-bearing"
+        precedent for fields a later story grows into).
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[commands] store.has_later_completed_command: entry",
+            extra={"_fields": {
+                "exclude_task_id": exclude_task_id, "after": after.isoformat(),
+            }},
+        )
+        rows = await self._fetch_owned(
+            self._table,
+            "kind='command' AND status='completed' AND command_payload=? "
+            "AND task_id != ? AND delivered_at > ?",
+            (payload, exclude_task_id, after.isoformat()),
+        )
+        result = bool(rows)
+        # 4. EXIT
+        log.tasks.debug(
+            "[commands] store.has_later_completed_command: exit",
+            extra={"_fields": {"exclude_task_id": exclude_task_id, "superseded": result}},
+        )
+        return result
+
+    async def record_undo_refused(
+        self, task_id: str, *, command_type: str, code: str, reason: str,
+    ) -> None:
+        """Best-effort ``command.undo_refused`` lifecycle event (Story 4.5,
+        FR88) -- called from ``commands/spec/undo.py::request_undo`` when
+        ``authz.undo.decide_undo`` refuses. Mirrors :meth:`record_command_failed`'s
+        shape exactly: never raises, since telemetry must not mask the
+        refusal the caller already reports back to whoever asked for undo.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[commands] store.record_undo_refused: entry",
+            extra={"_fields": {"task_id": task_id, "command_type": command_type, "code": code}},
+        )
+        try:
+            async with self._db.transaction() as conn:
+                await journal_record(conn, JournalEvent(
+                    type="command.undo_refused",
+                    schema_version=1,
+                    actor_kind=ActorKind.AUTONOMOUS,
+                    actor_id=self._owner_id,
+                    target_kind=ActorKind.OWNER,
+                    target_id=task_id,
+                    outcome=Outcome.FAILED,
+                    record_ref=RecordRef(
+                        kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                    ),
+                    attrs=CommandUndoRefusedAttrs(
+                        command_type=command_type[:64], code=code[:64], reason=reason[:256],
+                    ),
+                ))
+            journal_fanout.notify_committed()
+        except Exception as exc:  # noqa: BLE001 — telemetry must never mask the real refusal
+            log.tasks.error(
+                "[commands] store.record_undo_refused: could not record "
+                "command.undo_refused — the refusal itself is still reported to the caller",
+                exc_info=exc, extra={"_fields": {"task_id": task_id}},
+            )
+            return
+        # 4. EXIT
+        log.tasks.info(
+            "[commands] store.record_undo_refused: exit",
+            extra={"_fields": {"task_id": task_id, "code": code}},
+        )
+
     async def _deps_satisfied(self, task_id: str, deps: tuple[str, ...]) -> bool:
         """True when every dependency DELIVERED. A dead-lettered dependency
         dead-letters this row too, rather than leaving it blocked forever — a
@@ -2574,8 +2662,32 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"task_id": task_id, "acknowledged_at": now.isoformat()}},
         )
 
-    async def prune_completed(self, *, older_than_days: int = 1) -> int:
-        """Delete COMPLETED rows past the window. Bakir asked for this explicitly.
+    async def prune_completed(
+        self,
+        *,
+        older_than_days: int = 1,
+        command_older_than_days: int = COMMAND_PRUNE_FLOOR_DAYS,
+    ) -> int:
+        """Delete COMPLETED rows past their window. Bakir asked for this explicitly.
+
+        TWO SEPARATE WINDOWS, not one (Story 4.5, FR88/NFR45). A ``kind='goal'``
+        row prunes at the operator-configurable *older_than_days*
+        (``TaskLoopSettings.prune_completed_after_days``, unchanged since Story
+        2.11). A ``kind='command'`` row NEVER uses that value — it prunes at
+        *command_older_than_days* instead, which the one production caller
+        (``startup/orchestrator.py``) computes live as
+        ``max(authz.undo.UNDO_WINDOW_DAYS, Settings().journal.retention_days)``,
+        so lowering the operator's goal-row prune window can never shorten a
+        COMMAND row's retention below what FR88 (undo stays offered for 24h)
+        and NFR45 (kept at least as long as journal retention) both require.
+        The default here (``authz.undo.COMMAND_PRUNE_FLOOR_DAYS``, derived from
+        ``JournalSettings()``'s own DEFAULT instance) is a safe fallback for a
+        caller that does not wire one in explicitly — never the value a live
+        deployment with a raised/lowered journal retention actually prunes by.
+        ``commands/spec/undo.py::request_undo`` reads a completed COMMAND row's
+        ``delivered_at`` directly for the LIVE 24h undo-eligibility check; this
+        prune window is a much coarser day-granularity floor underneath that,
+        never the eligibility check itself.
 
         Scoped to ``completed`` on purpose. A ``dead_letter`` is never pruned: it is
         the one record of work that failed permanently, and it is precisely what the
@@ -2602,11 +2714,19 @@ class DurableTaskStore(OwnedRepository):
         # failed tasks still hold retry budget and a retry reuses the task_id,
         # which is precisely when the ledger must still answer; those are
         # untouched, and a test asserts it.
+        #
+        # `kind != 'command'` here — never `kind='command'` — since no COMMAND
+        # row ever writes `side_effect_ledger` (only the goal/retry path does);
+        # the clause exists so this selector's predicate stays the EXACT match
+        # of the goal-row DELETE below it, not because a command row could ever
+        # populate the ledger.
         selector = (
             f"SELECT task_id FROM {self._table} "  # noqa: S608 — table from class
-            "WHERE owner_id=? AND status='completed' AND updated_at < datetime('now', ?)"
+            "WHERE owner_id=? AND status='completed' AND kind != 'command' "
+            "AND updated_at < datetime('now', ?)"
         )
         window = f"-{int(older_than_days)} day"
+        command_window = f"-{int(command_older_than_days)} day"
         async with self._db.transaction() as conn:
             # Ledger FIRST: while the tasks it is scoped to still exist to name.
             await conn.execute(
@@ -2616,14 +2736,23 @@ class DurableTaskStore(OwnedRepository):
             )
             cursor = await conn.execute(
                 f"DELETE FROM {self._table} WHERE owner_id=? AND status='completed' "  # noqa: S608
-                "AND updated_at < datetime('now', ?)",
+                "AND kind != 'command' AND updated_at < datetime('now', ?)",
                 (self._owner_id, window),
             )
             affected = int(cursor.rowcount or 0)
+            command_cursor = await conn.execute(
+                f"DELETE FROM {self._table} WHERE owner_id=? AND status='completed' "  # noqa: S608
+                "AND kind = 'command' AND updated_at < datetime('now', ?)",
+                (self._owner_id, command_window),
+            )
+            affected += int(command_cursor.rowcount or 0)
         if affected:
             log.tasks.info(
                 "[loop] pruned delivered tasks",
-                extra={"_fields": {"pruned": affected, "older_than_days": older_than_days}},
+                extra={"_fields": {
+                    "pruned": affected, "older_than_days": older_than_days,
+                    "command_older_than_days": command_older_than_days,
+                }},
             )
         return int(affected)
 

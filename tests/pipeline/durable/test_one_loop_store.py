@@ -32,6 +32,7 @@ import pytest
 from tests._schema_template import seed_schema
 
 from stackowl.db.pool import DbPool
+from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
 
@@ -304,6 +305,169 @@ class TestCompletedWorkIsPruned:
 
         assert await store.prune_completed(older_than_days=1) == 0
         assert (await store.get("dead")).status == "dead_letter"
+
+
+def _command_row(task_id: str, *, command_id: str, payload: str = "{}") -> DurableTask:
+    return DurableTask(
+        task_id=task_id,
+        goal="command:widget.turn_on",
+        status="pending",
+        kind="command",
+        command_type="widget.turn_on",
+        command_payload=payload,
+        command_id=command_id,
+        requester_kind="owner",
+        trigger_kind="command",
+    )
+
+
+class TestACommandRowGetsItsOwnPruneWindow:
+    """Story 4.5, FR88/NFR45 -- a completed COMMAND row never uses the
+    operator-configurable goal-row window; it prunes at its own, separate
+    ``command_older_than_days``."""
+
+    async def test_a_completed_command_row_survives_past_the_goal_row_window(
+        self, store: DurableTaskStore
+    ) -> None:
+        await store.create(_command_row("cmd-old", command_id="cid-old"))
+        await store.mark_delivered("cmd-old", result="done")
+        await store._db.execute(  # noqa: SLF001 — age it past the GOAL window only
+            "UPDATE tasks SET updated_at = datetime('now','-2 day'), "
+            "delivered_at = datetime('now','-2 day') WHERE task_id='cmd-old'"
+        )
+
+        pruned = await store.prune_completed(older_than_days=1, command_older_than_days=30)
+
+        assert pruned == 0
+        assert (await store.get("cmd-old")).task_id == "cmd-old"
+
+    async def test_a_completed_command_row_is_pruned_past_its_own_window(
+        self, store: DurableTaskStore
+    ) -> None:
+        await store.create(_command_row("cmd-ancient", command_id="cid-ancient"))
+        await store.mark_delivered("cmd-ancient", result="done")
+        await store._db.execute(  # noqa: SLF001 — age it past the COMMAND window
+            "UPDATE tasks SET updated_at = datetime('now','-31 day'), "
+            "delivered_at = datetime('now','-31 day') WHERE task_id='cmd-ancient'"
+        )
+
+        pruned = await store.prune_completed(older_than_days=1, command_older_than_days=30)
+
+        assert pruned == 1
+        with pytest.raises(DurableTaskNotFoundError):
+            await store.get("cmd-ancient")
+
+    async def test_a_goal_row_still_prunes_at_its_own_unaffected_window(
+        self, store: DurableTaskStore
+    ) -> None:
+        await _pending(store, "goal-old")
+        await store.mark_delivered("goal-old", result="done")
+        await store._db.execute(  # noqa: SLF001
+            "UPDATE tasks SET updated_at = datetime('now','-2 day') WHERE task_id='goal-old'"
+        )
+
+        pruned = await store.prune_completed(older_than_days=1, command_older_than_days=30)
+
+        assert pruned == 1
+        with pytest.raises(DurableTaskNotFoundError):
+            await store.get("goal-old")
+
+    async def test_default_command_older_than_days_is_never_shorter_than_journal_retention(
+        self, store: DurableTaskStore
+    ) -> None:
+        """No explicit ``command_older_than_days`` passed -- the safe default
+        (``authz.undo.COMMAND_PRUNE_FLOOR_DAYS``) must still not prune a
+        COMMAND row aged only past the goal-row window."""
+        await store.create(_command_row("cmd-default", command_id="cid-default"))
+        await store.mark_delivered("cmd-default", result="done")
+        await store._db.execute(  # noqa: SLF001
+            "UPDATE tasks SET updated_at = datetime('now','-2 day'), "
+            "delivered_at = datetime('now','-2 day') WHERE task_id='cmd-default'"
+        )
+
+        pruned = await store.prune_completed(older_than_days=1)
+
+        assert pruned == 0
+        assert (await store.get("cmd-default")).task_id == "cmd-default"
+
+
+class TestHasLaterCompletedCommand:
+    """Story 4.5, FR88 -- ``has_later_completed_command`` is the I/O half of
+    "a later command that changes the same target"."""
+
+    async def test_no_other_completed_command_is_not_superseded(
+        self, store: DurableTaskStore
+    ) -> None:
+        await store.create(_command_row("c1", command_id="cid-1", payload='{"job_id":"j1"}'))
+        await store.mark_delivered("c1", result="done")
+        task = await store.get("c1")
+        assert task.delivered_at is not None
+
+        result = await store.has_later_completed_command(
+            payload='{"job_id":"j1"}', after=task.delivered_at, exclude_task_id="c1",
+        )
+
+        assert result is False
+
+    async def test_a_later_completed_command_with_the_same_payload_is_found(
+        self, store: DurableTaskStore
+    ) -> None:
+        await store.create(_command_row("c1", command_id="cid-1", payload='{"job_id":"j1"}'))
+        await store.mark_delivered("c1", result="done")
+        # A Python-computed, timezone-AWARE isoformat string -- matching
+        # exactly what `mark_delivered` itself writes. SQLite's own
+        # `datetime('now', ...)` produces a NAIVE, space-separated string
+        # that would sort incorrectly against a real T-separated, offset-
+        # carrying timestamp -- a test-only pitfall, never a production one
+        # (every real `delivered_at` is always written by `mark_delivered`).
+        earlier_iso = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
+        await store._db.execute(  # noqa: SLF001 — c1 completed strictly BEFORE c2
+            "UPDATE tasks SET delivered_at = ? WHERE task_id='c1'", (earlier_iso,),
+        )
+        earlier = (await store.get("c1")).delivered_at
+        assert earlier is not None
+        await store.create(_command_row("c2", command_id="cid-2", payload='{"job_id":"j1"}'))
+        await store.mark_delivered("c2", result="done")
+
+        result = await store.has_later_completed_command(
+            payload='{"job_id":"j1"}', after=earlier, exclude_task_id="c1",
+        )
+
+        assert result is True
+
+    async def test_a_later_completed_command_with_a_different_payload_is_not_found(
+        self, store: DurableTaskStore
+    ) -> None:
+        await store.create(_command_row("c1", command_id="cid-1", payload='{"job_id":"j1"}'))
+        await store.mark_delivered("c1", result="done")
+        earlier_iso = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
+        await store._db.execute(  # noqa: SLF001
+            "UPDATE tasks SET delivered_at = ? WHERE task_id='c1'", (earlier_iso,),
+        )
+        earlier = (await store.get("c1")).delivered_at
+        assert earlier is not None
+        await store.create(_command_row("c2", command_id="cid-2", payload='{"job_id":"j2"}'))
+        await store.mark_delivered("c2", result="done")
+
+        result = await store.has_later_completed_command(
+            payload='{"job_id":"j1"}', after=earlier, exclude_task_id="c1",
+        )
+
+        assert result is False
+
+    async def test_the_row_itself_is_excluded(self, store: DurableTaskStore) -> None:
+        await store.create(_command_row("c1", command_id="cid-1", payload='{"job_id":"j1"}'))
+        await store.mark_delivered("c1", result="done")
+        task = await store.get("c1")
+        assert task.delivered_at is not None
+
+        result = await store.has_later_completed_command(
+            payload='{"job_id":"j1"}',
+            after=task.delivered_at - datetime.timedelta(seconds=1),
+            exclude_task_id="c1",
+        )
+
+        assert result is False
 
 
 def _later() -> datetime.datetime:

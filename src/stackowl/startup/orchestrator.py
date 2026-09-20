@@ -2153,9 +2153,18 @@ class StartupOrchestrator:
         task_loop = None
         _loop_cfg = self._settings.task_loop
         if _loop_cfg.enabled:
+            from stackowl.authz.undo import UNDO_WINDOW_DAYS
             from stackowl.pipeline.durable.loop import TaskLoop
             from stackowl.pipeline.durable.task_loop_runner import build_task_runner
 
+            # Story 4.5, FR88/NFR45 — a completed COMMAND row's own prune
+            # floor, computed from the LIVE (possibly operator-tuned) journal
+            # retention, never the operator's goal-row `prune_after_days`
+            # below: lowering that value must never shorten a COMMAND row's
+            # retention under undo's 24h window or journal retention.
+            _command_prune_after_days = max(
+                UNDO_WINDOW_DAYS, self._settings.journal.retention_days,
+            )
             task_loop = TaskLoop(
                 store=DurableTaskStore(db_pool),
                 runner=build_task_runner(retry_actuator),
@@ -2163,6 +2172,7 @@ class StartupOrchestrator:
                 tick_seconds=_loop_cfg.tick_seconds,
                 lease_seconds=_loop_cfg.lease_seconds,
                 prune_after_days=_loop_cfg.prune_completed_after_days,
+                command_prune_after_days=_command_prune_after_days,
             )
             await task_loop.start()
             # Publish it so the chat ingress can WAKE it on enqueue instead of

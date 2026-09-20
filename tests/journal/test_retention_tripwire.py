@@ -1,9 +1,10 @@
 """AD-4/NFR45's tripwire: a subsystem prune window shorter than journal
 retention is a real defect (the referenced row could be gone before the event
 that references it). Proven today against the REAL owner-authorized values --
-``TaskLoopSettings.prune_completed_after_days`` (tasks) and
-``db_reclaim._RUN_HISTORY_RETENTION_DAYS`` (job_runs) -- asked directly, never
-restated as a copy (mirrors
+``TaskLoopSettings.prune_completed_after_days`` (tasks),
+``db_reclaim._RUN_HISTORY_RETENTION_DAYS`` (job_runs), and (Story 4.5)
+``authz.undo.COMMAND_PRUNE_FLOOR_DAYS`` (completed COMMAND task rows) --
+asked directly, never restated as a copy (mirrors
 ``tests/audit/test_a_tunable_states_its_value_in_one_place.py``'s style: the
 constant this test reasons about is the one the production code actually
 holds, not a hand-typed number that could drift from it).
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.authz.undo import COMMAND_PRUNE_FLOOR_DAYS
 from stackowl.config.task_loop_settings import TaskLoopSettings
 from stackowl.journal.retention import JOURNAL_RETENTION_DAYS
 from stackowl.scheduler.handlers.db_reclaim import _RUN_HISTORY_RETENTION_DAYS
@@ -53,6 +55,15 @@ class TestTodaysRealPruneWindowsPassTheTripwire:
     def test_job_run_prune_window_is_not_shorter_than_journal_retention(self) -> None:
         _assert_window_not_shorter_than_retention(
             "db_reclaim._RUN_HISTORY_RETENTION_DAYS", _RUN_HISTORY_RETENTION_DAYS,
+        )
+
+    def test_command_row_prune_window_is_not_shorter_than_journal_retention(self) -> None:
+        # Story 4.5, FR88/NFR45 — a completed COMMAND row's own floor, not
+        # `TaskLoopSettings.prune_completed_after_days` (that one governs
+        # only `kind='goal'` rows since this story; see
+        # `pipeline/durable/store.py::prune_completed`'s docstring).
+        _assert_window_not_shorter_than_retention(
+            "authz.undo.COMMAND_PRUNE_FLOOR_DAYS", COMMAND_PRUNE_FLOOR_DAYS,
         )
 
 

@@ -28,9 +28,12 @@ explicit — never a dynamic dispatch table),
 :class:`~stackowl.commands.spec.handlers.CommandHandlerRegistry` (ditto for
 handlers), :func:`~stackowl.commands.spec.idempotency.record_command_execution`
 (the AD-26 receipt guard a subsystem mutator writes into its OWN transaction),
-:func:`~stackowl.commands.spec.submit.submit_command` (the one submit entry)
-and :func:`~stackowl.commands.spec.execute.execute_command_task` (the
-``TaskLoop`` runner's COMMAND-kind branch target).
+:func:`~stackowl.commands.spec.submit.submit_command` (the one submit entry),
+:func:`~stackowl.commands.spec.execute.execute_command_task` (the
+``TaskLoop`` runner's COMMAND-kind branch target), and (Story 4.5, FR31/FR88)
+:func:`~stackowl.commands.spec.undo.request_undo` (submits a completed
+reversible command's declared undo type through this same submit entry, once
+``authz.undo.decide_undo`` decides it is still within its window).
 
 WHAT NEVER LIVES HERE, per AD-1's Boundaries: a generic
 ``execute_command(command_type: str, **kwargs)`` entry point, ``eval``/``exec``,

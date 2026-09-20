@@ -87,7 +87,14 @@ class _Store(Protocol):
     async def count_pending_for_other_owners(self) -> int: ...
     async def heal_unreachable_owners(self, *, limit: int = 500) -> int: ...
     async def reclaim_expired(self, *, now: Any = None) -> int: ...
-    async def prune_completed(self, *, older_than_days: int = 1) -> int: ...
+    #: Story 4.5 — two separate windows: a goal row prunes at
+    #: `older_than_days`, a COMMAND row (kind='command') prunes at the
+    #: (always-longer) `command_older_than_days` instead, so undo's 24h
+    #: window and journal retention can never be violated by shortening the
+    #: operator-configurable goal-row window.
+    async def prune_completed(
+        self, *, older_than_days: int = 1, command_older_than_days: int = 1,
+    ) -> int: ...
 
 
 class TaskLoop:
@@ -102,6 +109,7 @@ class TaskLoop:
         tick_seconds: float = 5.0,
         lease_seconds: int = 900,
         prune_after_days: int = 1,
+        command_prune_after_days: int | None = None,
         worker_prefix: str = "loop",
     ) -> None:
         self._store = store
@@ -110,6 +118,13 @@ class TaskLoop:
         self._tick_seconds = float(tick_seconds)
         self._lease_seconds = int(lease_seconds)
         self._prune_after_days = int(prune_after_days)
+        # Story 4.5 — a COMMAND row's own, always-at-least-as-long window
+        # (FR88/NFR45). `None` (no caller-supplied value) falls through to
+        # `store.prune_completed`'s own safe default rather than duplicating
+        # that default's derivation here.
+        self._command_prune_after_days = (
+            None if command_prune_after_days is None else int(command_prune_after_days)
+        )
         self._worker = f"{worker_prefix}-{uuid.uuid4().hex[:8]}"
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
@@ -304,7 +319,13 @@ class TaskLoop:
                 await asyncio.gather(
                     *(self._dispatch(r) for r in claimed), return_exceptions=True,
                 )
-            await self._store.prune_completed(older_than_days=self._prune_after_days)
+            if self._command_prune_after_days is None:
+                await self._store.prune_completed(older_than_days=self._prune_after_days)
+            else:
+                await self._store.prune_completed(
+                    older_than_days=self._prune_after_days,
+                    command_older_than_days=self._command_prune_after_days,
+                )
             # SELF-HEAL ON THE TICK, not only at boot. `revive_undelivered_failures`
             # runs once in start(), which is why 74 dead letters accumulated
             # unseen — a sweep that only fires at boot cannot drain debt created
