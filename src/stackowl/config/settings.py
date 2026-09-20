@@ -209,6 +209,20 @@ class BudgetSettings(BaseModel):
         ),
         json_schema_extra={"hot_reload": True},
     )
+    default_turn_max_input_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Overrides DEFAULT_TURN_MAX_INPUT_TOKENS (authz/bounds.py, 500,000) "
+            "for the fill-in enforce_default_token_ceiling applies. None (default) "
+            "= today's exact 500,000 behavior, unchanged. Set to raise or lower "
+            "the ceiling a turn/owl with no explicit max_input_tokens cap of its "
+            "own gets, without touching enforce_default_token_ceiling itself. "
+            "Only takes effect while enforce_default_token_ceiling is True; an "
+            "owl's own explicit cap always wins regardless of either setting."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
 
 
 class ClarifySettings(BaseModel):

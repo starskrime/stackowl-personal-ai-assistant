@@ -320,3 +320,99 @@ def test_the_default_shipped_setting_is_True_byte_identical_behavior() -> None:
     from stackowl.config.settings import BudgetSettings
 
     assert BudgetSettings().enforce_default_token_ceiling is True
+
+
+# ---------------------------------------------------------------------------
+# The ceiling VALUE is configurable (BudgetSettings.default_turn_max_input_tokens),
+# independent of the on/off toggle above
+# ---------------------------------------------------------------------------
+
+
+def test_the_configured_ceiling_defaults_to_None_byte_identical_behavior() -> None:
+    """BudgetSettings.default_turn_max_input_tokens defaults None — the shipped
+    default must keep today's exact 500,000 fill-in, not silently change it."""
+    from stackowl.config.settings import BudgetSettings
+
+    assert BudgetSettings().default_turn_max_input_tokens is None
+
+
+def test_the_ceiling_value_can_be_RAISED_by_config() -> None:
+    """The actual ask: an operator raises the ceiling to a specific number
+    (5,000,000), not just disables enforcement outright."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = _resolve_token_ceiling(ResourceCaps(), enabled=True, ceiling=5_000_000)
+    assert caps.max_input_tokens == 5_000_000
+
+
+def test_a_raised_ceiling_end_to_end_no_breach_where_the_default_would_have_fired() -> None:
+    """The real path: a 5,000,000 configured ceiling → governor built from the
+    resulting caps → a turn that would have breached the 500k default does not
+    breach at all, but a turn past 5,000,000 still does.
+
+    Mirrors `test_opting_OUT_end_to_end_no_breach_where_the_default_would_have_fired`
+    for the raise-the-number path rather than the disable-enforcement path.
+    """
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = _resolve_token_ceiling(
+        ResourceCaps(max_steps=1000), enabled=True, ceiling=5_000_000,
+    )
+    assert caps.max_input_tokens == 5_000_000
+
+    still_under = BudgetGovernor(
+        caps, cost_tracker=_Tokens(683_728), trace_id="t",
+        started_monotonic=0.0, clock=_Clock(),
+    )
+    assert still_under.check(iteration=5) is None, (
+        "683,728 tokens breached a 5,000,000 ceiling — the configured value was "
+        "not actually applied"
+    )
+
+    over_it = BudgetGovernor(
+        caps, cost_tracker=_Tokens(5_000_001), trace_id="t",
+        started_monotonic=0.0, clock=_Clock(),
+    )
+    breach = over_it.check(iteration=5)
+    assert breach is not None and breach.cap == "tokens" and breach.actual == 5_000_001, (
+        "the raised ceiling never fires at all — it is not actually enforced"
+    )
+
+
+def test_an_owls_own_explicit_cap_still_wins_over_a_configured_ceiling() -> None:
+    """Same FLOOR-not-override contract as the unconfigured default — an owl's
+    own choice always wins, whatever the configured ceiling value is."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = ResourceCaps(max_input_tokens=25_000)
+    assert _resolve_token_ceiling(
+        caps, enabled=True, ceiling=5_000_000,
+    ).max_input_tokens == 25_000
+
+
+def test_a_None_configured_ceiling_falls_back_to_the_platform_default() -> None:
+    """The call-site contract: `configured_ceiling or DEFAULT_TURN_MAX_INPUT_TOKENS`
+    — None (the shipped default) must resolve to today's 500,000, not to 0/falsy
+    breakage."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    configured_ceiling = None
+    caps = _resolve_token_ceiling(
+        ResourceCaps(),
+        enabled=True,
+        ceiling=configured_ceiling or DEFAULT_TURN_MAX_INPUT_TOKENS,
+    )
+    assert caps.max_input_tokens == DEFAULT_TURN_MAX_INPUT_TOKENS
+
+
+def test_a_negative_or_zero_configured_ceiling_is_rejected_by_settings() -> None:
+    """Field(gt=0) — a config value of 0 or negative must fail validation at
+    settings-construction time, not silently produce an always-breaching or
+    never-breaching ceiling."""
+    import pydantic
+    from stackowl.config.settings import BudgetSettings
+
+    with pytest.raises(pydantic.ValidationError):
+        BudgetSettings(default_turn_max_input_tokens=0)
+    with pytest.raises(pydantic.ValidationError):
+        BudgetSettings(default_turn_max_input_tokens=-1)
