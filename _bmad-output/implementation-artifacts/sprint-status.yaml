@@ -76,7 +76,7 @@ development_status:
   4-5-undo-for-24-hours: done
   4-6-standing-authority-is-explicit-and-yours-alone: done
   4-7-scheduling-runs-on-commands: done
-  4-8-messages-and-files-are-sent-through-commands: backlog
+  4-8-messages-and-files-are-sent-through-commands: done
   4-9-owls-skills-and-tools-change-only-through-commands: backlog
   4-10-memory-config-and-everything-else-run-on-commands: backlog
   epic-4-retrospective: optional
