@@ -29,6 +29,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 
+from stackowl.db.pool import DbPool
 from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra.observability import log
 from stackowl.owls.manifest import OwlAgentManifest
@@ -92,12 +93,22 @@ class OwlScheduleTool(Tool):
         # is always recoverable. effect_class stays None — it toggles an EXISTING job's
         # enabled flag, it does not mint a persistent entity / send / install a new job,
         # so the overclaim gate (TS3) has nothing to verify here.
+        #
+        # Story 4.7 — pause_owl_job/resume_owl_job are declared DISTINCTLY
+        # from cronjob's already-migrated scheduling.pause_job/resume_job
+        # (the Story 4.2 census's own authored, deliberate split — both
+        # pairs call the identical JobScheduler.pause/.resume, so this
+        # tool's undo/audit trail never merges with cronjob's).
         return ToolManifest(
             name=self.name,
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
-            command_types=("scheduling.set_owl_schedule",),
+            command_types=(
+                "scheduling.pause_owl_job",
+                "scheduling.resume_owl_job",
+                "scheduling.set_owl_schedule",
+            ),
             # transactional: the toggle IS the write to our own db_pool-backed job
             # row (JobScheduler.pause/resume/snooze) — no remote/lossy boundary.
             commit_coupling="transactional",
@@ -150,21 +161,34 @@ class OwlScheduleTool(Tool):
                 t0,
             )
 
-        # 3. STEP — apply the recoverable lifecycle change.
+        # 3. STEP — apply the recoverable lifecycle change. Story 4.7 (AD-1):
+        # every mutation submits through commands/spec/submit.py::
+        # submit_command, never calling JobScheduler.pause/.resume/.snooze
+        # directly. All three command types are REVERSIBLE (pause_owl_job<->
+        # resume_owl_job; set_owl_schedule -> itself), so the owner's own
+        # call runs AT ONCE — `outcome is None` here is a genuine race, never
+        # the pending-approval flow the irreversible cronjob actions hit.
         try:
             if action == "pause":
-                await sched.pause(job_id)
+                failure = await self._submit(db, "scheduling.pause_owl_job", job_id, t0)
+                if failure is not None:
+                    return failure
                 msg = (
                     f"Paused {display} — no more pokes until you say 'resume {display}'. "
                     "Nothing lost; the owl still exists."
                 )
             elif action == "resume":
-                await sched.resume(job_id)
+                failure = await self._submit(db, "scheduling.resume_owl_job", job_id, t0)
+                if failure is not None:
+                    return failure
                 next_run = await self._next_run(sched, job_id)
                 when = f" Next run: {next_run}." if next_run else ""
                 msg = f"Resumed {display} — it will reach you proactively again.{when}"
             else:  # snooze
-                msg = await self._do_snooze(sched, job_id, display, kwargs.get("snooze_for"))
+                snoozed = await self._do_snooze(db, job_id, display, kwargs.get("snooze_for"), t0)
+                if isinstance(snoozed, ToolResult):
+                    return snoozed
+                msg = snoozed
         except Exception as exc:  # B5 — never raise out of the tool
             log.tool.error(
                 "owl_schedule.execute: lifecycle change failed",
@@ -214,18 +238,23 @@ class OwlScheduleTool(Tool):
         return job.next_run_at if job is not None else None
 
     async def _do_snooze(
-        self, sched: JobScheduler, job_id: str, display: str, snooze_for: object,
-    ) -> str:
+        self, db: DbPool, job_id: str, display: str, snooze_for: object, t0: float,
+    ) -> str | ToolResult:
         """Snooze with auto-resume when the duration parses; else pause + note (TS11).
 
         Reuses the scheduler's ``every <n><unit>`` parser so the duration grammar is
         identical to the schedule DSL (no second parser). An unparseable/absent
         duration falls back to a plain pause and SAYS SO honestly — never a silent
-        guess at how long to stay quiet."""
+        guess at how long to stay quiet. Story 4.7 (AD-1) — the pause fallback
+        submits ``scheduling.pause_owl_job`` through the one door too, the SAME
+        command type ``execute()``'s own pause branch uses (never calling
+        ``JobScheduler.pause`` directly)."""
         token = str(snooze_for or "").strip()
         delta = parse_every(f"every {token}") if token else None
         if delta is None:
-            await sched.pause(job_id)
+            failure = await self._submit(db, "scheduling.pause_owl_job", job_id, t0)
+            if failure is not None:
+                return failure
             log.tool.info(
                 "owl_schedule.execute: snooze duration missing/unparseable — paused instead",
                 extra={"_fields": {"job_id": job_id, "snooze_for": token}},
@@ -236,11 +265,51 @@ class OwlScheduleTool(Tool):
                 "to start them again."
             )
         until_iso = (datetime.now(UTC) + delta).isoformat()
-        await sched.snooze(job_id, until_iso)
+        from stackowl.commands.spec.submit import submit_command
+
+        submission = await submit_command(
+            db, "scheduling.set_owl_schedule", {"job_id": job_id, "until": until_iso},
+        )
+        outcome = submission.outcome
+        if outcome is None:
+            return self._err(
+                f"snooze was submitted (command_id={submission.command_id}) "
+                "but this call could not confirm it ran",
+                t0,
+            )
+        if not outcome.success:
+            return self._err(
+                f"could not snooze {display}: {outcome.error or 'command refused'}", t0,
+            )
         return (
             f"Snoozed {display} until {until_iso} — it'll go quiet until then and "
             "auto-resume on its own. Nothing lost."
         )
+
+    @staticmethod
+    async def _submit(db: DbPool, command_type: str, job_id: str, t0: float) -> ToolResult | None:
+        """Submit *command_type* with ``{"job_id": job_id}`` through the one
+        door (AD-1). Returns ``None`` on a confirmed success; a
+        :class:`ToolResult` error otherwise. Every command type this tool
+        submits is REVERSIBLE, so ``outcome is None`` here is a genuine race
+        (lost the inline claim, or a replayed command_id with nothing fresh
+        to report) — never the pending-approval flow an irreversible
+        command hits."""
+        from stackowl.commands.spec.submit import submit_command
+
+        submission = await submit_command(db, command_type, {"job_id": job_id})
+        outcome = submission.outcome
+        if outcome is None:
+            return OwlScheduleTool._err(
+                f"{command_type} was submitted (command_id={submission.command_id}) "
+                "but this call could not confirm it ran",
+                t0,
+            )
+        if not outcome.success:
+            return OwlScheduleTool._err(
+                f"could not run {command_type}: {outcome.error or 'command refused'}", t0,
+            )
+        return None
 
     @staticmethod
     def _err(msg: str, t0: float) -> ToolResult:

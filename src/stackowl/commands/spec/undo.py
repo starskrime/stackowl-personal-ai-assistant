@@ -120,8 +120,18 @@ async def request_undo(db: DbPool, command_id: str) -> UndoOutcome:
     now = datetime.now(UTC)
     elapsed = now - delivered_at
     payload = original.command_payload or "{}"
+    # Story 4.7 -- a command type whose payload carries more than its
+    # target's identity (an edit, a snooze) can never repeat as an identical
+    # ``command_payload`` string across two calls on the SAME job, so
+    # supersession there is asked by job_id instead of exact-payload
+    # equality. ``json.loads`` never raises here: every registered payload is
+    # a validated pydantic model dumped via ``model_dump_json``, always valid
+    # JSON. A payload with no ``job_id`` key (a future non-scheduling command
+    # type) yields ``None`` and the exact-payload match applies, unchanged.
+    target_job_id = json.loads(payload).get("job_id")
     superseded = await store.has_later_completed_command(
         payload=payload, after=delivered_at, exclude_task_id=original.task_id,
+        target_job_id=target_job_id,
     )
     decision: UndoDecision = decide_undo(elapsed=elapsed, superseded=superseded)
     if not decision.allowed:
@@ -140,12 +150,18 @@ async def request_undo(db: DbPool, command_id: str) -> UndoOutcome:
         )
         return UndoOutcome(refusal=refusal)
     # 3. STEP -- submit the declared undo command through the SAME one door
-    # (AD-1) every other command walks through, with the original's own
-    # payload (the pilot's pause<->resume pair share one payload shape keyed
-    # on `job_id` — see `store.has_later_completed_command`'s docstring for
-    # why this holds exactly for today's registered command types).
+    # (AD-1) every other command walks through. Story 4.7 -- if the original
+    # command's own mutator captured a "restore-to" payload
+    # (`command_receipts.undo_payload`, e.g. an edit's PRIOR
+    # {schedule, goal}), resubmit THAT instead of the original's forward
+    # payload — otherwise (every 4.3/4.5/4.6 command, and any 4.7 command
+    # whose undo simply re-runs the opposite type, e.g. pause<->resume) fall
+    # back to the original's own payload, byte-identical to before this
+    # column existed.
+    undo_payload = await store.get_undo_payload(command_id)
+    resubmit_payload = json.loads(undo_payload) if undo_payload is not None else json.loads(payload)
     submission = await submit_command(
-        db, spec.undo_command_type, json.loads(payload),
+        db, spec.undo_command_type, resubmit_payload,
     )
     # 4. EXIT
     log.tasks.info(

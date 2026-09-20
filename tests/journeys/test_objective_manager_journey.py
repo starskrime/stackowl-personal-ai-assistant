@@ -15,6 +15,10 @@ from pathlib import Path
 
 import pytest
 
+# Registration side effect (mirrors journal/task_events.py's own shape) — the
+# scheduling.set_objective CommandSpec/handler. Production gets this for
+# free from startup/orchestrator.py's boot import.
+import stackowl.objectives.commands  # noqa: F401
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
@@ -28,6 +32,7 @@ from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.scheduling.objective_tool import ObjectiveTool
+from tests._command_approval import approve_one_parked_command
 from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
@@ -92,6 +97,13 @@ async def test_objective_runs_to_completion_across_ticks(db: DbPool) -> None:
         reset_services(token)
     assert created.success
     objective_id = json.loads(created.output)["objective_id"]
+
+    # scheduling.set_objective is declared IRREVERSIBLE (Design Notes), so
+    # the tool call above only SUBMITTED — it parked awaiting the owner's
+    # step-up. Approve it (simulating the owner's tap) so the objective is
+    # actually persisted, exactly as it would be once a real approval lands.
+    approval = await approve_one_parked_command(db, "scheduling.set_objective")
+    assert approval.success
 
     # 2. The driver advances it one sub-goal per tick until complete.
     backend = _StubBackend()

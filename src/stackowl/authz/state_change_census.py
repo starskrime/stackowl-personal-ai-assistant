@@ -78,10 +78,14 @@ _REASON_4_3_MIGRATED = (
     "JobScheduler.pause/.resume are called only from that handler, never "
     "directly by cronjob.py any more."
 )
-_REASON_4_7 = (
-    "Story 4.7's wave — 'any slash command/tool that changes schedules' per "
-    "epics.md's AC text, covering the rest of cronjob plus objective/owl-schedule "
-    "tools and the owl.pause/owl.resume commands."
+_REASON_4_7_MIGRATED = (
+    "Story 4.7 migrated this: cronjob's create/update/remove/run, "
+    "owl_schedule's pause/resume/snooze, and objective_tool's creation now "
+    "all call commands/spec/submit.py::submit_command instead of a "
+    "JobScheduler/ObjectiveStore mutator directly — scheduler/commands.py "
+    "(create_job/edit_job/delete_job/run_now_job/pause_owl_job/"
+    "resume_owl_job/set_owl_schedule) and objectives/commands.py "
+    "(set_objective) hold the registered CommandSpec + handler pairs."
 )
 _REASON_4_8 = (
     "Story 4.8's wave — the scheduled/outbound message-delivery seam "
@@ -111,14 +115,30 @@ COMMAND_TYPE_MIGRATIONS: dict[str, CommandTypeMigration] = {
         "4.3", status="migrated", reason=_REASON_4_3_MIGRATED,
     ),
     # ------------------------------------------------------------------ 4.7
-    "scheduling.create_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.edit_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.delete_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.run_now_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.set_objective": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.set_owl_schedule": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.pause_owl_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
-    "scheduling.resume_owl_job": CommandTypeMigration("4.7", reason=_REASON_4_7),
+    "scheduling.create_job": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.edit_job": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.delete_job": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.run_now_job": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.set_objective": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.set_owl_schedule": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.pause_owl_job": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
+    "scheduling.resume_owl_job": CommandTypeMigration(
+        "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
+    ),
     # ------------------------------------------------------------------ 4.8
     "messaging.send_file": CommandTypeMigration("4.8", reason=_REASON_4_8),
     "messaging.send_message": CommandTypeMigration("4.8", reason=_REASON_4_8),

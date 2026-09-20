@@ -1,17 +1,24 @@
-"""Story 4.3 — the four AD-1 "one door" tripwires.
+"""Story 4.3/4.7 — the four AD-1 "one door" tripwires.
 
 1. Import-boundary (AD-7): ``commands/spec/`` imports only ``stackowl.authz``,
    ``stackowl.pipeline.durable``, itself, ``stackowl.infra`` (cross-cutting
    logging — exempted the same way ``pydantic`` is; never a subsystem a later
    story could delete out from under this package), stdlib and pydantic.
-2. The mutator (``JobScheduler.pause``/``.resume``) is called only from
-   ``scheduler/commands.py``'s handlers — proving ``cronjob.py``'s migration
-   actually happened and no new direct caller appeared.
+2. Every ``JobScheduler`` mutator (Story 4.3's ``pause``/``resume``; Story
+   4.7's ``snooze``/``stop_job``/``create_job``/``update_job``/``run_now``)
+   is called only from ``scheduler/commands.py``'s handlers (plus each
+   group's own named, pre-existing, still-unmigrated exception) — proving
+   ``cronjob.py``'s and ``owl_schedule.py``'s migrations actually happened
+   and no new direct caller appeared.
 3. No subsystem mutator (``JobScheduler``) is instantiated under
    ``src/stackowl/gateway/``.
 4. No ``eval``/``exec`` call and no ``getattr``-based command-type-keyed
    dynamic dispatch anywhere in ``commands/spec/`` — the handler registry is
    a closed, explicit dict (AD-1's Boundaries).
+5. ``ObjectiveStore.create``/``.add_subgoals`` are called only from
+   ``objectives/commands.py`` — the SAME AD-1 guarantee as item 2, proven for
+   the ``objectives`` domain so the story's advertised coverage is symmetric
+   between scheduling and objectives, not scheduling-only.
 
 Modelled on ``tests/authz/test_severities_and_principal_have_one_home.py``'s
 own AST-scan style (module-level ``pytestmark = pytest.mark.tripwire`` so
@@ -163,21 +170,48 @@ def test_the_import_boundary_detector_does_not_flag_type_checking_imports() -> N
 
 
 # =============================================================================
-# 2. The mutator is called only from the handler registry
+# 2. Every mutator is called only from the handler registry
 # =============================================================================
 
-#: Files legitimately calling `JobScheduler.pause`/`.resume` directly today.
-#: `scheduler/commands.py` is the ONE handler-registry caller this story
-#: adds; `tools/scheduling/owl_schedule.py`/`tools/meta/owl_build.py` are
-#: PRE-EXISTING, unmigrated callers explicitly out of this story's scope
-#: (owned by 4.7/4.9 per the 4.2 census — see spec-4-3's Boundaries: "Only
-#: cronjob pause/resume migrate this story"). `cronjob.py` is deliberately
-#: ABSENT — its presence here would mean the pilot migration regressed.
-_ALLOWED_PAUSE_RESUME_CALLERS = frozenset({
-    "scheduler/commands.py",
-    "tools/scheduling/owl_schedule.py",
-    "tools/meta/owl_build.py",
-})
+#: One group per call-shape, each mapped to (the method name(s) checked
+#: together, the files legitimately calling ANY of them directly today).
+#: `scheduler/commands.py` — the ONE handler-registry caller — belongs to
+#: EVERY group (Story 4.3's pilot pair; Story 4.7's remaining five). The
+#: other names are each group's own PRE-EXISTING, still-unmigrated
+#: exception, explicitly out of scope: `tools/meta/owl_build.py` (owl
+#: create/dna management, owned by 4.9 per the 4.2 census) still calls
+#: `.pause`/`.resume` directly; `webhooks/receiver.py`'s `create_job` call
+#: is explicitly named OUT of this story's scope (spec-4-7 Boundaries: "Do
+#: not migrate webhooks/receiver.py's direct create_job call"). Neither
+#: `tools/scheduling/cronjob.py` NOR `tools/scheduling/owl_schedule.py`
+#: appears in ANY group — both are now FULLY migrated (Story 4.3's pilot
+#: pair plus this story's remaining five mutators).
+_MUTATOR_GROUPS: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {
+    "pause/resume": (
+        ("pause", "resume"),
+        frozenset({"scheduler/commands.py", "tools/meta/owl_build.py"}),
+    ),
+    "snooze": (
+        ("snooze",),
+        frozenset({"scheduler/commands.py"}),
+    ),
+    "stop_job": (
+        ("stop_job",),
+        frozenset({"scheduler/commands.py"}),
+    ),
+    "create_job": (
+        ("create_job",),
+        frozenset({"scheduler/commands.py", "webhooks/receiver.py"}),
+    ),
+    "update_job": (
+        ("update_job",),
+        frozenset({"scheduler/commands.py"}),
+    ),
+    "run_now": (
+        ("run_now",),
+        frozenset({"scheduler/commands.py"}),
+    ),
+}
 
 
 def _files_importing_job_scheduler() -> list[Path]:
@@ -192,40 +226,47 @@ def _files_importing_job_scheduler() -> list[Path]:
     return files
 
 
-def _calls_pause_or_resume(py: Path) -> bool:
-    """True iff *py* contains a ``<expr>.pause(...)``/``.resume(...)`` CALL
-    (never a ``def pause``/``def resume`` — the definition site itself)."""
+def _calls_any(py: Path, method_names: tuple[str, ...]) -> bool:
+    """True iff *py* contains a ``<expr>.<name>(...)`` CALL for any name in
+    *method_names* (never a ``def <name>`` — the definition site itself)."""
     tree = ast.parse(py.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Attribute) and func.attr in ("pause", "resume"):
+            if isinstance(func, ast.Attribute) and func.attr in method_names:
                 return True
     return False
 
 
-def test_job_scheduler_pause_and_resume_are_called_only_from_the_allowlist() -> None:
+@pytest.mark.parametrize("group_name", sorted(_MUTATOR_GROUPS))
+def test_job_scheduler_mutator_is_called_only_from_the_allowlist(group_name: str) -> None:
+    method_names, allowlist = _MUTATOR_GROUPS[group_name]
+    label = "/".join(method_names)
     actual: set[str] = set()
     for py in _files_importing_job_scheduler():
         rel = py.relative_to(_SRC_ROOT).as_posix()
         if rel == "scheduler/scheduler.py":
             continue  # the definition site — never calls itself
-        if _calls_pause_or_resume(py):
+        if _calls_any(py, method_names):
             actual.add(rel)
 
-    unexpected = actual - _ALLOWED_PAUSE_RESUME_CALLERS
+    unexpected = actual - allowlist
     assert not unexpected, (
-        "JobScheduler.pause/.resume called from outside the allowlist — every "
+        f"JobScheduler.{label} called from outside the allowlist — every "
         "state-changing call must go through scheduler/commands.py's handler "
         f"registry (AD-1): {sorted(unexpected)}"
     )
     assert "tools/scheduling/cronjob.py" not in actual, (
-        "cronjob.py still calls JobScheduler.pause/.resume directly — the "
-        "pilot migration (this story's central AC) has regressed"
+        f"cronjob.py still calls JobScheduler.{label} directly — its "
+        "migration (Story 4.3/4.7) has regressed"
     )
-    stale = _ALLOWED_PAUSE_RESUME_CALLERS - actual
+    assert "tools/scheduling/owl_schedule.py" not in actual, (
+        f"owl_schedule.py still calls JobScheduler.{label} directly — its "
+        "migration (Story 4.7) has regressed"
+    )
+    stale = allowlist - actual
     assert not stale, (
-        f"the allowlist names caller(s) that no longer call pause/resume: "
+        f"the allowlist names caller(s) that no longer call {label}: "
         f"{sorted(stale)} — a subset check would not catch this drift"
     )
 
@@ -240,6 +281,18 @@ def test_the_mutator_detector_actually_catches_a_direct_call() -> None:
         and n.func.attr == "pause"
         for n in ast.walk(tree)
     )
+
+
+def test_calls_any_detects_every_declared_group(tmp_path: Path) -> None:
+    """Self-check (red/green proof), for the widened detector: each group's
+    OWN method name(s) are actually caught by :func:`_calls_any`, not merely
+    absent from the real tree by accident."""
+    for method_names in (m for m, _ in _MUTATOR_GROUPS.values()):
+        source = f"async def f(scheduler):\n    await scheduler.{method_names[0]}(job_id)\n"
+        py = tmp_path / f"probe_{method_names[0]}.py"
+        py.write_text(source, encoding="utf-8")
+        assert _calls_any(py, method_names) is True
+        assert _calls_any(py, ("__never_matches__",)) is False
 
 
 # =============================================================================
@@ -335,3 +388,53 @@ def test_the_dynamic_dispatch_detector_does_not_flag_a_dict_lookup() -> None:
         and node.func.id in ("eval", "exec", "getattr")
     ]
     assert hits == []
+
+
+# =============================================================================
+# 5. ObjectiveStore.create/.add_subgoals is called only from objectives/commands.py
+# =============================================================================
+
+#: The ONE handler-registry caller (Story 4.7's own `objectives/commands.py`,
+#: mirrors `scheduler/commands.py`'s placement exactly) — no other file
+#: today legitimately creates an objective row or appends sub-goals to it.
+_OBJECTIVE_STORE_METHODS: tuple[str, ...] = ("create", "add_subgoals")
+_ALLOWED_OBJECTIVE_STORE_CALLERS = frozenset({"objectives/commands.py"})
+
+
+def _files_importing_objective_store() -> list[Path]:
+    files: list[Path] = []
+    for py in sorted(_SRC_ROOT.rglob("*.py")):
+        try:
+            source = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):  # pragma: no cover — not our concern
+            continue
+        if "ObjectiveStore" in source:
+            files.append(py)
+    return files
+
+
+def test_objective_store_create_and_add_subgoals_are_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in _files_importing_objective_store():
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "objectives/store.py":
+            continue  # the definition site — never calls itself
+        if _calls_any(py, _OBJECTIVE_STORE_METHODS):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_OBJECTIVE_STORE_CALLERS
+    assert not unexpected, (
+        "ObjectiveStore.create/.add_subgoals called from outside the "
+        "allowlist — every state-changing call must go through "
+        f"objectives/commands.py's handler (AD-1): {sorted(unexpected)}"
+    )
+    assert "tools/scheduling/objective_tool.py" not in actual, (
+        "objective_tool.py still calls ObjectiveStore.create/.add_subgoals "
+        "directly — its migration (Story 4.7) has regressed"
+    )
+    stale = _ALLOWED_OBJECTIVE_STORE_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call create/"
+        f"add_subgoals: {sorted(stale)} — a subset check would not catch "
+        "this drift"
+    )

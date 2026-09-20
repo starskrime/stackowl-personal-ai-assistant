@@ -191,6 +191,9 @@ async def test_objective_tool_persists_declared_acceptance_end_to_end(
         ),
         tier="standard",
     )
+    import stackowl.objectives.commands  # noqa: F401 -- registration side effect
+    from tests._command_approval import approve_one_parked_command
+
     token = set_services(StepServices(db_pool=db, provider_registry=pr))
     ttoken = TraceContext.start(session_key="sess-acc", interactive=True, channel="cli")
     try:
@@ -203,6 +206,11 @@ async def test_objective_tool_persists_declared_acceptance_end_to_end(
     import json
 
     oid = json.loads(created.output)["objective_id"]
+    # scheduling.set_objective is declared IRREVERSIBLE (Design Notes), so
+    # the tool call above only SUBMITTED — approve it (simulating the
+    # owner's step-up tap) so the objective is actually persisted.
+    approval = await approve_one_parked_command(db, "scheduling.set_objective")
+    assert approval.success
     subs = await ObjectiveStore(db, DEFAULT_PRINCIPAL_ID).list_subgoals(oid)
     by_desc = {s.description: s for s in subs}
     assert by_desc["fetch the video page"].acceptance_criteria is None

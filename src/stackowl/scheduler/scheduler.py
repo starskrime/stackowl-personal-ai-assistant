@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -19,11 +20,14 @@ from stackowl.infra.trace import TraceContext
 from stackowl.journal import ActorKind, JournalEvent, Outcome, RecordRef
 from stackowl.journal import record as journal_record
 from stackowl.journal.job_events import (
+    JobCreatedAttrs,
+    JobDeletedAttrs,
     JobFailedAttrs,
     JobFinishedAttrs,
     JobParkedAttrs,
     JobPausedAttrs,
     JobResumedAttrs,
+    JobSnoozedAttrs,
     JobStartedAttrs,
 )
 
@@ -1674,33 +1678,134 @@ class JobScheduler(SupervisedTask):
             extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
         )
 
-    async def snooze(self, job_id: str, until_iso: str) -> None:
+    async def snooze(
+        self, job_id: str, until_iso: str, *, context: CommandContext | None = None,
+    ) -> None:
         """Snooze a job until ``until_iso``, then let it auto-resume its cadence.
 
         Unlike :meth:`pause` (which disables the row), snooze keeps ``enabled=1``
         and simply pushes ``next_run_at`` into the future: the poller selects
         ``pending AND enabled=1 AND next_run_at <= now``, so the job is silent until
         ``until_iso`` and then fires + re-arms on its normal schedule — no manual
-        resume needed. Survives reconcile (no manifest change → owned-row no-op)."""
+        resume needed. Survives reconcile (no manifest change → owned-row no-op).
+
+        ``context`` (Story 4.7) — see :meth:`pause` for the full contract.
+        The context-given path additionally captures the job's PRIOR
+        ``next_run_at`` as the receipt's undo payload (``{job_id, until:
+        <prior next_run_at>}``) — Story 4.5's undo re-submits exactly that
+        shape (``scheduling.set_owl_schedule`` is reversible → itself) to
+        restore the schedule this snooze displaced."""
         log.scheduler.debug(
             "[scheduler] snooze: entry",
             extra={"_fields": {"job_id": job_id, "until": until_iso}},
         )
-        await self._db.execute(
-            "UPDATE jobs SET status = 'pending', enabled = 1, next_run_at = ? WHERE job_id = ?",
-            (until_iso, job_id),
+        if context is None:
+            await self._db.execute(
+                "UPDATE jobs SET status = 'pending', enabled = 1, next_run_at = ? WHERE job_id = ?",
+                (until_iso, job_id),
+            )
+            await write_audit(self._db, "job_snoozed", job_id, details={"until": until_iso})
+            log.scheduler.info(
+                "[scheduler] snooze: exit",
+                extra={"_fields": {"job_id": job_id, "until": until_iso}},
+            )
+            return
+        rows = await self._db.fetch_all(
+            "SELECT next_run_at FROM jobs WHERE job_id = ?", (job_id,),
         )
-        await write_audit(self._db, "job_snoozed", job_id, details={"until": until_iso})
+        prior_next_run_at = rows[0]["next_run_at"] if rows else None
+        undo_payload = json.dumps({"job_id": job_id, "until": prior_next_run_at})
+        async with self._db.transaction() as conn:
+            newly = await record_command_execution(
+                conn, context.command_id, context.command_type, undo_payload,
+            )
+            if not newly:
+                log.scheduler.info(
+                    "[scheduler] snooze: command already executed — no-op "
+                    "(lease-reclaim re-run)",
+                    extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+                )
+                return
+            await conn.execute(
+                "UPDATE jobs SET status = 'pending', enabled = 1, next_run_at = ? WHERE job_id = ?",
+                (until_iso, job_id),
+            )
+            await journal_record(conn, JournalEvent(
+                type="job.snoozed",
+                schema_version=1,
+                actor_kind=_actor_kind_for_requester(context.requester_kind),
+                actor_id=context.requester_kind,
+                target_kind=ActorKind.OWNER,
+                target_id=job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job_id),
+                attrs=JobSnoozedAttrs(
+                    command_id=context.command_id, until=until_iso[:_MAX_LABEL_LEN],
+                ),
+            ))
+            await write_audit(
+                self._db, "job_snoozed", job_id, actor=context.requester_kind,
+                details={"until": until_iso}, conn=conn,
+            )
         log.scheduler.info(
             "[scheduler] snooze: exit",
             extra={"_fields": {"job_id": job_id, "until": until_iso}},
         )
 
-    async def stop_job(self, job_id: str) -> None:
-        """Permanently remove a job from the schedule."""
+    async def stop_job(
+        self, job_id: str, *, context: CommandContext | None = None,
+    ) -> None:
+        """Permanently remove a job from the schedule (irreversible).
+
+        ``context`` (Story 4.7) — see :meth:`pause` for the full contract.
+        No undo payload is captured: ``scheduling.delete_job`` is declared
+        ``reversible=False`` (deleting a job destroys everything an undo
+        would need to reconstruct it)."""
         log.scheduler.debug("[scheduler] stop_job: entry", extra={"_fields": {"job_id": job_id}})
-        await self._db.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
-        await write_audit(self._db, "job_stopped", job_id)
+        if context is None:
+            await self._db.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            await write_audit(self._db, "job_stopped", job_id)
+            log.scheduler.info("[scheduler] stop_job: exit", extra={"_fields": {"job_id": job_id}})
+            return
+        async with self._db.transaction() as conn:
+            newly = await record_command_execution(
+                conn, context.command_id, context.command_type,
+            )
+            if not newly:
+                log.scheduler.info(
+                    "[scheduler] stop_job: command already executed — no-op "
+                    "(lease-reclaim re-run)",
+                    extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+                )
+                return
+            cursor = await conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            if cursor.rowcount == 0:
+                # A DIFFERENT, independently-approved delete_job command
+                # (its OWN command_id, so `newly` above is legitimately
+                # True) already found this job gone — a second approval of
+                # the same removal, or a race with another deleter. Never
+                # fabricate a job.deleted event / audit success for a
+                # deletion that did not happen here.
+                log.scheduler.info(
+                    "[scheduler] stop_job: job already gone — no-op "
+                    "(a different command already deleted it)",
+                    extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+                )
+                return
+            await journal_record(conn, JournalEvent(
+                type="job.deleted",
+                schema_version=1,
+                actor_kind=_actor_kind_for_requester(context.requester_kind),
+                actor_id=context.requester_kind,
+                target_kind=ActorKind.OWNER,
+                target_id=job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job_id),
+                attrs=JobDeletedAttrs(command_id=context.command_id),
+            ))
+            await write_audit(
+                self._db, "job_stopped", job_id, actor=context.requester_kind, conn=conn,
+            )
         log.scheduler.info("[scheduler] stop_job: exit", extra={"_fields": {"job_id": job_id}})
 
     async def recover(self, replay_window_hours: int = 24) -> int:
@@ -1841,6 +1946,7 @@ class JobScheduler(SupervisedTask):
         target_channels: list[str] | None = None,
         target_addresses: dict[str, str | int] | None = None,
         preauthorized_command_types: list[str] | None = None,
+        context: CommandContext | None = None,
     ) -> Job:
         """Insert and return a new ``jobs`` row.
 
@@ -1853,11 +1959,33 @@ class JobScheduler(SupervisedTask):
         command types this job DECLARES it needs to run unattended, scoped
         implicitly to this job's own ``job_id``. A static declaration only;
         defaults to empty — every existing caller stays byte-identical.
+
+        ``context`` (Story 4.7) — UNLIKE :meth:`pause`/``resume``/etc, ``job_id``
+        is a FRESH random id minted on every call, so a naive
+        receipt-check-inside-the-transaction would still fabricate a second id
+        before discovering the command already ran. Instead: a prior receipt's
+        captured ``job_id`` (written as this call's own undo payload on its
+        FIRST successful run — it is also exactly what ``scheduling.delete_job``,
+        this command's own undo, needs) is checked FIRST; a lease-reclaim
+        re-run reads it back and returns the SAME job, never minting a second
+        one. ``context=None`` (every pre-4.7 caller) is byte-identical to
+        before this story.
         """
         log.scheduler.debug(
             "[scheduler] create_job: entry",
             extra={"_fields": {"handler": handler_name, "schedule": schedule}},
         )
+        if context is not None:
+            reused = await self._existing_created_job(context.command_id)
+            if reused is not None:
+                log.scheduler.info(
+                    "[scheduler] create_job: command already executed — "
+                    "returning the SAME job (lease-reclaim re-run)",
+                    extra={"_fields": {
+                        "job_id": reused.job_id, "command_id": context.command_id,
+                    }},
+                )
+                return reused
         job_id = f"{handler_name}-{uuid.uuid4().hex[:8]}"
         next_run = compute_next_run(schedule, tz=self._tz)
         job = Job(
@@ -1875,12 +2003,95 @@ class JobScheduler(SupervisedTask):
             target_addresses=dict(target_addresses or {}),
             preauthorized_command_types=list(preauthorized_command_types or []),
         )
-        await insert_job(self._db, job)
+        if context is None:
+            await insert_job(self._db, job)
+            log.scheduler.info(
+                "[scheduler] create_job: exit",
+                extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
+            )
+            return job
+        undo_payload = json.dumps({"job_id": job_id})
+        async with self._db.transaction() as conn:
+            newly = await record_command_execution(
+                conn, context.command_id, context.command_type, undo_payload,
+            )
+            if not newly:
+                # TOCTOU: another caller recorded the receipt between the
+                # pre-check above and here — re-read its job rather than
+                # inserting a second row under a job_id nobody will ever undo.
+                reused = await self._existing_created_job(context.command_id)
+                if reused is not None:
+                    log.scheduler.info(
+                        "[scheduler] create_job: lost a race to a concurrent "
+                        "caller — returning the SAME job",
+                        extra={"_fields": {
+                            "job_id": reused.job_id, "command_id": context.command_id,
+                        }},
+                    )
+                    return reused
+                log.scheduler.error(
+                    "[scheduler] create_job: receipt exists but its job could "
+                    "not be re-read — this should be unreachable",
+                    extra={"_fields": {"command_id": context.command_id}},
+                )
+                # NEVER hand back the freshly-built, NEVER-INSERTED `job` here
+                # as if it succeeded — that is a phantom success (a Job
+                # object describing a row that does not exist). Raising lets
+                # this propagate through the handler to submit_command's own
+                # broad exception handling, which reports a real
+                # CommandOutcome(success=False, ...) instead.
+                raise RuntimeError(
+                    f"create_job: command {context.command_id!r} has a receipt "
+                    "but its job could not be re-read — refusing to report a "
+                    "phantom success"
+                )
+            await insert_job(self._db, job, conn=conn)
+            await journal_record(conn, JournalEvent(
+                type="job.created",
+                schema_version=1,
+                actor_kind=_actor_kind_for_requester(context.requester_kind),
+                actor_id=context.requester_kind,
+                target_kind=ActorKind.OWNER,
+                target_id=job_id,
+                outcome=Outcome.OK,
+                record_ref=_job_record_ref(job_id),
+                attrs=JobCreatedAttrs(command_id=context.command_id),
+            ))
+            await write_audit(
+                self._db, "job_created", job_id, actor=context.requester_kind, conn=conn,
+            )
         log.scheduler.info(
             "[scheduler] create_job: exit",
             extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
         )
         return job
+
+    async def _existing_created_job(self, command_id: str) -> Job | None:
+        """The job a PRIOR ``create_job(context=...)`` call for *command_id*
+        already inserted, read back via its receipt's captured
+        ``undo_payload`` (``{"job_id": ...}``) — ``None`` when no such receipt
+        exists, it captured nothing, or the job it names is somehow gone."""
+        rows = await self._db.fetch_all(
+            "SELECT undo_payload FROM command_receipts WHERE command_id = ?",
+            (command_id,),
+        )
+        if not rows or not rows[0]["undo_payload"]:
+            return None
+        try:
+            captured_job_id = json.loads(rows[0]["undo_payload"]).get("job_id")
+        except (ValueError, TypeError, AttributeError) as exc:  # B5 — never raise
+            log.scheduler.warning(
+                "[scheduler] create_job: undo_payload was not the expected shape",
+                exc_info=exc,
+                extra={"_fields": {"command_id": command_id}},
+            )
+            return None
+        if not captured_job_id:
+            return None
+        job_rows = await self._db.fetch_all(
+            "SELECT * FROM jobs WHERE job_id = ?", (captured_job_id,),
+        )
+        return row_to_job(job_rows[0]) if job_rows else None
 
     async def list_jobs(self) -> list[Job]:
         """Return every row in the ``jobs`` table as :class:`Job` objects."""
@@ -1897,15 +2108,20 @@ class JobScheduler(SupervisedTask):
         schedule: str | None = None,
         goal: str | None = None,
         params: dict[str, object] | None = None,
+        context: CommandContext | None = None,
     ) -> Job | None:
         """Update a job in place — thin delegate to ``scheduler_mutations`` (B2)."""
         return await update_job(
-            self._db, job_id, schedule=schedule, goal=goal, params=params, tz=self._tz
+            self._db, job_id, schedule=schedule, goal=goal, params=params, tz=self._tz,
+            context=context,
         )
 
-    async def run_now(self, job_id: str) -> JobResult | None:
+    async def run_now(
+        self, job_id: str, *, context: CommandContext | None = None,
+    ) -> JobResult | None:
         """Run one job out of band — thin delegate; mirrors the poller's CAS (B2) and
         settles a one-shot through the poller's own disposition (``_settle``)."""
         return await run_now(
             self._db, self._clock, self._registry, job_id, tz=self._tz, settle=self._settle,
+            context=context,
         )

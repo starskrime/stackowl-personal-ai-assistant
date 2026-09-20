@@ -218,10 +218,19 @@ async def test_pause_resume_remove(migrated_db: DbPool) -> None:
 
     assert (await _run(migrated_db, action="pause", job_id=job_id)).success
     assert (await _run(migrated_db, action="resume", job_id=job_id)).success
-    assert (await _run(migrated_db, action="remove", job_id=job_id)).success
+    # Story 4.7 — scheduling.delete_job is declared IRREVERSIBLE (Design
+    # Notes), so an owner's own "remove" now parks awaiting step-up rather
+    # than completing instantly; see
+    # tests/tools/test_cronjob_create_update_remove_run_go_through_commands.py
+    # for the full pending-approval coverage. This call still succeeds
+    # (the SUBMISSION succeeded), but nothing is deleted yet.
+    remove_result = await _run(migrated_db, action="remove", job_id=job_id)
+    assert remove_result.success
+    remove_body = _payload(remove_result)
+    assert remove_body["pending_approval"] is True
 
     remaining = {j.job_id for j in await JobScheduler(db=migrated_db).list_jobs()}
-    assert job_id not in remaining
+    assert job_id in remaining
 
 
 async def test_update_rescans_and_recomputes(migrated_db: DbPool) -> None:
@@ -251,6 +260,15 @@ async def test_update_rescans_and_recomputes(migrated_db: DbPool) -> None:
 
 
 async def test_run_now_executes_handler(migrated_db: DbPool) -> None:
+    """Story 4.7 — scheduling.run_now_job is declared IRREVERSIBLE (Design
+    Notes), so the cronjob TOOL's own "run" action now parks awaiting
+    step-up for an owner call (see
+    tests/tools/test_cronjob_create_update_remove_run_go_through_commands.py).
+    The genuine dispatch this test exists to prove — the scheduler actually
+    invoking the handler, with the freshness preamble intact — lives one
+    layer down, in JobScheduler.run_now itself (unchanged, still called by
+    scheduling.run_now_job's handler once a command is approved), so this
+    calls it directly rather than through the now-gated tool action."""
     await _seed_session(migrated_db)
     backend = _StubBackend()
     _register_handler(backend, migrated_db)
@@ -259,9 +277,9 @@ async def test_run_now_executes_handler(migrated_db: DbPool) -> None:
     )
     job_id = created["job_id"]
 
-    ran = _payload(await _run(migrated_db, action="run", job_id=job_id))
-    assert ran["ran"] is True
-    assert ran["success"] is True
+    result = await JobScheduler(db=migrated_db).run_now(job_id)
+
+    assert result is not None and result.success is True
     assert len(backend.calls) == 1
     # goal_execution.py prefixes every run with a freshness preamble (today's
     # date + "fetch current data" instruction, see GoalExecutionHandler) so a
@@ -276,6 +294,13 @@ async def test_run_now_already_running_is_not_reported_as_failure(migrated_db: D
     # echoed as {"success": false, "error": "..."} in cronjob's JSON payload,
     # which downstream floor synthesis misread as "capability failed: cronjob"
     # even though the scheduled delivery went on to succeed moments later.
+    #
+    # Story 4.7 — this shaping now lives in scheduler/commands.py's
+    # ``_run_now_job_handler`` (``scheduling.run_now_job`` is IRREVERSIBLE,
+    # so the tool-level "run" action itself now parks for an owner call —
+    # see test_run_now_executes_handler's docstring above). Calling the
+    # REGISTERED handler directly here exercises the exact same shaping
+    # logic, one layer below the now-gated tool call.
     await _seed_session(migrated_db)
     backend = _StubBackend()
     _register_handler(backend, migrated_db)
@@ -287,7 +312,25 @@ async def test_run_now_already_running_is_not_reported_as_failure(migrated_db: D
         "UPDATE jobs SET status = 'running' WHERE job_id = ?", (job_id,)
     )
 
-    ran = _payload(await _run(migrated_db, action="run", job_id=job_id))
+    from stackowl.commands.spec.context import CommandContext
+    from stackowl.commands.spec.handlers import CommandHandlerRegistry
+    from stackowl.scheduler.commands import JobLifecyclePayload
+
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        handler = CommandHandlerRegistry.get("scheduling.run_now_job")
+        outcome = await handler(
+            JobLifecyclePayload(job_id=job_id),
+            CommandContext(
+                command_id="cmd-race-1", command_type="scheduling.run_now_job",
+                requester_kind="owner",
+            ),
+        )
+    finally:
+        reset_services(token)
+
+    assert outcome.success is True
+    ran = outcome.result
     assert ran["ran"] is False
     assert "success" not in ran
     assert "error" not in ran
@@ -470,8 +513,13 @@ async def test_clarify_inside_cron_run_does_not_park(migrated_db: DbPool) -> Non
     created = _payload(
         await _run(migrated_db, action="create", prompt="tidy notes", schedule="daily@09:00")
     )
-    ran = _payload(await _run(migrated_db, action="run", job_id=created["job_id"]))
-    assert ran["success"] is True
+    # Story 4.7 — scheduling.run_now_job is IRREVERSIBLE, so the tool-level
+    # "run" action itself now parks for an owner call; this test is about
+    # the scheduler's own dispatch (clarify must not park mid-run), so it
+    # calls JobScheduler.run_now directly, the same mutator the command
+    # handler calls once approved.
+    result = await JobScheduler(db=migrated_db).run_now(created["job_id"])
+    assert result is not None and result.success is True
     assert backend.clarify_result is not None
     # The clarify returned the non-interactive sentinel (did not park).
     assert backend.clarify_result.success is True
@@ -940,9 +988,12 @@ async def test_verify_returns_none_when_scheduler_read_raises(
 
 
 async def test_verify_remove_observes_row_gone(migrated_db: DbPool) -> None:
-    """remove lands → row genuinely DELETEd → verify re-reads and confirms
-    absence ⇒ verified=True. This is the live incident: cronjob.remove
-    succeeded but the turn was floored as if it hadn't."""
+    """remove lands (post-approval — simulated here with a direct scheduler
+    call, since the tool-level 'remove' is IRREVERSIBLE and always parks for
+    step-up as an owner call, Story 4.7) → row genuinely DELETEd → verify
+    re-reads and confirms absence ⇒ verified=True. This is the live
+    incident: cronjob.remove succeeded but the turn was floored as if it
+    hadn't."""
     import time
 
     await _seed_session(migrated_db)
@@ -950,8 +1001,11 @@ async def test_verify_remove_observes_row_gone(migrated_db: DbPool) -> None:
         await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
     )
     job_id = created["job_id"]
-    remove_result = await _run(migrated_db, action="remove", job_id=job_id)
-    assert remove_result.success
+    await JobScheduler(db=migrated_db).stop_job(job_id)
+    remove_result = ToolResult(
+        success=True, output=json.dumps({"remove": True, "job_id": job_id}),
+        error=None, duration_ms=1.0,
+    )
 
     token = set_services(StepServices(db_pool=migrated_db))
     try:
@@ -1158,3 +1212,62 @@ async def test_call_seam_runs_verify_and_stamps_verified_true(migrated_db: DbPoo
         reset_services(token)
     assert result.success
     assert result.verified is True
+
+
+async def test_call_seam_leaves_a_pending_approval_remove_unverified(
+    migrated_db: DbPool,
+) -> None:
+    """End-to-end through __call__ — Story 4.7: scheduling.delete_job is
+    IRREVERSIBLE, so an owner "remove" parks awaiting step-up
+    (side_effect_committed=False) rather than completing. `verify()`'s own
+    `if not result.side_effect_committed: return None` guard must actually
+    fire through the REAL `Tool.__call__` -> `.verify()` path, not just when
+    `.execute()` is called directly — otherwise the real per-turn pipeline
+    would score an honest step-up submission `verified=False` ("claimed
+    success but verification FAILED"), which is a lying-success FALSE
+    POSITIVE on the honesty layer for a request that never lied."""
+    await _seed_session(migrated_db)
+    token = set_services(StepServices(db_pool=migrated_db))
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
+    try:
+        created = _payload(
+            await CronjobTool()(action="create", prompt="x", schedule="every 2h")
+        )
+        job_id = created["job_id"]
+
+        result = await CronjobTool()(action="remove", job_id=job_id)
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+
+    assert result.success
+    body = _payload(result)
+    assert body["pending_approval"] is True
+    assert result.side_effect_committed is False
+    assert result.verified is None
+
+
+async def test_call_seam_leaves_a_pending_approval_run_unverified(
+    migrated_db: DbPool,
+) -> None:
+    """See :func:`test_call_seam_leaves_a_pending_approval_remove_unverified`
+    — same proof, for scheduling.run_now_job (also IRREVERSIBLE)."""
+    await _seed_session(migrated_db)
+    token = set_services(StepServices(db_pool=migrated_db))
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
+    try:
+        created = _payload(
+            await CronjobTool()(action="create", prompt="x", schedule="every 2h")
+        )
+        job_id = created["job_id"]
+
+        result = await CronjobTool()(action="run", job_id=job_id)
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+
+    assert result.success
+    body = _payload(result)
+    assert body["pending_approval"] is True
+    assert result.side_effect_committed is False
+    assert result.verified is None

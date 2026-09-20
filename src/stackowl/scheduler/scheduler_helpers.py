@@ -578,18 +578,28 @@ def row_to_job(row: dict[str, Any]) -> Job:
     )
 
 
-async def insert_job(db: DbPool, job: Job) -> None:
-    """Insert a new ``jobs`` row from a :class:`Job` instance."""
+async def insert_job(
+    db: DbPool, job: Job, *, conn: aiosqlite.Connection | None = None,
+) -> None:
+    """Insert a new ``jobs`` row from a :class:`Job` instance.
+
+    ``conn`` (Story 4.7) -- pass the live connection of an already-open
+    ``DbPool.transaction()`` block so ``create_job``'s idempotency receipt,
+    this insert and its ``job.created`` journal event all commit or roll
+    back together (AD-26). ``None`` (every pre-existing caller) executes on
+    ``db`` directly, byte-identical to before.
+    """
     log.scheduler.debug(
         "[scheduler] insert_job: entry",
         extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
     )
     now_iso = datetime.now(UTC).isoformat()
+    executor = conn if conn is not None else db
     # claimed_at is written by the CAS claim in normal operation, never by an
     # insert. It is applied here as a follow-up UPDATE only when the caller
     # supplied one, so a test can build a row that is ALREADY claimed without
     # widening _INSERT_JOB_SQL (whose column list several callers share).
-    await db.execute(
+    await executor.execute(
         _INSERT_JOB_SQL,
         (
             job.job_id,
@@ -629,7 +639,7 @@ async def insert_job(db: DbPool, job: Job) -> None:
         ),
     )
     if job.claimed_at is not None:
-        await db.execute(
+        await executor.execute(
             "UPDATE jobs SET claimed_at = ? WHERE job_id = ?",
             (job.claimed_at, job.job_id),
         )

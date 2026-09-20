@@ -33,10 +33,8 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.objectives.decomposer import ObjectiveDecomposer
-from stackowl.objectives.model import Objective, SubgoalSpec
-from stackowl.objectives.store import ObjectiveStore
+from stackowl.objectives.model import SubgoalSpec
 from stackowl.pipeline.services import get_services
-from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.scheduling.cron_security import scan_cron_prompt
 
@@ -190,46 +188,34 @@ class ObjectiveTool(Tool):
         if repo:
             from stackowl.tools.system.git_tool import current_branch
 
+            # A READ, not a mutation (git branch --show-current) — stays in
+            # the tool. The MUTATING `git branch <name>` create moved into
+            # the command handler (see below).
             base_branch = await current_branch(repo)
             if base_branch is None:
                 return self._err(f"could not determine the current branch in {repo!r}", t0)
             integration_branch = f"stackowl/epic-{objective_id}"
 
-        objective = Objective(
-            objective_id=objective_id,
-            owner_id=DEFAULT_PRINCIPAL_ID,
-            intent=intent,
-            channel=channel_str,
-            session_key=lane_str,
-            target_channels=target_channels,
-            target_addresses=target_addresses,
-            repo=repo,
-            integration_branch=integration_branch,
-            base_branch=base_branch,
-        )
+        # AD-26 ("no model call in a handler") — decomposition runs HERE,
+        # upstream of submit_command, not inside the command handler. A
+        # side effect: an invalid EPIC dependency graph is refused before
+        # any objective row exists at all, instead of the old
+        # create-then-mark-abandoned sequence (Design Notes: a strict
+        # improvement, not a behavior change this story set out to make).
+        #
+        # The try/except ALSO covers submit_command below (never just
+        # decomposition) — mirrors cronjob.py's own execute()/`_dispatch`
+        # shape, whose entire command-submitting dispatch is wrapped B5-style.
+        # submit_command's own `store.create(task)` insert is unguarded for
+        # any DB failure other than the specific command_id-collision
+        # UNIQUE-constraint text it checks for, so a raise from it must not
+        # escape this tool either.
         try:
+            decomposer = (
+                ObjectiveDecomposer(services.provider_registry)
+                if services.provider_registry else None
+            )
             if repo:
-                from stackowl.tools.system.shell import run_argv
-
-                assert integration_branch is not None  # set above whenever repo is set
-                branch_result = await run_argv(
-                    ["git", "branch", integration_branch],
-                    tool_name="git", workdir=repo, intent="write",
-                )
-                if not branch_result.success:
-                    return self._err(
-                        f"could not create integration branch: {branch_result.error}", t0,
-                    )
-
-            store = ObjectiveStore(db, DEFAULT_PRINCIPAL_ID)
-            await store.create(objective)
-            await store.append_event(objective_id, "created", intent)
-
-            if repo:
-                decomposer = (
-                    ObjectiveDecomposer(services.provider_registry)
-                    if services.provider_registry else None
-                )
                 specs = (
                     await decomposer.decompose_epic_specs(intent)
                     if decomposer else [SubgoalSpec(description=intent)]
@@ -238,37 +224,79 @@ class ObjectiveTool(Tool):
 
                 graph_error = validate_graph(specs)
                 if graph_error is not None:
-                    await store.update_status(objective_id, "abandoned")
                     return self._err(
                         f"invalid story dependency graph ({graph_error.kind}): "
                         f"{graph_error.detail}",
                         t0,
                     )
             else:
-                decomposer = (
-                    ObjectiveDecomposer(services.provider_registry)
-                    if services.provider_registry else None
-                )
                 specs = (
                     await decomposer.decompose_specs(intent)
                     if decomposer else [SubgoalSpec(description=intent)]
                 )
 
-            await store.add_subgoals(objective_id, specs)
-            await store.append_event(
-                objective_id, "decomposed", f"{len(specs)} step(s)"
+            from stackowl.commands.spec.submit import submit_command
+
+            submission = await submit_command(
+                db, "scheduling.set_objective",
+                {
+                    "objective_id": objective_id,
+                    "intent": intent,
+                    "channel": channel_str,
+                    "session_key": lane_str,
+                    "target_channels": target_channels,
+                    "target_addresses": target_addresses,
+                    "repo": repo,
+                    "integration_branch": integration_branch,
+                    "base_branch": base_branch,
+                    "subgoals": [s.model_dump() for s in specs],
+                },
             )
-            # The payload surfaces plain step descriptions (the criteria are an
-            # internal acceptance concern, persisted on the sub-goal rows).
-            subgoals = [s.description for s in specs]
         except Exception as exc:  # B5 — never raise out of a tool
             log.tool.error(
-                "objective.execute: persist failed — degrading",
+                "objective.execute: decomposition or submission failed — degrading",
                 exc_info=exc,
                 extra={"_fields": {"objective_id": objective_id}},
             )
-            return self._err("could not create the objective (a storage error occurred)", t0)
+            return self._err(
+                "could not create the objective (a decomposition or submission "
+                "error occurred)", t0,
+            )
 
+        outcome = submission.outcome
+        if outcome is None:
+            # scheduling.set_objective is IRREVERSIBLE, so the gate demands
+            # step-up for EVERY requester kind, including the owner
+            # (Design Notes) — this is the ORDINARY path, not a race: the
+            # command is parked awaiting the owner's approval, and nothing
+            # is persisted yet — side_effect_committed=False keeps the
+            # give-up floor honest about that. The decomposed plan is
+            # surfaced anyway (it already ran, in the tool, before this
+            # point) — the tool's own docstring's "so the user immediately
+            # sees the plan" promise holds even while approval is pending.
+            result = self._ok(
+                {
+                    "created": False,
+                    "pending_approval": True,
+                    "objective_id": objective_id,
+                    "subgoals": [s.description for s in specs],
+                    "step_count": len(specs),
+                    "note": (
+                        "creating an objective is irreversible and needs your "
+                        "approval — check pending approvals to confirm it."
+                    ),
+                },
+                t0,
+            )
+            return result.model_copy(update={"side_effect_committed": False})
+        if not outcome.success:
+            return self._err(
+                f"could not create the objective: {outcome.error or 'command refused'}", t0,
+            )
+
+        # The payload surfaces plain step descriptions (the criteria are an
+        # internal acceptance concern, persisted on the sub-goal rows).
+        subgoals = [s.description for s in specs]
         payload: dict[str, object] = {
             "created": True,
             "objective_id": objective_id,

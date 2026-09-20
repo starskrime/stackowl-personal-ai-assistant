@@ -1137,6 +1137,7 @@ class StartupOrchestrator:
                 "[startup] gateway: owl wiring audit failed — starting anyway",
                 exc_info=exc,
             )
+        from stackowl.objectives.journal_names import register_objective_name_resolver
         from stackowl.pipeline.durable.journal_names import register_task_name_resolver
         from stackowl.pipeline.durable.store import DurableTaskStore
         from stackowl.scheduler.journal_names import (
@@ -1179,6 +1180,8 @@ class StartupOrchestrator:
         # Story 2.6 -- the job/heal/health NameResolvers, same reason.
         register_job_name_resolver(db_pool)
         register_subsystem_name_resolver()
+        # Story 4.7 -- the objective NameResolver, same reason.
+        register_objective_name_resolver(db_pool)
 
         # Story 2.8 -- wire the module-global DbPool every `CuratedMemory`
         # instance journals writes through (mirrors `providers/registry.py`'s
@@ -2323,7 +2326,10 @@ class StartupOrchestrator:
         # Code Map: "do not invent a second registration hook."
         # Story 4.6 — same shape, for authority.grant/authority.revoke (the
         # ONLY two CommandSpecs that ever write standing_authority).
+        # Story 4.7 — same shape again, for scheduling.set_objective (the
+        # ONLY CommandSpec that ever writes an objectives row).
         import stackowl.authz.commands  # noqa: F401
+        import stackowl.objectives.commands  # noqa: F401
         import stackowl.scheduler.commands  # noqa: F401
         from stackowl.commands.assembly import CommandDeps, register_all_commands
         from stackowl.integrations.registry import IntegrationRegistry

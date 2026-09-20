@@ -98,6 +98,11 @@ class RecordKind(StrEnum):
     #: authz-owned record of WHO may act without the owner attending,
     #: scoped by command type (AD-27, NFR30).
     AUTHORITY = "authority"
+    #: Story 4.7 — an objective's own lifecycle (``objective.set``), emitted
+    #: from ``objectives.commands``'s ``scheduling.set_objective`` handler.
+    #: No existing member fits: an objective is its own durable entity
+    #: (``objectives`` table), distinct from a scheduler ``JOB`` row.
+    OBJECTIVE = "objective"
 
 
 class NeedsYouKind(StrEnum):

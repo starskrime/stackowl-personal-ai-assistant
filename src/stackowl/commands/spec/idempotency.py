@@ -25,7 +25,7 @@ from stackowl.infra.observability import log
 
 
 async def record_command_execution(
-    conn: Any, command_id: str, command_type: str,
+    conn: Any, command_id: str, command_type: str, undo_payload: str | None = None,
 ) -> bool:
     """Record that *command_id* is about to execute, on the caller's OWN
     already-open transaction connection.
@@ -35,16 +35,25 @@ async def record_command_execution(
     subsequent call for the SAME ``command_id`` (a lease-reclaim re-run, or
     any other replay -- the caller must short-circuit: no-op, never re-apply
     the mutation or re-record the domain event).
+
+    ``undo_payload`` (Story 4.7, migration 0154) -- an OPTIONAL JSON string a
+    mutator captures alongside its receipt, holding whatever "restore-to"
+    state its own undo needs (e.g. a job's prior ``{schedule, goal}`` before
+    an edit). ``None`` (every 4.3/4.5/4.6 caller) writes ``NULL``, byte-
+    identical to before this column existed.
     """
     # 1. ENTRY
     log.tasks.debug(
         "[commands] idempotency.record_command_execution: entry",
-        extra={"_fields": {"command_id": command_id, "command_type": command_type}},
+        extra={"_fields": {
+            "command_id": command_id, "command_type": command_type,
+            "has_undo_payload": undo_payload is not None,
+        }},
     )
     cursor = await conn.execute(
-        "INSERT OR IGNORE INTO command_receipts (command_id, command_type, executed_at) "
-        "VALUES (?, ?, ?)",
-        (command_id, command_type, datetime.now(UTC).isoformat()),
+        "INSERT OR IGNORE INTO command_receipts "
+        "(command_id, command_type, executed_at, undo_payload) VALUES (?, ?, ?, ?)",
+        (command_id, command_type, datetime.now(UTC).isoformat(), undo_payload),
     )
     newly_recorded = bool(cursor.rowcount == 1)
     # 4. EXIT

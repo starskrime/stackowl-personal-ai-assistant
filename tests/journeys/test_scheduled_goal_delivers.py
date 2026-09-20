@@ -47,6 +47,12 @@ from typing import Any, cast
 
 import pytest
 
+# Registration side effect (mirrors journal/task_events.py's own shape) — the
+# scheduling.create_job CommandSpec/handler `_create_goal_via_tool` submits
+# through. Production gets this for free from startup/orchestrator.py's boot
+# import; a test that builds CronjobTool directly, with no orchestrator
+# boot, needs it explicitly (Story 4.7).
+import stackowl.scheduler.commands  # noqa: F401
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import BriefSettings, Settings, SystemSettings

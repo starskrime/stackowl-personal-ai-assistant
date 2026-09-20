@@ -45,10 +45,19 @@ _ASSEMBLY = _ROOT / "src" / "stackowl" / "scheduler" / "assembly.py"
 
 
 def _create_job_calls(path: Path) -> list[dict[str, ast.expr]]:
-    """Every `create_job(...)` call in *path*, as its keyword mapping.
+    """Every job-creation call in *path*, as its keyword mapping.
 
     Read from the AST rather than by grepping: the defect is a keyword that is
     ABSENT, and absence is exactly what a text search cannot see.
+
+    Story 4.7 — ``cronjob.py``'s ``_create``/``_watch`` no longer call
+    ``JobScheduler.create_job`` directly; they call ``self.
+    _submit_create_job(...)`` (which submits ``scheduling.create_job``
+    through the one door). The keyword this test cares about
+    (``replay_missed``) still lives as a literal keyword argument at that
+    SAME call site — only the callee's name changed — so both names are
+    scanned, matching this file's own "the flag appears on no tool ...
+    surface" wording for either shape.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     out: list[dict[str, ast.expr]] = []
@@ -57,7 +66,7 @@ def _create_job_calls(path: Path) -> list[dict[str, ast.expr]]:
             continue
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name == "create_job":
+        if name in ("create_job", "_submit_create_job"):
             out.append({kw.arg: kw.value for kw in node.keywords if kw.arg})
     return out
 

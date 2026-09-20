@@ -95,6 +95,46 @@ class JobResumedAttrs(JournalAttrsBase):
     command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
 
 
+class JobCreatedAttrs(JournalAttrsBase):
+    """``job.created`` -- Story 4.7: ``JobScheduler.create_job`` committed,
+    driven through a COMMAND task (``scheduling.create_job``). ``command_id``
+    is ``None`` only for a legacy direct call (``context=None``)."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
+class JobEditedAttrs(JournalAttrsBase):
+    """``job.edited`` -- Story 4.7: ``scheduler_mutations.update_job``
+    committed, driven through a COMMAND task (``scheduling.edit_job``)."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
+class JobDeletedAttrs(JournalAttrsBase):
+    """``job.deleted`` -- Story 4.7: ``JobScheduler.stop_job`` committed,
+    driven through a COMMAND task (``scheduling.delete_job``)."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
+class JobRunNowTriggeredAttrs(JournalAttrsBase):
+    """``job.run_now_triggered`` -- Story 4.7: ``scheduler_mutations.run_now``
+    was invoked out of band, driven through a COMMAND task
+    (``scheduling.run_now_job``). Distinct from ``job.started`` (the CAS
+    dispatch claim, fired for EVERY run whether scheduled or manual) — this
+    marks specifically that a COMMAND asked for the out-of-band trigger."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+
+
+class JobSnoozedAttrs(JournalAttrsBase):
+    """``job.snoozed`` -- Story 4.7: ``JobScheduler.snooze`` committed,
+    driven through a COMMAND task (``scheduling.set_owl_schedule``)."""
+
+    command_id: str | None = Field(default=None, max_length=_MAX_LABEL_LEN)
+    until: str = Field(max_length=_MAX_LABEL_LEN)
+
+
 def _narrate_started(attrs: JournalAttrsBase, name: str) -> str:
     return f"Job {name} started."
 
@@ -120,6 +160,27 @@ def _narrate_paused(attrs: JournalAttrsBase, name: str) -> str:
 
 def _narrate_resumed(attrs: JournalAttrsBase, name: str) -> str:
     return f"Job {name} resumed."
+
+
+def _narrate_created(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Job {name} created."
+
+
+def _narrate_edited(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Job {name} edited."
+
+
+def _narrate_deleted(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Job {name} deleted."
+
+
+def _narrate_run_now_triggered(attrs: JournalAttrsBase, name: str) -> str:
+    return f"Job {name} triggered to run now."
+
+
+def _narrate_snoozed(attrs: JournalAttrsBase, name: str) -> str:
+    snoozed = cast(JobSnoozedAttrs, attrs)
+    return f"Job {name} snoozed until {snoozed.until}."
 
 
 def _register() -> None:
@@ -163,6 +224,37 @@ def _register() -> None:
         emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
         attention_class=AttentionClass.AMBIENT, intensity=None,
         table=_TABLE, narrate=_narrate_resumed,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.created", schema_version=1, attrs_model=JobCreatedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_created,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.edited", schema_version=1, attrs_model=JobEditedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_edited,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.deleted", schema_version=1, attrs_model=JobDeletedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_deleted,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.run_now_triggered", schema_version=1,
+        attrs_model=JobRunNowTriggeredAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_run_now_triggered,
+    ))
+    registry.register(EventTypeSpec(
+        type="job.snoozed", schema_version=1, attrs_model=JobSnoozedAttrs,
+        emitting_process=_EMITTING_PROCESS, record_kind=RecordKind.JOB,
+        attention_class=AttentionClass.AMBIENT, intensity=None,
+        table=_TABLE, narrate=_narrate_snoozed,
     ))
 
 

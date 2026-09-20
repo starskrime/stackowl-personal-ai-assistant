@@ -1,9 +1,23 @@
 """ObjectiveTool — the agent-callable producer for standing objectives (1D).
 
 The assistant calls this when the user asks it to hold a standing objective
-("keep an eye on X and handle it"). It creates the objective, decomposes it
-eagerly into ordered sub-goals (so the user sees the plan), captures the durable
-delivery target, and persists everything — the driver then advances it.
+("keep an eye on X and handle it"). It decomposes it eagerly into ordered
+sub-goals (so the user sees the plan BEFORE anything is persisted — AD-26:
+no model call in a command handler, so decomposition runs here, upstream of
+``submit_command``), captures the durable delivery target, then submits
+``scheduling.set_objective`` — never calling ``ObjectiveStore`` directly
+(Story 4.7, AD-1).
+
+``scheduling.set_objective`` is declared IRREVERSIBLE (Design Notes), so the
+action-policy gate demands step-up for EVERY requester kind, including the
+owner: an ordinary call from here gets back ``outcome is None`` (parked
+awaiting approval) and creates nothing yet. The actual persistence + the
+git-branch-failure path are exercised end-to-end against the command
+handler directly in
+``tests/objectives/test_set_objective_is_a_command.py``; this file proves
+the TOOL's own behavior — decompose-then-submit ordering, the honest
+pending-approval payload, and every pre-submit refusal path (still
+unaffected: none of them reach ``submit_command`` at all).
 """
 
 from __future__ import annotations
@@ -16,6 +30,11 @@ from typing import Any
 
 import pytest
 
+# Registration side effect (mirrors journal/task_events.py's own shape) — the
+# scheduling.set_objective CommandSpec/handler. Production gets this for free
+# from startup/orchestrator.py's boot import; a test that builds ObjectiveTool
+# directly, with no orchestrator boot, needs it explicitly.
+import stackowl.objectives.commands  # noqa: F401
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveStore
@@ -63,26 +82,35 @@ def _payload(result: ToolResult) -> dict[str, Any]:
     return json.loads(result.output)
 
 
-async def test_create_persists_objective_and_decomposes(migrated_db: DbPool) -> None:
+async def test_create_decomposes_then_submits_pending_approval(migrated_db: DbPool) -> None:
+    """scheduling.set_objective is IRREVERSIBLE (Design Notes), so an owner's
+    own call parks awaiting step-up rather than completing instantly —
+    Decomposition already ran (in the tool, upstream of submit_command:
+    AD-26), so the plan is surfaced honestly even though nothing is
+    persisted yet."""
     pr = _provider_registry("fetch the page\ndiff against last\nreport changes")
     result = await _run(
         migrated_db, provider_registry=pr, intent="watch the page and report changes"
     )
     assert result.success
     body = _payload(result)
-    assert body["created"] is True
-    objective_id = body["objective_id"]
+    assert body["created"] is False
+    assert body["pending_approval"] is True
     assert body["subgoals"] == ["fetch the page", "diff against last", "report changes"]
+    assert result.side_effect_committed is False
+    objective_id = body["objective_id"]
 
-    # Persisted + reloadable via a fresh store (proves DB write).
+    # Nothing persisted yet — the command is parked, not run.
     store = ObjectiveStore(migrated_db)
-    obj = await store.get(objective_id)
-    assert obj.intent == "watch the page and report changes"
-    assert obj.status == "active"
-    subs = await store.list_subgoals(objective_id)
-    assert [s.description for s in subs] == ["fetch the page", "diff against last", "report changes"]
-    kinds = [e.kind for e in await store.list_events(objective_id)]
-    assert "created" in kinds and "decomposed" in kinds
+    assert await store.list_objectives() == []
+
+    rows = await migrated_db.fetch_all(
+        "SELECT status FROM tasks WHERE kind = 'command' "
+        "AND command_type = 'scheduling.set_objective'"
+    )
+    assert len(rows) == 1
+    assert rows[0]["status"] == "parked"
+    assert objective_id  # a fresh id was minted regardless of parking
 
 
 async def test_empty_intent_is_structured_error(migrated_db: DbPool) -> None:
@@ -98,11 +126,13 @@ async def test_no_db_is_structured_error(monkeypatch: pytest.MonkeyPatch) -> Non
 
 async def test_decompose_fallback_still_creates_single_step(migrated_db: DbPool) -> None:
     # No standard provider → decomposer fail-safe to the whole-objective single
-    # sub-goal; the objective is still created (never stranded).
+    # sub-goal; the tool still submits (never stranded) — pending approval,
+    # same as any other irreversible objective creation.
     result = await _run(migrated_db, provider_registry=ProviderRegistry(), intent="resilient objective")
     assert result.success
     body = _payload(result)
     assert body["subgoals"] == ["resilient objective"]
+    assert body["pending_approval"] is True
 
 
 async def test_manifest_severity_and_group() -> None:
@@ -305,11 +335,15 @@ async def test_repo_bearing_call_consent_carries_reply_target(
     assert gate.policy.calls and gate.policy.calls[0]["reply_target"] == 72055773
 
 
-async def test_repo_bearing_call_gate_approved_creates_epic(
+async def test_repo_bearing_call_gate_approved_submits_pending_approval(
     tmp_path: Path, migrated_db: DbPool
 ) -> None:
-    """gate.policy.request() returns True ⇒ proceeds: integration branch created
-    in the real repo, objective persisted with repo/base_branch/integration_branch."""
+    """gate.policy.request() returns True ⇒ decomposition proceeds and the
+    tool submits scheduling.set_objective — but that command type is
+    IRREVERSIBLE (Design Notes), so even an approved-epic owner call parks
+    awaiting step-up: no objective row, no integration branch, UNTIL the
+    command actually runs (proven end-to-end, including the branch create,
+    by tests/objectives/test_set_objective_is_a_command.py)."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -324,13 +358,14 @@ async def test_repo_bearing_call_gate_approved_creates_epic(
         TraceContext.reset(ttoken)
         reset_services(token)
     assert result.success is True
+    body = _payload(result)
+    assert body["created"] is False
+    assert body["pending_approval"] is True
+    assert result.side_effect_committed is False
+
     store = ObjectiveStore(migrated_db)
-    objs = await store.list_objectives()
-    assert len(objs) == 1
-    assert objs[0].repo == str(repo)
-    assert objs[0].integration_branch == f"stackowl/epic-{objs[0].objective_id}"
-    assert objs[0].base_branch in ("main", "master")
+    assert await store.list_objectives() == []
     branches = subprocess.run(
         ["git", "branch"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout
-    assert objs[0].integration_branch in branches
+    assert f"stackowl/epic-{body['objective_id']}" not in branches

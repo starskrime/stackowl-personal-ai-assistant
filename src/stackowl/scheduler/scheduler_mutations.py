@@ -19,12 +19,19 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
+from stackowl.commands.spec.context import CommandContext
+from stackowl.commands.spec.idempotency import record_command_execution
 from stackowl.db.pool import DbPool
 from stackowl.infra.clock import Clock
 from stackowl.infra.observability import log
 from stackowl.journal import ActorKind, JournalEvent, Outcome, RecordRef
 from stackowl.journal import record as journal_record
-from stackowl.journal.job_events import JobFinishedAttrs, JobStartedAttrs
+from stackowl.journal.job_events import (
+    JobEditedAttrs,
+    JobFinishedAttrs,
+    JobRunNowTriggeredAttrs,
+    JobStartedAttrs,
+)
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler_helpers import (
@@ -44,6 +51,23 @@ def _job_record_ref(job_id: str) -> RecordRef:
     ``scheduler.py``'s own helper of the same name."""
     return RecordRef(kind="sqlite", locator={"table": "jobs", "job_id": job_id})
 
+
+#: Story 4.3's own mapping (``scheduler.py::_REQUESTER_KIND_TO_ACTOR_KIND``),
+#: duplicated here per this file's own established precedent (see
+#: ``_job_record_ref`` above and this module's docstring) — ``scheduler.py``
+#: already imports FROM this module (``run_now``/``update_job``), so this
+#: module importing back from ``scheduler.py`` would be a cycle.
+_REQUESTER_KIND_TO_ACTOR_KIND: dict[str, ActorKind] = {
+    "owner": ActorKind.OWNER,
+    "owl": ActorKind.OWL,
+    "autonomous": ActorKind.AUTONOMOUS,
+    "voice-unverified": ActorKind.VOICE_WORKER,
+}
+
+
+def _actor_kind_for_requester(requester_kind: str) -> ActorKind:
+    return _REQUESTER_KIND_TO_ACTOR_KIND.get(requester_kind, ActorKind.AUTONOMOUS)
+
 # Ownership tags that a caller must never be able to rewrite via a params merge
 # (NIT-2): clobbering these would let a future caller re-attribute a job and
 # dodge the ownership gate / soft cap. Stripped from any update params payload.
@@ -58,6 +82,7 @@ async def update_job(
     goal: str | None = None,
     params: dict[str, object] | None = None,
     tz: str = "UTC",
+    context: CommandContext | None = None,
 ) -> Job | None:
     """Update a job's schedule/goal/params in place.
 
@@ -68,6 +93,14 @@ async def update_job(
     are stripped from ``params`` before the merge so they can never be
     overwritten. Returns the reloaded :class:`Job`, or ``None`` when ``job_id``
     is unknown.
+
+    ``context`` (Story 4.7) — ``None`` (every pre-4.7 caller) keeps this
+    method's exact prior behavior. Given, mirrors ``JobScheduler.pause``'s
+    AD-26 shape (idempotency receipt + the UPDATE + a ``job.edited`` journal
+    row in ONE transaction) AND captures the job's PRIOR ``{job_id, schedule,
+    goal}`` as the receipt's undo payload — Story 4.5's undo re-submits
+    exactly that shape (``scheduling.edit_job`` is reversible → itself) to
+    restore the values this edit overwrote.
     """
     log.scheduler.debug(
         "[scheduler] update_job: entry",
@@ -96,16 +129,54 @@ async def update_job(
     next_run = (
         compute_next_run(new_schedule, tz=tz) if schedule is not None else current.next_run_at
     )
-    await db.execute(
-        "UPDATE jobs SET schedule = ?, next_run_at = ?, params = ? WHERE job_id = ?",
-        (
-            new_schedule,
-            next_run,
-            json.dumps(merged_params, separators=(",", ":"), sort_keys=True),
-            job_id,
-        ),
-    )
-    await write_audit(db, "job_updated", job_id, details={"next_run_at": next_run})
+    new_params_json = json.dumps(merged_params, separators=(",", ":"), sort_keys=True)
+    if context is None:
+        await db.execute(
+            "UPDATE jobs SET schedule = ?, next_run_at = ?, params = ? WHERE job_id = ?",
+            (new_schedule, next_run, new_params_json, job_id),
+        )
+        await write_audit(db, "job_updated", job_id, details={"next_run_at": next_run})
+        reloaded = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
+        log.scheduler.info(
+            "[scheduler] update_job: exit",
+            extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
+        )
+        return row_to_job(reloaded[0]) if reloaded else None
+
+    undo_payload = json.dumps({
+        "job_id": job_id, "schedule": current.schedule, "goal": current.params.get("goal"),
+    })
+    async with db.transaction() as conn:
+        newly = await record_command_execution(
+            conn, context.command_id, context.command_type, undo_payload,
+        )
+        if not newly:
+            log.scheduler.info(
+                "[scheduler] update_job: command already executed — no-op "
+                "(lease-reclaim re-run)",
+                extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+            )
+            reloaded = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
+            return row_to_job(reloaded[0]) if reloaded else None
+        await conn.execute(
+            "UPDATE jobs SET schedule = ?, next_run_at = ?, params = ? WHERE job_id = ?",
+            (new_schedule, next_run, new_params_json, job_id),
+        )
+        await journal_record(conn, JournalEvent(
+            type="job.edited",
+            schema_version=1,
+            actor_kind=_actor_kind_for_requester(context.requester_kind),
+            actor_id=context.requester_kind,
+            target_kind=ActorKind.OWNER,
+            target_id=job_id,
+            outcome=Outcome.OK,
+            record_ref=_job_record_ref(job_id),
+            attrs=JobEditedAttrs(command_id=context.command_id),
+        ))
+        await write_audit(
+            db, "job_updated", job_id, actor=context.requester_kind,
+            details={"next_run_at": next_run}, conn=conn,
+        )
     reloaded = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
     log.scheduler.info(
         "[scheduler] update_job: exit",
@@ -122,6 +193,7 @@ async def run_now(
     *,
     tz: str = "UTC",
     settle: Callable[[Job, JobResult, float], Awaitable[None]],
+    context: CommandContext | None = None,
 ) -> JobResult | None:
     """Execute a single job's handler immediately, out of band.
 
@@ -140,6 +212,15 @@ async def run_now(
 
     Returns ``None`` when ``job_id`` is unknown; a :class:`JobResult` with
     ``success=False`` and a structured ``error`` when the run is rejected.
+
+    ``context`` (Story 4.7) — ``None`` (every pre-4.7 caller) keeps this
+    function's exact prior behavior. Given, the idempotency receipt is
+    checked INSIDE the same CAS transaction as the ``pending → running``
+    claim: a lease-reclaim re-run for the SAME ``command_id`` is a no-op
+    (never re-triggers the handler) rather than dispatching the job a second
+    time. A NEW ``job.run_now_triggered`` event records the out-of-band
+    trigger itself; ``job.started`` (fired for every dispatch, scheduled or
+    manual) is unchanged.
     """
     log.scheduler.debug("[scheduler] run_now: entry", extra={"_fields": {"job_id": job_id}})
     rows = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
@@ -182,6 +263,21 @@ async def run_now(
     # commit in ONE transaction — a manually-triggered run is covered
     # identically to the poller's own dispatch.
     async with db.transaction() as conn:
+        if context is not None:
+            newly = await record_command_execution(
+                conn, context.command_id, context.command_type,
+            )
+            if not newly:
+                log.scheduler.info(
+                    "[scheduler] run_now: command already executed — no-op "
+                    "(lease-reclaim re-run) — the handler is NOT re-triggered",
+                    extra={"_fields": {"job_id": job_id, "command_id": context.command_id}},
+                )
+                return JobResult(
+                    job_id=job_id, success=True,
+                    output="already triggered by this command — no-op",
+                    error=None, duration_ms=0.0,
+                )
         cursor = await conn.execute(
             # Stamped by the claim itself — see the note at the poll dispatcher's CAS.
             "UPDATE jobs SET status = 'running', claimed_at = ? "
@@ -201,6 +297,18 @@ async def run_now(
                 record_ref=_job_record_ref(job_id),
                 attrs=JobStartedAttrs(handler_name=job.handler_name[:_MAX_LABEL_LEN]),
             ))
+            if context is not None:
+                await journal_record(conn, JournalEvent(
+                    type="job.run_now_triggered",
+                    schema_version=1,
+                    actor_kind=_actor_kind_for_requester(context.requester_kind),
+                    actor_id=context.requester_kind,
+                    target_kind=ActorKind.OWNER,
+                    target_id=job_id,
+                    outcome=Outcome.OK,
+                    record_ref=_job_record_ref(job_id),
+                    attrs=JobRunNowTriggeredAttrs(command_id=context.command_id),
+                ))
     if not won:
         log.scheduler.warning(
             "[scheduler] run_now: rejected — job not pending (lost transition)",

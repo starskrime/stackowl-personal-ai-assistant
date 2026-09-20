@@ -16,6 +16,13 @@ from pathlib import Path
 
 import pytest
 
+# Registration side effect (mirrors journal/task_events.py's own shape) — the
+# pause_owl_job/resume_owl_job/set_owl_schedule CommandSpecs + handlers.
+# Production gets this for free from startup/orchestrator.py's boot import; a
+# test that builds OwlScheduleTool directly, with no orchestrator boot,
+# needs it explicitly (Story 4.7 — every action here now submits through
+# commands/spec/submit.py::submit_command).
+import stackowl.scheduler.commands  # noqa: F401
 from stackowl.db.pool import DbPool
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry

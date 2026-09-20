@@ -208,7 +208,18 @@ class CronjobTool(Tool):
         verify-time yields ``None`` (cannot observe), never ``False`` — an unobservable
         reality must not flip a real success. A row genuinely absent/present when the
         opposite was expected IS an observation (not an outage) and yields ``False``.
+
+        Story 4.7 — ``remove``/``run`` now submit through the one door as
+        IRREVERSIBLE commands, so an ordinary owner call gets back a
+        ``pending_approval`` outcome (nothing mutated yet — the command is
+        parked awaiting step-up), marked ``side_effect_committed=False``.
+        Checked FIRST, generically: nothing committed means nothing to
+        verify — without this a pending-approval ``remove`` would be
+        re-read, find the row still present, and be scored a FALSE
+        verification failure.
         """
+        if not result.side_effect_committed:
+            return None
         action = args.get("action")
         if action in ("create", "watch"):
             return await self._verify_created(result)
@@ -422,7 +433,7 @@ class CronjobTool(Tool):
         # goal, then the scheduler retires the row. Reuses the engine's own primitive; no new
         # tool/handler.
         one_shot = parse_in(schedule) is not None or parse_at(schedule) is not None
-        job = await scheduler.create_job(
+        submitted = await self._submit_create_job(
             handler_name=_HANDLER,
             schedule=schedule,
             params={
@@ -441,7 +452,11 @@ class CronjobTool(Tool):
             primary_channel=channel,
             target_channels=target_channels,
             target_addresses=target_addresses,
+            t0=t0,
         )
+        if isinstance(submitted, ToolResult):
+            return submitted
+        job = submitted
         payload: dict[str, object] = {"created": True, **job_summary(job)}
         if unreachable:
             # HONESTY — never a bare "scheduled ✓". The job is created (plumbing
@@ -531,7 +546,7 @@ class CronjobTool(Tool):
         target_channels, target_addresses = self._resolve_durable_target(channel)
         unreachable = not target_channels
 
-        job = await scheduler.create_job(
+        submitted = await self._submit_create_job(
             handler_name=handler,
             schedule=schedule,
             params={**params_extra, "created_by": CREATED_BY_TAG, "owl": owl},
@@ -545,7 +560,11 @@ class CronjobTool(Tool):
             primary_channel=channel,
             target_channels=target_channels,
             target_addresses=target_addresses,
+            t0=t0,
         )
+        if isinstance(submitted, ToolResult):
+            return submitted
+        job = submitted
         payload: dict[str, object] = {"created": True, **job_summary(job)}
         if unreachable:
             # HONESTY — never a bare "watching ✓". The job is created, but a change
@@ -628,9 +647,27 @@ class CronjobTool(Tool):
         if schedule is not None and not is_valid_schedule(schedule):
             return self._err(f"unparseable schedule {schedule!r}", t0)
 
-        updated = await scheduler.update_job(args.job_id, schedule=schedule, goal=prompt)
-        if updated is None:
-            return self._err(f"no such job: {args.job_id!r}", t0)
+        # Story 4.7 (AD-1) — edit_job submits through the one door, never
+        # calling JobScheduler.update_job directly.
+        from stackowl.commands.spec.submit import submit_command
+
+        db = get_services().db_pool
+        if db is None:
+            return self._err("scheduling unavailable (no database configured)", t0)
+        submission = await submit_command(
+            db, "scheduling.edit_job",
+            {"job_id": args.job_id, "schedule": schedule, "goal": prompt},
+        )
+        outcome = submission.outcome
+        if outcome is None:
+            return self._err(
+                f"update was submitted (command_id={submission.command_id}) "
+                "but this call could not confirm it ran",
+                t0,
+            )
+        if not outcome.success:
+            return self._err(f"update failed: {outcome.error or 'command refused'}", t0)
+        updated = Job(**outcome.result)
         return self._ok({"updated": True, **job_summary(updated)}, t0)
 
     async def _run(self, args: CronjobArgs, scheduler: JobScheduler, owl: str, t0: float) -> ToolResult:
@@ -639,35 +676,37 @@ class CronjobTool(Tool):
         # Ownership gate FIRST — a foreign/missing job_id is "no such job".
         if find_owned_job(await scheduler.list_jobs(), args.job_id, owl) is None:
             return self._err(f"no such job: {args.job_id!r}", t0)
-        result = await scheduler.run_now(args.job_id)
-        if result is None:
-            return self._err(f"no such job: {args.job_id!r}", t0)
-        if not result.success and result.error and "not runnable now" in result.error:
-            # Benign race: the job's OWN schedule already claimed and is
-            # executing it concurrently — genuinely good news (the real
-            # delivery is in flight), not a cronjob failure. Echoing raw
-            # "success": false/"error": "..." here reads, to downstream
-            # judges/floor synthesis, as "capability failed: cronjob" even
-            # though the scheduled delivery goes on to succeed moments later —
-            # phrase this case so it can't be misread as a failure signal.
-            return self._ok(
+
+        # Story 4.7 (AD-1) — run_now submits through the one door, never
+        # calling JobScheduler.run_now directly. run_now_job is declared
+        # IRREVERSIBLE (Design Notes), so an ordinary owner call gets back
+        # a `pending_approval` outcome — running a job out of band cannot be
+        # undone, so the gate always asks first, even for the owner.
+        from stackowl.commands.spec.submit import submit_command
+
+        db = get_services().db_pool
+        if db is None:
+            return self._err("scheduling unavailable (no database configured)", t0)
+        submission = await submit_command(db, "scheduling.run_now_job", {"job_id": args.job_id})
+        outcome = submission.outcome
+        if outcome is None:
+            result = self._ok(
                 {
-                    "ran": False,
-                    "job_id": args.job_id,
-                    "note": "already running via its own schedule — no manual trigger needed",
+                    "ran": False, "pending_approval": True, "job_id": args.job_id,
+                    "note": (
+                        "running a job out of band is irreversible and needs your "
+                        "approval — check pending approvals to confirm it."
+                    ),
                 },
                 t0,
             )
-        return self._ok(
-            {
-                "ran": True,
-                "job_id": args.job_id,
-                "success": result.success,
-                "output": result.output,
-                "error": result.error,
-            },
-            t0,
-        )
+            return result.model_copy(update={"side_effect_committed": False})
+        if not outcome.success:
+            return self._err(f"run failed: {outcome.error or 'command refused'}", t0)
+        # The handler already shapes this exactly like the pre-4.7 payload
+        # below (including the benign "already running via its own
+        # schedule" note — see scheduler/commands.py::_run_now_job_handler).
+        return self._ok(outcome.result, t0)
 
     async def _lifecycle(self, args: CronjobArgs, scheduler: JobScheduler, owl: str, t0: float) -> ToolResult:
         if not args.job_id:
@@ -675,29 +714,51 @@ class CronjobTool(Tool):
         # Ownership gate — foreign/missing job_id rejected identically (no oracle).
         if find_owned_job(await scheduler.list_jobs(), args.job_id, owl) is None:
             return self._err(f"no such job: {args.job_id!r}", t0)
-        if args.action in ("pause", "resume"):
-            # Story 4.3 (AD-1) — pause/resume run through the one door;
-            # `remove` (stop_job) is untouched, owned by Story 4.7 per the
-            # 4.2 census.
-            return await self._submit_lifecycle_command(args, t0)
-        await scheduler.stop_job(args.job_id)  # remove
-        return self._ok({args.action: True, "job_id": args.job_id}, t0)
+        # Story 4.3/4.7 (AD-1) — pause/resume/remove all run through the one
+        # door now; nothing in this file calls JobScheduler.pause/.resume/
+        # .stop_job directly any more.
+        return await self._submit_lifecycle_command(args, t0)
+
+    #: pause/resume are REVERSIBLE (owner+reversible → instant); remove
+    #: (delete_job) is declared IRREVERSIBLE (Design Notes) — a genuinely
+    #: one-way action that always needs step-up, even for the owner.
+    _LIFECYCLE_COMMAND_TYPES: dict[str, str] = {
+        "pause": "scheduling.pause_job",
+        "resume": "scheduling.resume_job",
+        "remove": "scheduling.delete_job",
+    }
+    _IRREVERSIBLE_LIFECYCLE_ACTIONS = frozenset({"remove"})
 
     async def _submit_lifecycle_command(self, args: CronjobArgs, t0: float) -> ToolResult:
-        """``pause``/``resume`` submit through ``commands/spec/submit.py::
-        submit_command`` and await its inline execution, never calling
-        ``JobScheduler.pause``/``.resume`` directly (AD-1) — the pilot
-        migration this story ships."""
+        """``pause``/``resume``/``remove`` submit through ``commands/spec/
+        submit.py::submit_command`` and await its inline execution, never
+        calling ``JobScheduler.pause``/``.resume``/``.stop_job`` directly
+        (AD-1)."""
         from stackowl.commands.spec.submit import submit_command
 
         assert args.job_id is not None  # caller already checked
-        command_type = f"scheduling.{args.action}_job"
+        command_type = self._LIFECYCLE_COMMAND_TYPES[args.action]
         db = get_services().db_pool
         if db is None:
             return self._err("scheduling unavailable (no database configured)", t0)
         submission = await submit_command(db, command_type, {"job_id": args.job_id})
         outcome = submission.outcome
         if outcome is None:
+            if args.action in self._IRREVERSIBLE_LIFECYCLE_ACTIONS:
+                # The ORDINARY path for an irreversible action, not a race:
+                # the gate parks it awaiting the owner's step-up and nothing
+                # is mutated yet.
+                result = self._ok(
+                    {
+                        args.action: False, "pending_approval": True, "job_id": args.job_id,
+                        "note": (
+                            f"{args.action} is irreversible and needs your approval — "
+                            "check pending approvals to confirm it."
+                        ),
+                    },
+                    t0,
+                )
+                return result.model_copy(update={"side_effect_committed": False})
             # Lost the inline-claim race (another worker/process claimed the
             # same freshly-created row first — rare) or replayed an
             # already-minted command_id with no fresh outcome to report. The
@@ -711,6 +772,52 @@ class CronjobTool(Tool):
         if not outcome.success:
             return self._err(f"{args.action} failed: {outcome.error or 'command refused'}", t0)
         return self._ok({args.action: True, "job_id": args.job_id}, t0)
+
+    async def _submit_create_job(
+        self,
+        *,
+        handler_name: str,
+        schedule: str,
+        params: dict[str, object],
+        replay_missed: bool,
+        primary_channel: str | None,
+        target_channels: list[str],
+        target_addresses: dict[str, str | int],
+        t0: float,
+    ) -> Job | ToolResult:
+        """``create``/``watch`` submit through the one door (AD-1), never
+        calling ``JobScheduler.create_job`` directly. Returns the created
+        :class:`Job` on success, or a :class:`ToolResult` to return as-is on
+        any error/uncertain outcome. ``create_job`` is REVERSIBLE (undo:
+        ``delete_job``), so an owner call runs at once — no pending-approval
+        branch is needed here, unlike ``run``/``remove``."""
+        from stackowl.commands.spec.submit import submit_command
+
+        db = get_services().db_pool
+        if db is None:
+            return self._err("scheduling unavailable (no database configured)", t0)
+        submission = await submit_command(
+            db, "scheduling.create_job",
+            {
+                "handler_name": handler_name,
+                "schedule": schedule,
+                "params": params,
+                "replay_missed": replay_missed,
+                "primary_channel": primary_channel,
+                "target_channels": target_channels,
+                "target_addresses": target_addresses,
+            },
+        )
+        outcome = submission.outcome
+        if outcome is None:
+            return self._err(
+                f"create was submitted (command_id={submission.command_id}) "
+                "but this call could not confirm it ran",
+                t0,
+            )
+        if not outcome.success:
+            return self._err(f"create failed: {outcome.error or 'command refused'}", t0)
+        return Job(**outcome.result)
 
     # ---------------------------------------------------------------- helpers
 

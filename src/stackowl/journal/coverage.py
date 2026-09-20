@@ -136,7 +136,6 @@ UNJOURNALED_TABLES: dict[str, str] = {
     "notification_queue": _REASON_PRE_EPOCH,
     "objective_events": _REASON_PRE_EPOCH,
     "objective_subgoals": _REASON_PRE_EPOCH,
-    "objectives": _REASON_PRE_EPOCH,
     "onboarding": _REASON_PRE_EPOCH,
     "onboarding_events": _REASON_PRE_EPOCH,
     "owl_dna": _REASON_PRE_EPOCH,

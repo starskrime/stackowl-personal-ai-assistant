@@ -6,8 +6,15 @@ The pilot migration this story ships: ``pause``/``resume`` now call
 ``tests/commands/spec/test_one_door_tripwires.py``'s AST scan). This file
 proves the OBSERVABLE behavior: a real ``kind='command'`` task row lands, the
 job's status actually changes, and the tool's own ``ToolResult`` shape is
-unchanged from before this story. ``remove`` stays a direct
-``JobScheduler.stop_job`` call — unmigrated, owned by Story 4.7.
+unchanged from before this story.
+
+``remove`` is now ALSO migrated (Story 4.7, ``scheduling.delete_job`` —
+IRREVERSIBLE, so an ordinary owner call parks awaiting step-up rather than
+completing instantly); see
+``tests/tools/test_cronjob_create_update_remove_run_go_through_commands.py``
+for its full coverage. The one test here that used to assert "remove stays
+unmigrated" is kept, corrected to the new reality, so this file's own
+narrative never drifts from what the tool actually does.
 """
 
 from __future__ import annotations
@@ -128,21 +135,35 @@ async def test_resume_submits_a_command_task_and_actually_resumes(
     assert rows[0]["status"] == "completed"
 
 
-async def test_remove_stays_unmigrated_and_creates_no_command_task(
+async def test_remove_now_submits_a_command_task_and_needs_step_up(
     migrated_db: DbPool,
 ) -> None:
+    """Story 4.7 — ``remove`` (``scheduling.delete_job``) is declared
+    IRREVERSIBLE, so the gate demands step-up for EVERY requester kind,
+    including the owner (Design Notes). The job is NOT removed by this
+    call — the command is parked awaiting the owner's approval, and the
+    tool reports that honestly rather than claiming success."""
     job_id = await _create_job(migrated_db)
 
     result = await _run(migrated_db, action="remove", job_id=job_id)
 
     assert result.success
-    assert _payload(result) == {"remove": True, "job_id": job_id}
+    payload = _payload(result)
+    assert payload["remove"] is False
+    assert payload["pending_approval"] is True
+    assert payload["job_id"] == job_id
+    assert result.side_effect_committed is False
 
+    # Nothing mutated yet — the row is still there.
     remaining = {j.job_id for j in await JobScheduler(db=migrated_db).list_jobs()}
-    assert job_id not in remaining
+    assert job_id in remaining
 
-    rows = await migrated_db.fetch_all("SELECT 1 FROM tasks WHERE kind = 'command'")
-    assert rows == []
+    rows = await migrated_db.fetch_all(
+        "SELECT command_type, status FROM tasks WHERE kind = 'command' "
+        "AND command_type = 'scheduling.delete_job'"
+    )
+    assert len(rows) == 1
+    assert rows[0]["status"] == "parked"
 
 
 async def test_pause_on_an_unowned_job_is_refused_before_submitting_a_command(

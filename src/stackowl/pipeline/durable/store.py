@@ -1681,37 +1681,52 @@ class DurableTaskStore(OwnedRepository):
 
     async def has_later_completed_command(
         self, *, payload: str, after: datetime, exclude_task_id: str,
+        target_job_id: str | None = None,
     ) -> bool:
-        """True when a DIFFERENT completed COMMAND row shares *payload* and
-        completed strictly after *after* -- FR88's "a later command that
+        """True when a DIFFERENT completed COMMAND row shares the same target
+        and completed strictly after *after* -- FR88's "a later command that
         changes the same target" (Story 4.5), called by ``commands/spec/
         undo.py::request_undo`` to decide whether the original command was
         superseded.
 
         "Same target" is *payload* itself (the row's own stored
-        ``command_payload`` JSON text): today's only two registered command
-        types (``scheduling.pause_job``/``resume_job``) share one payload
-        shape keyed on ``job_id``, so exact ``command_payload`` equality
-        already IS target equality. A future command type whose payload
-        carries more than its target's identity (e.g. an edit command with a
-        new title) will need its own target derivation -- flagged, not
-        built, since no such ``CommandSpec`` is registered yet (mirrors
-        spec-4-3's own "declared, structurally correct, not yet load-bearing"
-        precedent for fields a later story grows into).
+        ``command_payload`` JSON text) BY DEFAULT: the pilot pair
+        (``scheduling.pause_job``/``resume_job``) share one payload shape
+        keyed on ``job_id``, so exact ``command_payload`` equality already IS
+        target equality there.
+
+        ``target_job_id`` (Story 4.7) is the escape hatch for a command type
+        whose payload carries more than its target's identity (an edit
+        command also carries the new schedule/goal, so two edits of the SAME
+        job never share an identical ``command_payload``). When given, the
+        match is instead ``json_extract(command_payload, '$.job_id') = ?``
+        (confirmed working against this repo's SQLite build) -- "same job_id"
+        rather than "identical payload text". ``None`` (every 4.3/4.5/4.6
+        caller) keeps the exact-payload match, byte-identical to before.
         """
         # 1. ENTRY
         log.tasks.debug(
             "[commands] store.has_later_completed_command: entry",
             extra={"_fields": {
                 "exclude_task_id": exclude_task_id, "after": after.isoformat(),
+                "by_job_id": target_job_id is not None,
             }},
         )
-        rows = await self._fetch_owned(
-            self._table,
-            "kind='command' AND status='completed' AND command_payload=? "
-            "AND task_id != ? AND delivered_at > ?",
-            (payload, exclude_task_id, after.isoformat()),
-        )
+        if target_job_id is not None:
+            rows = await self._fetch_owned(
+                self._table,
+                "kind='command' AND status='completed' "
+                "AND json_extract(command_payload, '$.job_id') = ? "
+                "AND task_id != ? AND delivered_at > ?",
+                (target_job_id, exclude_task_id, after.isoformat()),
+            )
+        else:
+            rows = await self._fetch_owned(
+                self._table,
+                "kind='command' AND status='completed' AND command_payload=? "
+                "AND task_id != ? AND delivered_at > ?",
+                (payload, exclude_task_id, after.isoformat()),
+            )
         result = bool(rows)
         # 4. EXIT
         log.tasks.debug(
@@ -1719,6 +1734,32 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"exclude_task_id": exclude_task_id, "superseded": result}},
         )
         return result
+
+    async def get_undo_payload(self, command_id: str) -> str | None:
+        """The captured "restore-to" payload for *command_id*, or ``None``
+        (Story 4.7, migration 0154) -- read straight off ``command_receipts``,
+        which carries no owner scoping (mirrors this store's own precedent:
+        ``record_command_execution`` writes it unscoped too). ``None`` means
+        either no receipt exists yet or the mutator never captured one -- both
+        cases mean the SAME thing to a caller: fall back to the original
+        command's own payload.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[commands] store.get_undo_payload: entry",
+            extra={"_fields": {"command_id": command_id}},
+        )
+        rows = await self._db.fetch_all(
+            "SELECT undo_payload FROM command_receipts WHERE command_id = ?",
+            (command_id,),
+        )
+        payload = rows[0]["undo_payload"] if rows else None
+        # 4. EXIT
+        log.tasks.debug(
+            "[commands] store.get_undo_payload: exit",
+            extra={"_fields": {"command_id": command_id, "found": payload is not None}},
+        )
+        return payload
 
     async def record_undo_refused(
         self, task_id: str, *, command_type: str, code: str, reason: str,
