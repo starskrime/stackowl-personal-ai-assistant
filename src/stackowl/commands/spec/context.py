@@ -33,6 +33,12 @@ class CommandContext(BaseModel):
     requester_kind: str
     #: Declared for voice (4.4+); carried, unused beyond storage, this story.
     utterance_id: str | None = None
+    #: Story 4.6 — ``authz.action_policy.ActionPolicyDecision.
+    #: authority_grant_id``, carried through so a handler that ran an
+    #: irreversible command under standing authority can journal WHICH grant
+    #: authorized it. ``None`` for every command this story (no live caller
+    #: ever resolves a real one yet — see ``execute.py``'s own docstring).
+    authority_grant_id: str | None = None
 
 
 class CommandOutcome(BaseModel):

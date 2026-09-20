@@ -91,6 +91,13 @@ class RecordKind(StrEnum):
     #: durable Needs-you item itself (``NEEDS_YOU``, reserved for the
     #: ``needs_you.opened``/``.resolved`` bookkeeping types).
     INTERACTION = "interaction"
+    #: Story 4.6 — standing authority (``authority.granted``/``.revoked``),
+    #: emitted from ``authz.standing_authority``'s ``grant``/``revoke``. No
+    #: existing member fits: this is neither a per-turn consent decision
+    #: (``CONSENT``) nor a job's own lifecycle (``JOB``) — it is the
+    #: authz-owned record of WHO may act without the owner attending,
+    #: scoped by command type (AD-27, NFR30).
+    AUTHORITY = "authority"
 
 
 class NeedsYouKind(StrEnum):

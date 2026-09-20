@@ -307,6 +307,19 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
         "command_receipts", "executed_at",
         "written when a subsystem mutator executes a COMMAND task",
     ),
+    # Story 4.6 — `standing_authority` (migration 0153). Written only by
+    # `authz.standing_authority.grant`/`.revoke`, themselves reachable only
+    # via the `authority.grant`/`authority.revoke` CommandSpecs — both
+    # `severity="consequential"`, so every write is gated behind an explicit
+    # Telegram-mediated step-up approval (FR37). A platform that never grants
+    # standing authority correctly writes none, the same "quiet is the
+    # operator's choice" shape `command_sequence_edges`/`callback_log` above
+    # already have.
+    _on_demand(
+        "standing_authority", "granted_at",
+        "written only when the owner explicitly grants or revokes standing "
+        "authority",
+    ),
     _periodic("notification_queue", "created_at", "written by the proactive delivery path"),
     _periodic("cache_breakpoint_probes", "last_confirmed_at", "written by the cache probe"),
     # Spec 2.1 (AD-2) — append-only, never UPDATEd, so `occurred_at` is set once

@@ -70,6 +70,13 @@ class Job(BaseModel):
     # records the send as undeliverable (never ``delivered``, never ``_last_*``).
     target_channels: list[str] = Field(default_factory=list)
     target_addresses: dict[str, str | int] = Field(default_factory=dict)
+    # Story 4.6 (FR33) — the irreversible command TYPES this job declares it
+    # needs to run unattended, scoped implicitly to this job's own job_id
+    # (`standing_authority.scope_kind="job"`, `scope_id=job_id`). A STATIC
+    # declaration only — it does not itself grant anything (no live caller
+    # wires this into a real `standing_authority` row yet; that is 4.7's/
+    # 4.8's own job, per spec-4-6's Design Notes). Empty on every legacy row.
+    preauthorized_command_types: list[str] = Field(default_factory=list)
 
 
 class JobResult(BaseModel):

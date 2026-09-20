@@ -20,16 +20,17 @@ subsystem.
 Importing this module imports ``task_events``, ``job_events``, ``heal_events``,
 ``health_events``, ``turn_events``, ``memory_events``, ``consent_events``,
 ``delivery_events``, ``channel_events``, ``needs_you``, ``budget_events``,
-``link_events``, ``interaction_events`` and ``command_events`` for their side
-effect (registering the task, job, heal, health, turn, memory, consent,
-delivery/provider, channel, Needs-you item, budget-warning, gateway/core-link,
-blocking-clarify and COMMAND-task-lifecycle event types), so any importer of
-``journal`` gets a working registry with no separate registration step to
-remember.
+``link_events``, ``interaction_events``, ``command_events`` and
+``authority_events`` for their side effect (registering the task, job, heal,
+health, turn, memory, consent, delivery/provider, channel, Needs-you item,
+budget-warning, gateway/core-link, blocking-clarify, COMMAND-task-lifecycle
+and standing-authority event types), so any importer of ``journal`` gets a
+working registry with no separate registration step to remember.
 """
 
 from __future__ import annotations
 
+from stackowl.journal import authority_events as _authority_events  # noqa: F401 -- registration side effect
 from stackowl.journal import budget_events as _budget_events  # noqa: F401 -- registration side effect
 from stackowl.journal import channel_events as _channel_events  # noqa: F401 -- registration side effect
 from stackowl.journal import command_events as _command_events  # noqa: F401 -- registration side effect

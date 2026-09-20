@@ -103,8 +103,9 @@ _INSERT_JOB_SQL = (
     "INSERT INTO jobs "
     "(job_id, handler_name, schedule, idempotency_key, last_run_at, next_run_at, "
     "status, retry_count, created_at, failure_count, last_error, enabled, "
-    "replay_missed, primary_channel, params, target_channels, target_addresses) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "replay_missed, primary_channel, params, target_channels, target_addresses, "
+    "preauthorized_command_types) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -571,6 +572,9 @@ def row_to_job(row: dict[str, Any]) -> Job:
         params=params_dict,
         target_channels=_decode_json_column(row, "target_channels", []),
         target_addresses=_decode_json_column(row, "target_addresses", {}),
+        preauthorized_command_types=_decode_json_column(
+            row, "preauthorized_command_types", [],
+        ),
     )
 
 
@@ -613,6 +617,13 @@ async def insert_job(db: DbPool, job: Job) -> None:
             (
                 json.dumps(job.target_addresses, separators=(",", ":"), sort_keys=True)
                 if job.target_addresses
+                else None
+            ),
+            # Story 4.6 (FR33) — NULL when empty, mirrors target_channels'
+            # own "no declared value looks exactly like a legacy row" shape.
+            (
+                json.dumps(job.preauthorized_command_types, separators=(",", ":"))
+                if job.preauthorized_command_types
                 else None
             ),
         ),

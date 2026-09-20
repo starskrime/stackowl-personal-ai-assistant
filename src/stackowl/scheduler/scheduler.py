@@ -1840,6 +1840,7 @@ class JobScheduler(SupervisedTask):
         primary_channel: str | None = None,
         target_channels: list[str] | None = None,
         target_addresses: dict[str, str | int] | None = None,
+        preauthorized_command_types: list[str] | None = None,
     ) -> Job:
         """Insert and return a new ``jobs`` row.
 
@@ -1847,6 +1848,11 @@ class JobScheduler(SupervisedTask):
         recipient onto the job row at creation (C1/F104) so a cron-born poll (no
         session, no TraceContext) can address its send from durable state. Both
         default to empty — every existing caller stays byte-identical.
+
+        ``preauthorized_command_types`` (Story 4.6, FR33) — the irreversible
+        command types this job DECLARES it needs to run unattended, scoped
+        implicitly to this job's own ``job_id``. A static declaration only;
+        defaults to empty — every existing caller stays byte-identical.
         """
         log.scheduler.debug(
             "[scheduler] create_job: entry",
@@ -1867,6 +1873,7 @@ class JobScheduler(SupervisedTask):
             primary_channel=primary_channel,
             target_channels=list(target_channels or []),
             target_addresses=dict(target_addresses or {}),
+            preauthorized_command_types=list(preauthorized_command_types or []),
         )
         await insert_job(self._db, job)
         log.scheduler.info(

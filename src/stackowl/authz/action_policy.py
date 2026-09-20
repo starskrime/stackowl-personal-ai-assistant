@@ -35,6 +35,22 @@ structurally correct, not yet load-bearing" shape Story 4.3 used for
 ``CommandContext.nonce``/``utterance_id``) -- but :class:`ActionPolicyDecision.
 attending` is carried for logging/telemetry only, never read back by
 :func:`decide` itself.
+
+STORY 4.6 -- STANDING AUTHORITY IS THE ONE CARVE-OUT, AND IT IS NARROW.
+``decide()`` now takes an optional ``authority_grant_id`` -- the caller's
+ALREADY-RESOLVED standing-authority match (``authz.standing_authority.
+find_active``'s id, if any; this module still does no I/O of its own). An
+irreversible, non-CONSEQUENTIAL command from an ``autonomous`` requester with
+a matching grant runs ``run_at_once`` instead of ``needs_step_up`` -- FR32's
+other half: "an irreversible command in a run the owner is not attending ...
+with a matching authority_grant_id ... returns run_at_once and the decision
+carries the grant id for the handler to record." Every other combination is
+UNCHANGED: CONSEQUENTIAL still outranks everything (a grant never bypasses
+it -- FR37's "never self-granted" would be hollow otherwise), and the
+carve-out fires ONLY for ``autonomous`` -- an attending owner's own
+irreversible command still needs step-up even with a matching grant, because
+the owner is right there to answer it (Epic 4 Requirements: "Scheduler and
+autonomous runs are never 'attending'").
 """
 
 from __future__ import annotations
@@ -65,6 +81,14 @@ class ActionPolicyDecision:
 
     outcome: ActionPolicyOutcome
     attending: bool
+    #: Story 4.6 -- set to the caller's ``authority_grant_id`` input ONLY
+    #: when it is what let this decision reach ``run_at_once`` (the
+    #: irreversible+autonomous+matching-grant carve-out); ``None`` for every
+    #: other outcome, including when a grant id was passed but never
+    #: mattered (e.g. a CONSEQUENTIAL command, where severity already
+    #: forced ``needs_step_up`` regardless). A handler reads this to
+    #: journal WHICH grant authorized an unattended irreversible action.
+    authority_grant_id: str | None = None
 
 
 def attends(requester_kind: RequesterKind) -> bool:
@@ -93,10 +117,19 @@ def attends(requester_kind: RequesterKind) -> bool:
 
 
 def decide(
-    *, severity: str, reversible: bool, requester_kind: RequesterKind,
+    *,
+    severity: str,
+    reversible: bool,
+    requester_kind: RequesterKind,
+    authority_grant_id: str | None = None,
 ) -> ActionPolicyDecision:
     """The one gate every command's execution passes through after its
     severity check (AD-1, AD-27).
+
+    ``authority_grant_id`` (Story 4.6) -- the caller's already-resolved
+    standing-authority match, if any (see this module's docstring for the
+    narrow carve-out it enables and why this function still does no I/O of
+    its own to get it).
 
     Raises :class:`ValueError` for an undeclared *severity* -- a caller bug
     (every real caller passes a ``CommandSpec.severity``, already validated
@@ -109,6 +142,7 @@ def decide(
         extra={"_fields": {
             "severity": severity, "reversible": reversible,
             "requester_kind": requester_kind,
+            "authority_grant_id": authority_grant_id,
         }},
     )
     if severity not in ALL_SEVERITIES:
@@ -118,13 +152,26 @@ def decide(
         )
     attending = attends(requester_kind)
 
-    # 2. DECISION -- severity/reversibility FIRST, always (see module
-    # docstring: "severity outranks reversibility, always"). CONSEQUENTIAL or
-    # irreversible needs step-up for every requester kind, an owner's order
-    # included -- no branch below this point ever downgrades it.
+    # 2. DECISION -- severity FIRST, always (see module docstring: "severity
+    # outranks reversibility, always"). CONSEQUENTIAL needs step-up for
+    # every requester kind, unconditionally -- a matching standing-authority
+    # grant NEVER bypasses this (FR37).
     outcome: ActionPolicyOutcome
-    if severity == CONSEQUENTIAL or not reversible:
+    granted_authority_id: str | None = None
+    if severity == CONSEQUENTIAL:
         outcome = "needs_step_up"
+    elif not reversible:
+        # Story 4.6's one carve-out: an irreversible, non-CONSEQUENTIAL
+        # command from an unattended (`autonomous`) run with a MATCHING
+        # standing-authority grant runs at once instead of parking for
+        # step-up (FR32) -- every other irreversible case (no grant, or a
+        # grant but an ATTENDING requester kind) still needs step-up
+        # unchanged.
+        if requester_kind == "autonomous" and authority_grant_id:
+            outcome = "run_at_once"
+            granted_authority_id = authority_grant_id
+        else:
+            outcome = "needs_step_up"
     # An owl/crew request always gets a deterministic read-back before it can
     # be approved (FR35) -- never run_at_once, even for a reversible,
     # non-CONSEQUENTIAL command.
@@ -142,7 +189,9 @@ def decide(
         extra={"_fields": {
             "severity": severity, "reversible": reversible,
             "requester_kind": requester_kind, "outcome": outcome,
-            "attending": attending,
+            "attending": attending, "authority_grant_id": granted_authority_id,
         }},
     )
-    return ActionPolicyDecision(outcome=outcome, attending=attending)
+    return ActionPolicyDecision(
+        outcome=outcome, attending=attending, authority_grant_id=granted_authority_id,
+    )

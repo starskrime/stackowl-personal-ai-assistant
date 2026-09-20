@@ -74,10 +74,6 @@ async def execute_command_task(task: DurableTask) -> CommandOutcome:
     spec = CommandSpecRegistry.get(command_type)
     payload = spec.payload_model.model_validate_json(task.command_payload or "{}")
     requester_kind = task.requester_kind or "owner"
-    context = CommandContext(
-        command_id=command_id, command_type=command_type,
-        requester_kind=requester_kind, utterance_id=task.utterance_id,
-    )
     # 2. DECISION — the severity check runs BEFORE the handler, unconditionally
     # (AD-1: "no preview/dry-run returns before the severity check").
     principal = principal_for(requester_kind)  # type: ignore[arg-type]
@@ -98,6 +94,16 @@ async def execute_command_task(task: DurableTask) -> CommandOutcome:
     # skips straight to the handler — the decision already happened once,
     # and re-deciding would open a second Needs-you item for a command_id
     # whose first one is already resolved and free.
+    #
+    # Story 4.6 — `decide()`'s `authority_grant_id` input is never passed a
+    # real value here: no live caller resolves a `standing_authority` row
+    # before this call yet (spec-4-6 Boundaries — the whole mechanism is
+    # proven by direct unit tests against `decide()` itself). `gate.
+    # authority_grant_id` is therefore always `None` on this path today, and
+    # `context.authority_grant_id` below carries that same `None` — declared
+    # and threaded, not yet load-bearing, the same shape `nonce`/
+    # `utterance_id` shipped in Story 4.3.
+    authority_grant_id: str | None = None
     if task.gate_verdict != "approved":
         gate = decide(
             severity=spec.severity, reversible=spec.reversible,
@@ -116,6 +122,12 @@ async def execute_command_task(task: DurableTask) -> CommandOutcome:
                 }},
             )
             raise CommandNeedsDecisionError(command_type, gate.outcome, payload_summary)
+        authority_grant_id = gate.authority_grant_id
+    context = CommandContext(
+        command_id=command_id, command_type=command_type,
+        requester_kind=requester_kind, utterance_id=task.utterance_id,
+        authority_grant_id=authority_grant_id,
+    )
     handler = CommandHandlerRegistry.get(command_type)
     # 3. STEP — the deterministic handler. No model call, ever (AD-26).
     outcome = await handler(payload, context)

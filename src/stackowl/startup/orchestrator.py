@@ -2321,6 +2321,9 @@ class StartupOrchestrator:
         # journal/task_events.py's own "importing this module registers ..."
         # shape). Imported here, beside register_all_commands, per this story's
         # Code Map: "do not invent a second registration hook."
+        # Story 4.6 — same shape, for authority.grant/authority.revoke (the
+        # ONLY two CommandSpecs that ever write standing_authority).
+        import stackowl.authz.commands  # noqa: F401
         import stackowl.scheduler.commands  # noqa: F401
         from stackowl.commands.assembly import CommandDeps, register_all_commands
         from stackowl.integrations.registry import IntegrationRegistry

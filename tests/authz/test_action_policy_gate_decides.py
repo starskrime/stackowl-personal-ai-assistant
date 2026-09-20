@@ -92,6 +92,58 @@ def test_decide_carries_attending_alongside_the_outcome() -> None:
     assert autonomous_decision.attending is False
 
 
+def test_autonomous_irreversible_with_matching_grant_runs_at_once() -> None:
+    """FR32's other half — a matching standing-authority grant turns an
+    autonomous run's irreversible command into run_at_once, and the decision
+    carries the grant id for the handler to journal."""
+    result = decide(
+        severity="write", reversible=False, requester_kind="autonomous",
+        authority_grant_id="g1",
+    )
+    assert result.outcome == "run_at_once"
+    assert result.authority_grant_id == "g1"
+
+
+def test_autonomous_irreversible_consequential_with_grant_still_needs_step_up() -> None:
+    """Severity outranks a standing-authority match too — CONSEQUENTIAL never
+    bypasses step-up, grant or no grant (FR37)."""
+    result = decide(
+        severity="consequential", reversible=False, requester_kind="autonomous",
+        authority_grant_id="g1",
+    )
+    assert result.outcome == "needs_step_up"
+    assert result.authority_grant_id is None
+
+
+def test_owner_irreversible_with_matching_grant_still_needs_step_up() -> None:
+    """Standing authority only ever bypasses step-up for `autonomous` — the
+    owner is attending, so a grant changes nothing for them."""
+    result = decide(
+        severity="write", reversible=False, requester_kind="owner",
+        authority_grant_id="g1",
+    )
+    assert result.outcome == "needs_step_up"
+    assert result.authority_grant_id is None
+
+
+def test_a_run_at_once_decision_with_no_grant_carries_no_authority_grant_id() -> None:
+    result = decide(severity="write", reversible=True, requester_kind="owner")
+    assert result.outcome == "run_at_once"
+    assert result.authority_grant_id is None
+
+
+def test_autonomous_irreversible_with_an_empty_string_grant_id_still_needs_step_up() -> None:
+    """An empty string is not a real grant id -- `decide()` must check
+    truthiness, not just `is not None`, or a blank/falsy value would be
+    treated as a matching grant."""
+    result = decide(
+        severity="write", reversible=False, requester_kind="autonomous",
+        authority_grant_id="",
+    )
+    assert result.outcome == "needs_step_up"
+    assert result.authority_grant_id is None
+
+
 def test_an_undeclared_severity_is_refused() -> None:
     with pytest.raises(ValueError, match="severity"):
         decide(severity="delete-everything", reversible=True, requester_kind="owner")
