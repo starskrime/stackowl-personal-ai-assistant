@@ -72,7 +72,7 @@ development_status:
   4-1-severities-and-the-principal-live-in-authz: done
   4-2-every-tool-and-slash-command-declares-whether-it-changes-sta: done
   4-3-a-declared-command-runs-through-one-door: done
-  4-4-one-action-policy-gate-decides: backlog
+  4-4-one-action-policy-gate-decides: done
   4-5-undo-for-24-hours: backlog
   4-6-standing-authority-is-explicit-and-yours-alone: backlog
   4-7-scheduling-runs-on-commands: backlog
