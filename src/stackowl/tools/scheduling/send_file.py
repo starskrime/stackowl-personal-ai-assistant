@@ -5,13 +5,17 @@ commands but, until now, could only send TEXT back to the user — never the byt
 Sending a binary file needs the bot API plus the live chat context, so this is a
 core tool (like ``send_message``), NOT something the agent assembles via shell.
 
-A thin delegate over the S0 transport chokepoint that threads a *workspace-scoped*
-file path through ``get_services().proactive_deliverer.deliver(...)`` — NEVER a
-channel adapter directly — so every send respects the router's
-quiet-hours/focus/cap decision and the urgency is HARD-CLAMPED to ``normal``
-(``clamp_agent_urgency``; an agent cannot raise a critical alert). The deliverer
-routes a notification carrying ``file_path`` to the channel adapter's
-``send_file`` (Telegram → send_video/send_photo/send_document by extension).
+Story 4.8 (AD-1) — a thin delegate that threads a *workspace-scoped* file path
+into the declared, irreversible ``messaging.send_file`` command, submitted
+through ``commands/spec/submit.py::submit_command`` rather than calling
+``proactive_deliverer.deliver(...)`` directly. ``notifications/commands.py``'s
+handler is the ONLY place that still touches the S0 transport chokepoint,
+clamping the urgency to ``normal`` (``clamp_agent_urgency``; an agent cannot
+raise a critical alert) and routing a notification carrying ``file_path`` to
+the channel adapter's ``send_file`` (Telegram → send_video/send_photo/
+send_document by extension). Being irreversible, an ordinary send now parks
+for step-up before it runs — even for the owner (``authz.action_policy.
+decide``'s honest behavior, no owner carve-out).
 
 Mirrors ``send_message`` exactly:
 
@@ -55,8 +59,6 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
-from stackowl.notifications.deliverer import clamp_agent_urgency
-from stackowl.notifications.router import Notification
 from stackowl.notifications.router_helpers import resolve_recipient
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
@@ -350,50 +352,64 @@ class SendFileTool(Tool):
         trace_id: object,
         session_key: str,
     ) -> str:
-        """Clamp + hand the file Notification to the S0 deliverer; never raises.
+        """Submit ``messaging.send_file`` through the one door; never raises.
 
-        Returns the transport ``DeliveryStatus``, or ``"deferred"`` when no
-        deliverer is wired / the deliverer raises (self-healing, B5). The caption
-        rides on the Notification's ``message`` field (empty string when none). The
-        originating ``session_key`` resolves to the recipient ``chat_id`` (where the
-        channel makes that valid — telegram private chats) so the file reaches THAT
-        chat, not the adapter's shared mutable ``_last_chat_id``.
+        Story 4.8 (AD-1) — this no longer calls ``proactive_deliverer.deliver``
+        directly; it submits the declared, irreversible ``messaging.send_file``
+        command instead. Returns the transport ``DeliveryStatus`` when the
+        command actually ran, ``"pending_approval"`` when the gate parked it
+        awaiting step-up, or ``"deferred"`` when no db/deliverer is wired or
+        ``submit_command`` itself raises (self-healing, B5). The originating
+        ``session_key`` resolves to the recipient ``chat_id`` BEFORE
+        submission (same reasoning as ``send_message._deliver``).
         """
-        deliverer = get_services().proactive_deliverer
-        if deliverer is None:
+        from stackowl.commands.spec.submit import submit_command
+        from stackowl.notifications.commands import SEND_FILE, SendFilePayload
+
+        db = get_services().db_pool
+        if db is None:
             log.tool.warning(
-                "send_file._deliver: no proactive_deliverer wired — deferring",
+                "send_file._deliver: no db pool wired — deferring",
                 extra={"_fields": {"channel": target}},
             )
             return "deferred"
 
-        notification = Notification(
-            message=caption,
-            urgency=clamp_agent_urgency("normal"),
+        payload = SendFilePayload(
+            file_path=file_path,
+            caption=caption,
+            channel=target,
             category=_CATEGORY,
-            channel_name=target,
             # The log-row identity, NOT a once-ness guarantee — see
             # `Notification.notification_id`. A retry mints a new trace, so
             # this value differs between attempts by construction.
             notification_id=str(trace_id) if trace_id else None,
-            file_path=file_path,
-            target_chat_id=await resolve_recipient(target, session_key, get_services().session_store),
+            target=await resolve_recipient(target, session_key, get_services().session_store),
         )
         try:
-            status = await deliverer.deliver(notification)
-        except Exception as exc:  # B5 — deliverer is contracted not to raise; belt-and-braces.
+            submission = await submit_command(db, SEND_FILE, payload)
+        except Exception as exc:  # B5 — submission must never crash the caller.
             log.tool.error(
-                "send_file._deliver: deliver raised — deferring",
+                "send_file._deliver: submit_command raised — deferring",
                 exc_info=exc,
                 extra={"_fields": {"channel": target}},
             )
             return "deferred"
 
-        if status == "failed":
-            log.tool.warning(
-                "send_file._deliver: deliver returned failed",
-                extra={"_fields": {"channel": target}},
+        outcome = submission.outcome
+        if outcome is None:
+            log.tool.info(
+                "send_file._deliver: pending approval — an irreversible send "
+                "needs step-up",
+                extra={"_fields": {"channel": target, "command_id": submission.command_id}},
             )
+            return "pending_approval"
+        if not outcome.success:
+            log.tool.warning(
+                "send_file._deliver: command failed",
+                extra={"_fields": {"channel": target, "error": outcome.error}},
+            )
+            return "failed"
+        status = str(outcome.result.get("delivery_status") or "delivered")
         return status
 
     @staticmethod

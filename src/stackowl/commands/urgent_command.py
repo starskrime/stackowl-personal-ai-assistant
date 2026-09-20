@@ -141,50 +141,61 @@ class UrgentCommand(SlashCommand):
             for ch in channels
         ]
 
-        # PREFERRED PATH (F-76) — transport through the real deliverer seam and
-        # count ONLY genuine ``delivered`` outcomes (``failed`` does not count).
+        # PREFERRED PATH (F-76) — submit the declared, irreversible
+        # notifications.broadcast_urgent command; the handler
+        # (notifications/commands.py) does the actual per-channel transport
+        # and counts ONLY genuine ``delivered`` outcomes (``failed`` does not
+        # count). Story 4.8 (AD-1): this no longer calls
+        # ``self._deliverer.deliver`` directly.
         if self._deliverer is not None:
-            return await self._broadcast_via_deliverer(notifications, channels)
+            return await self._broadcast_via_deliverer(message, channels)
 
         # DEGRADED PATH — no transport seam wired. We can only make a routing
         # decision; report it HONESTLY as "routed" (a decision), never as a
         # delivery, and flag that transport is not wired so the claim is true.
         return await self._route_only(notifications, channels)
 
-    async def _broadcast_via_deliverer(
-        self, notifications: list[Notification], channels: list[str]
-    ) -> str:
-        """Transport each notification and count real ``delivered`` outcomes."""
+    async def _broadcast_via_deliverer(self, message: str, channels: list[str]) -> str:
+        """Submit ``notifications.broadcast_urgent`` and report the REAL
+        ``delivered`` count the handler's per-channel transport observed."""
+        from stackowl.commands.spec.submit import submit_command
+        from stackowl.notifications.commands import BROADCAST_URGENT, BroadcastUrgentPayload
+        from stackowl.pipeline.services import get_services
+
         log.notifications.debug(
-            "[notifications] urgent.handle: transporting via deliverer",
+            "[notifications] urgent.handle: submitting broadcast_urgent",
             extra={"_fields": {"channels": channels}},
         )
-        assert self._deliverer is not None  # narrowed by caller
-        tasks = [self._deliverer.deliver(n) for n in notifications]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        delivered = 0
-        failed = 0
-        for res in results:
-            # ``delivered`` is the ONLY outcome that proves transport reached the
-            # user. ``failed``/``batched``/``suppressed`` and any raised exception
-            # are NOT a delivery and must never inflate the count.
-            if isinstance(res, BaseException):
-                failed += 1
-                log.notifications.warning(
-                    "[notifications] urgent.handle: transport raised",
-                    exc_info=res,
-                )
-            elif res == "delivered":
-                delivered += 1
-            else:
-                failed += 1
-                log.notifications.warning(
-                    "[notifications] urgent.handle: not delivered",
-                    extra={"_fields": {"status": str(res)}},
-                )
-
         total = len(channels)
+        db = get_services().db_pool
+        if db is None:
+            log.notifications.warning(
+                "[notifications] urgent.handle: no db pool wired — cannot submit",
+            )
+            return "urgent: not configured (no database)"
+
+        payload = BroadcastUrgentPayload(message=message, channels=list(channels))
+        submission = await submit_command(db, BROADCAST_URGENT, payload)
+        outcome = submission.outcome
+        if outcome is None:
+            log.notifications.info(
+                "[notifications] urgent.handle: pending approval — an "
+                "irreversible broadcast needs step-up",
+                extra={"_fields": {"command_id": submission.command_id}},
+            )
+            return (
+                f"urgent: submitted (command_id={submission.command_id}) — "
+                "awaiting your approval (irreversible broadcasts need step-up)"
+            )
+        if not outcome.success:
+            log.notifications.warning(
+                "[notifications] urgent.handle: broadcast command failed",
+                extra={"_fields": {"error": outcome.error}},
+            )
+            return f"urgent: failed to broadcast: {outcome.error or 'command refused'}"
+
+        delivered = int(outcome.result.get("delivered", 0))
+        failed = int(outcome.result.get("failed", 0))
         log.notifications.info(
             "[notifications] urgent.handle: exit",
             extra={"_fields": {"delivered": delivered, "failed": failed}},

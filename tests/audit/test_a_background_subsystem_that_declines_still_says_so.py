@@ -132,12 +132,12 @@ _ACCEPTED: dict[str, str] = {
     # branch it guards is arithmetic, not a decision about whether to act.
     "src/stackowl/scheduler/scheduler_helpers.py::compute_next_run":
         "per-dispatch arithmetic; the loud path already reports the outcome",
-    # Boot-time idempotent seeding. 'already present' is the normal case on every
-    # boot after the first, so it is a no-op confirmation rather than a decline.
-    "src/stackowl/scheduler/assembly.py::_seed_daily_schedule":
-        "idempotent boot seed; 'already present' is the steady state",
-    "src/stackowl/scheduler/assembly.py::_seed_minutes_schedule":
-        "idempotent boot seed; 'already present' is the steady state",
+    # `_seed_daily_schedule`/`_seed_minutes_schedule` were here ("idempotent boot
+    # seed; 'already present' is the steady state") until Story 4.8 added their
+    # own `delivery_command_type`-gated branch (`_seed_delivery_authority`), which
+    # changed their control-flow shape enough that the scanner no longer finds
+    # them asymmetric — the exemption is stale, per this list's own rule ("MAY
+    # ONLY SHRINK"), so it is deleted rather than kept as a false statement.
     "src/stackowl/scheduler/assembly.py::_maybe_notify_unset_timezone":
         "fires per tick once notified; the notification itself is the record",
     "src/stackowl/scheduler/assembly.py::_check_and_notify":

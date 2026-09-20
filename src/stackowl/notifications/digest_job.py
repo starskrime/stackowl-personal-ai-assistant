@@ -119,7 +119,7 @@ class NotificationDigestJob(JobHandler):
         # 3. STEP — flush each due row
         flushed = 0
         for row in rows:
-            if await self._flush_row(row, now):
+            if await self._flush_row(row, now, digest_job_id=job.job_id):
                 flushed += 1
 
         duration_ms = (_time.monotonic() - t0) * 1000
@@ -146,8 +146,17 @@ class NotificationDigestJob(JobHandler):
             metadata={"flushed": flushed, "due_count": len(rows)},
         )
 
-    async def _flush_row(self, row: dict[str, object], now: datetime) -> bool:
-        """Deliver-log + delete a single queued notification. Returns success."""
+    async def _flush_row(
+        self, row: dict[str, object], now: datetime, *, digest_job_id: str,
+    ) -> bool:
+        """Deliver-log + delete a single queued notification. Returns success.
+
+        ``digest_job_id`` is the DIGEST job's OWN real (persisted) id (Story
+        4.8's ``authority_scope`` for ``notifications.deliver_digest``) — kept
+        distinct from ``job_id``/``job_id_value`` below, which is the
+        ORIGINATING job (if any) that queued THIS notification, a completely
+        different id.
+        """
         notification_id = str(row["notification_id"])
         urgency = str(row["urgency"])
         category = str(row["category"])
@@ -201,7 +210,30 @@ class NotificationDigestJob(JobHandler):
         # Transport the stored body if present + a deliverer is wired; otherwise
         # degrade to audit-only (legacy rows without a body, or no deliverer).
         if body is not None and self._deliverer is not None:
-            transport_status = await self._deliverer.transport(channel, body)
+            transport_status = await self._submit_deliver_digest(
+                channel, body, digest_job_id=digest_job_id,
+            )
+            if transport_status == "pending_approval":
+                # Review fix — a PARKED command (no matching standing
+                # authority) is not a transport failure: the row is retained
+                # for the next tick WITHOUT bumping `attempts` or ever being
+                # dead-lettered, so a channel whose digest authority is
+                # revoked (or never granted) retries indefinitely rather than
+                # having its queued notifications silently deleted after
+                # `_MAX_FLUSH_ATTEMPTS`.
+                log.notifications.info(
+                    "[notifications] digest._flush_row: pending approval — "
+                    "retaining row for retry, not counted toward the "
+                    "dead-letter cap",
+                    extra={
+                        "_fields": {
+                            "notification_id": notification_id,
+                            "channel": channel,
+                            "message_hash": message_hash,
+                        }
+                    },
+                )
+                return False
             if transport_status == "failed":
                 # Do NOT write a "delivered" audit row here — that would lie in the
                 # audit trail. The row's scheduled_for is already <= now, so the next
@@ -328,3 +360,48 @@ class NotificationDigestJob(JobHandler):
             )
             return False
         return True
+
+    async def _submit_deliver_digest(
+        self, channel: str, body: str, *, digest_job_id: str,
+    ) -> str:
+        """Submit ``notifications.deliver_digest`` instead of calling
+        ``self._deliverer.transport`` directly (Story 4.8, AD-1). Returns the
+        transport ``DeliveryStatus`` when the command actually ran,
+        ``"pending_approval"`` when it PARKED awaiting a decision (no
+        matching standing authority) — review fix: this is NOT a transport
+        failure (nothing about the channel/adapter is broken, only a missing
+        grant), so it must not be counted toward ``_flush_row``'s bounded
+        dead-letter attempts, which would otherwise permanently delete a
+        queued notification for a channel whose authority was merely revoked
+        or never granted — or ``"failed"`` when the inline claim was lost or
+        a resubmitted command_id was already attempted once (its outcome
+        unconfirmed), either of which the bounded ``attempts`` cap still
+        governs exactly as a genuine transport failure would.
+
+        A FRESH ``command_id`` is minted every call (never a stable one keyed
+        by ``notification_id``): the receipt-check-first guard inside the
+        handler is for a lease-reclaim re-run of the SAME already-submitted
+        command, not for this job's own separate bounded retries across
+        ticks — a stable id would make the second real retry silently
+        short-circuit as "already sent" and stop retrying a row that never
+        actually reached the user.
+        """
+        from stackowl.commands.spec.submit import submit_command
+        from stackowl.notifications.commands import DELIVER_DIGEST, DeliverDigestPayload
+
+        submission = await submit_command(
+            self._db, DELIVER_DIGEST,
+            DeliverDigestPayload(job_id=digest_job_id, channel=channel, message=body),
+            authority_scope=("job", digest_job_id),
+        )
+        outcome = submission.outcome
+        if outcome is None:
+            log.notifications.info(
+                "[notifications] digest._submit_deliver_digest: pending "
+                "approval — no matching standing authority",
+                extra={"_fields": {"channel": channel, "command_id": submission.command_id}},
+            )
+            return "pending_approval"
+        if not outcome.success:
+            return "failed"
+        return str(outcome.result.get("delivery_status") or "delivered")

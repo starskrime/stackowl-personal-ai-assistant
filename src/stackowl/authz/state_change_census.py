@@ -87,10 +87,14 @@ _REASON_4_7_MIGRATED = (
     "resume_owl_job/set_owl_schedule) and objectives/commands.py "
     "(set_objective) hold the registered CommandSpec + handler pairs."
 )
-_REASON_4_8 = (
-    "Story 4.8's wave — the scheduled/outbound message-delivery seam "
-    "(send_message/send_file tools, /urgent, /brief), named explicitly in "
-    "epics.md's Story 4.8 scope."
+_REASON_4_8_MIGRATED = (
+    "Story 4.8 migrated this: send_message/send_file, /urgent's broadcast, "
+    "and /brief + the scheduled morning-brief job now all call "
+    "commands/spec/submit.py::submit_command instead of "
+    "ProactiveDeliverer.deliver/.transport or ProactiveJobDeliverer."
+    "deliver_for_job directly — notifications/commands.py (messaging."
+    "send_message/send_file, notifications.broadcast_urgent/deliver_brief) "
+    "holds the registered CommandSpec + handler pairs."
 )
 _REASON_4_9 = (
     "Story 4.9's wave — owl and skill authority-widening actions (owl "
@@ -140,10 +144,18 @@ COMMAND_TYPE_MIGRATIONS: dict[str, CommandTypeMigration] = {
         "4.7", status="migrated", reason=_REASON_4_7_MIGRATED,
     ),
     # ------------------------------------------------------------------ 4.8
-    "messaging.send_file": CommandTypeMigration("4.8", reason=_REASON_4_8),
-    "messaging.send_message": CommandTypeMigration("4.8", reason=_REASON_4_8),
-    "notifications.broadcast_urgent": CommandTypeMigration("4.8", reason=_REASON_4_8),
-    "notifications.deliver_brief": CommandTypeMigration("4.8", reason=_REASON_4_8),
+    "messaging.send_file": CommandTypeMigration(
+        "4.8", status="migrated", reason=_REASON_4_8_MIGRATED,
+    ),
+    "messaging.send_message": CommandTypeMigration(
+        "4.8", status="migrated", reason=_REASON_4_8_MIGRATED,
+    ),
+    "notifications.broadcast_urgent": CommandTypeMigration(
+        "4.8", status="migrated", reason=_REASON_4_8_MIGRATED,
+    ),
+    "notifications.deliver_brief": CommandTypeMigration(
+        "4.8", status="migrated", reason=_REASON_4_8_MIGRATED,
+    ),
     # ------------------------------------------------------------------ 4.9
     "owls.build": CommandTypeMigration("4.9", reason=_REASON_4_9),
     "owls.build_tool": CommandTypeMigration("4.9", reason=_REASON_4_9),

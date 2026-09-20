@@ -22,16 +22,19 @@ from typing import Any, cast
 
 import pytest
 
+from stackowl.authz.standing_authority import grant
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
+from stackowl.notifications.commands import DELIVER_BRIEF
 from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.delivery_ledger import DeliveryLedger
 from stackowl.notifications.proactive_job import occurrence_key
 from stackowl.notifications.router import NotificationRouter
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
 from stackowl.scheduler.job import Job
@@ -101,7 +104,7 @@ def _clean() -> AsyncIterator[None]:  # type: ignore[misc]
 
 def _wire_handler(
     db: DbPool, settings: Settings, adapter: _RecordingTelegramAdapter
-) -> tuple[JobScheduler, MorningBriefHandler]:
+) -> tuple[JobScheduler, MorningBriefHandler, ProactiveDeliverer]:
     ChannelRegistry.instance().register(cast(Any, adapter))
     router = NotificationRouter(db=db, settings=settings)
     deliverer = ProactiveDeliverer(
@@ -127,7 +130,7 @@ def _wire_handler(
         delivery_ledger=ledger,
     )
     HandlerRegistry.instance().register(handler)
-    return scheduler, handler
+    return scheduler, handler, deliverer
 
 
 async def _seed_due_brief_job(
@@ -162,14 +165,26 @@ async def test_fresh_process_delivers_brief_to_durable_target(
     """
     settings = _settings()
     adapter = _RecordingTelegramAdapter()
-    scheduler, _handler = _wire_handler(migrated_db, settings, adapter)
+    scheduler, _handler, deliverer = _wire_handler(migrated_db, settings, adapter)
     await _seed_due_brief_job(
         migrated_db,
         target_channels=["telegram"],
         target_addresses={"telegram": 12345},
     )
+    # Story 4.8 (AD-1) — morning_brief now submits notifications.deliver_brief
+    # through the one door; an unattended run needs BOTH get_services() wired
+    # (the handler resolves its deliverer/db that way) AND a matching standing-
+    # authority grant (mirrors a grandfathered/seeded production boot).
+    await grant(
+        migrated_db, scope_kind="job", scope_id="morning_brief-fresh01",
+        command_type=DELIVER_BRIEF, granted_by="autonomous", provenance="seeded",
+    )
 
-    await scheduler._poll()
+    token = set_services(StepServices(db_pool=migrated_db, proactive_deliverer=deliverer))
+    try:
+        await scheduler._poll()
+    finally:
+        reset_services(token)
 
     assert len(adapter.sends) == 1, "the brief must reach the durable target exactly once"
     text, chat_id = adapter.sends[0]
@@ -187,7 +202,7 @@ async def test_unresolved_target_records_no_delivered(migrated_db: DbPool) -> No
     """F109: an UNRESOLVED channel never sends and is never recorded delivered."""
     settings = _settings()
     adapter = _RecordingTelegramAdapter()
-    scheduler, _handler = _wire_handler(migrated_db, settings, adapter)
+    scheduler, _handler, _deliverer = _wire_handler(migrated_db, settings, adapter)
     # Channel listed but NO durable address for it -> undeliverable.
     await _seed_due_brief_job(
         migrated_db,
@@ -224,7 +239,7 @@ async def test_replay_of_delivered_occurrence_suppresses_second_send(
     """
     settings = _settings()
     adapter = _RecordingTelegramAdapter()
-    scheduler, _handler = _wire_handler(migrated_db, settings, adapter)
+    scheduler, _handler, _deliverer = _wire_handler(migrated_db, settings, adapter)
     job = await _seed_due_brief_job(
         migrated_db,
         target_channels=["telegram"],

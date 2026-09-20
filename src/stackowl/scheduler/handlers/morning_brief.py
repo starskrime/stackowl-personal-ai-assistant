@@ -234,7 +234,11 @@ class MorningBriefHandler(JobHandler):
     async def _deliver(
         self, job: Job, rendered: str
     ) -> ProactiveDeliveryOutcome:
-        """Transport the rendered brief to the job's durable recipients (F101).
+        """Submit ``notifications.deliver_brief`` for the job's durable
+        recipients (F101). Covers BOTH the scheduled morning-brief job AND
+        ``/brief``'s synthetic ad-hoc job — one command type, since
+        ``brief_command.py`` already calls this same :meth:`execute`
+        (Code Map: "one command type covers both triggers").
 
         Returns the honest aggregate outcome. When no deliverer is wired (legacy /
         unit construction) the brief is rendered + recorded but NOT sent — surfaced
@@ -260,9 +264,22 @@ class MorningBriefHandler(JobHandler):
                 job_id=job.job_id,
             )
             return ProactiveDeliveryOutcome(rollup="undeliverable")
-        return await self._job_deliverer.deliver_for_job(
-            job, message=rendered, category=_CATEGORY
+
+        # Story 4.8 (AD-1) — submits the declared, irreversible
+        # notifications.deliver_brief command instead of calling
+        # self._job_deliverer.deliver_for_job directly. authority_scope
+        # is passed unconditionally; submit_command only resolves it for an
+        # "autonomous" (scheduler-driven) run — /brief's own owner-attended
+        # call always needs step-up regardless (the gate's honest behavior).
+        from stackowl.commands.spec.submit import submit_command
+        from stackowl.notifications.commands import DELIVER_BRIEF, DeliverBriefPayload, outcome_from_submission
+
+        submission = await submit_command(
+            self._db, DELIVER_BRIEF,
+            DeliverBriefPayload(job=job, message=rendered, category=_CATEGORY),
+            authority_scope=("job", job.job_id),
         )
+        return outcome_from_submission(submission)
 
     # ---------------------------------------------------------------- helpers
 

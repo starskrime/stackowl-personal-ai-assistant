@@ -4,10 +4,18 @@ A user-created cron "goal" computes an answer and must deliver it back to the
 chat it was scheduled from, exactly-once, via the durable
 :class:`ProactiveJobDeliverer` seam — never silently dropped.
 
+Story 4.8 (AD-1) — ``_deliver_answer`` now SUBMITS the declared, irreversible
+``notifications.deliver_goal_result`` command instead of calling
+``self._job_deliverer.deliver_for_job`` directly, so these tests script the
+outcome through a stubbed ``commands/spec/submit.py::submit_command``
+(``stub_submit_command``) and inspect the SUBMITTED payload (job/message/
+category/urgency) instead of a fake job deliverer's own call log.
+
 These tests pin:
 
-* delivery happens through ``deliver_for_job`` exactly once with the produced
-  response as the message, and the recorded status maps from the outcome rollup;
+* delivery submits ``notifications.deliver_goal_result`` exactly once with the
+  produced response as the message, and the recorded status maps from the
+  outcome rollup;
 * the PipelineState the backend runs uses ``defer_delivery=True`` (the pipeline
   deliver step no-ops; THIS handler owns delivery), a FULL-job_id session, and
   the channel from the job (not hardcoded "cli");
@@ -24,35 +32,7 @@ from typing import Any
 import pytest
 
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
-from tests._story_7_2_helpers import RecordingDb, StubBackend, disable_guard, make_job
-
-
-class FakeJobDeliverer:
-    """Records ``deliver_for_job`` calls and returns a scripted outcome rollup."""
-
-    def __init__(self, rollup: str = "delivered") -> None:
-        self._rollup = rollup
-        self.calls: list[dict[str, Any]] = []
-
-    async def deliver_for_job(
-        self,
-        job: Any,
-        *,
-        message: str,
-        category: str,
-        urgency: str = "normal",
-    ) -> Any:
-        self.calls.append(
-            {
-                "job": job,
-                "message": message,
-                "category": category,
-                "urgency": urgency,
-            }
-        )
-        from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
-
-        return ProactiveDeliveryOutcome(rollup=self._rollup)
+from tests._story_7_2_helpers import RecordingDb, StubBackend, disable_guard, make_job, stub_submit_command
 
 
 def _targeted_job(*, params: dict[str, Any] | None = None, **overrides: Any) -> Any:
@@ -79,38 +59,46 @@ def _result_text_of(db: RecordingDb) -> Any:
 pytestmark = pytest.mark.asyncio
 
 
+#: Any non-None placeholder — the REAL job deliverer is never reached once
+#: submit_command itself is stubbed; this only needs to satisfy the
+#: "_job_deliverer is None" honest-degradation guard in _deliver_answer.
+_PLACEHOLDER_DELIVERER = object()
+
+
 class TestGoalExecutionDelivery:
     async def test_delivers_once_and_records_completed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="weather: sunny")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer(rollup="delivered")
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
         job = _targeted_job()
 
         await handler.execute(job)
 
-        assert len(deliverer.calls) == 1
-        call = deliverer.calls[0]
-        assert call["message"] == "weather: sunny"
-        assert call["job"] is job
-        assert call["category"] == "goal_answer"
+        assert len(calls) == 1
+        payload = calls[0]["payload"]
+        assert payload.message == "weather: sunny"
+        assert payload.job.job_id == job.job_id
+        assert payload.category == "goal_answer"
         # TS10 — a RECURRING poke (no run_once) routes at "normal" urgency so the
         # NotificationRouter can coalesce it inside quiet hours (see the one-shot
-        # case in test_delivery_before_run_once_delete, which stays "critical").
-        assert call["urgency"] == "normal"
+        # case below, which stays "critical").
+        assert payload.urgency == "normal"
+        assert calls[0]["command_type"] == "notifications.deliver_goal_result"
+        assert calls[0]["kwargs"]["authority_scope"] == ("job", job.job_id)
         assert _status_of(db) == "completed"
 
     async def test_pipeline_state_defers_delivery_and_uses_job_channel(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="ok")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
         job = _targeted_job(primary_channel="telegram")
 
         await handler.execute(job)
@@ -141,10 +129,10 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="ok")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
         job = _targeted_job()
         job.params["owl"] = "scout"
 
@@ -155,10 +143,10 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        stub_submit_command(monkeypatch, rollup="undeliverable", success=True)
         backend = StubBackend(response_text="the answer")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer(rollup="undeliverable")
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
         # Empty targets — nothing to deliver to.
         job = make_job(params={"goal": "do it"})
 
@@ -174,10 +162,10 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        stub_submit_command(monkeypatch, rollup="partial", success=False)
         backend = StubBackend(response_text="x")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer(rollup="partial")
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         result = await handler.execute(_targeted_job())
         assert _status_of(db) == "partial"
@@ -189,10 +177,10 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        stub_submit_command(monkeypatch, rollup="failed", success=False)
         backend = StubBackend(response_text="x")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer(rollup="failed")
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         result = await handler.execute(_targeted_job())
         assert _status_of(db) == "failed"
@@ -202,10 +190,10 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        stub_submit_command(monkeypatch, rollup="suppressed", success=True)
         backend = StubBackend(response_text="x")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer(rollup="suppressed")
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         await handler.execute(_targeted_job())
         assert _status_of(db) == "completed"
@@ -244,15 +232,16 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
-        backend = StubBackend(response_text="ship it")
-        db = RecordingDb()
-
         order: list[str] = []
 
-        class _OrderingDeliverer(FakeJobDeliverer):
-            async def deliver_for_job(self, job: Any, **kw: Any) -> Any:  # type: ignore[override]
-                order.append("deliver")
-                return await super().deliver_for_job(job, **kw)
+        def _record_submission(record: dict[str, Any]) -> None:
+            order.append("deliver")
+
+        stub_submit_command(
+            monkeypatch, rollup="delivered", success=True, on_call=_record_submission,
+        )
+        backend = StubBackend(response_text="ship it")
+        db = RecordingDb()
 
         # Wrap db.execute to record the DELETE position.
         orig_execute = db.execute
@@ -264,8 +253,7 @@ class TestGoalExecutionDelivery:
 
         db.execute = _tracking_execute  # type: ignore[method-assign]
 
-        deliverer = _OrderingDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
         job = _targeted_job(params={"goal": "ship it", "run_once": True})
 
         await handler.execute(job)
@@ -274,22 +262,35 @@ class TestGoalExecutionDelivery:
         # The scheduler retires a run_once row after success (2026-09-12); the
         # handler no longer deletes it, so delivery can never lose that race.
         assert "delete" not in order
+
+    async def test_run_once_stays_critical_urgency(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         # TS10 — a one-shot goal (run_once) is a direct user request: it stays
         # "critical" so it is delivered promptly and never quiet-hours batched.
-        assert deliverer.calls[0]["urgency"] == "critical"
+        disable_guard(monkeypatch)
+        calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
+        backend = StubBackend(response_text="ship it")
+        db = RecordingDb()
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
+        job = _targeted_job(params={"goal": "ship it", "run_once": True})
+
+        await handler.execute(job)
+
+        assert calls[0]["payload"].urgency == "critical"
 
     async def test_empty_response_skips_delivery(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         await handler.execute(_targeted_job())
         # Nothing produced → nothing delivered.
-        assert deliverer.calls == []
+        assert calls == []
 
     async def test_no_notify_sentinel_skips_delivery(
         self, monkeypatch: pytest.MonkeyPatch
@@ -298,13 +299,13 @@ class TestGoalExecutionDelivery:
         # model determined X isn't met must not be delivered — reproduces the
         # reported bug where a "should not send" analysis got sent anyway.
         disable_guard(monkeypatch)
+        calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="NO_NOTIFY_NEEDED")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         result = await handler.execute(_targeted_job())
-        assert deliverer.calls == []
+        assert calls == []
         assert _status_of(db) == "completed"
         assert result.success is True
 
@@ -312,13 +313,13 @@ class TestGoalExecutionDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         disable_guard(monkeypatch)
+        calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="  NO_NOTIFY_NEEDED\n")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         await handler.execute(_targeted_job())
-        assert deliverer.calls == []
+        assert calls == []
 
     async def test_text_merely_containing_the_sentinel_word_still_delivers(
         self, monkeypatch: pytest.MonkeyPatch
@@ -326,10 +327,10 @@ class TestGoalExecutionDelivery:
         # The sentinel must be an exact, whole-message match — a real answer
         # that happens to mention the word must still be delivered normally.
         disable_guard(monkeypatch)
+        calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
         backend = StubBackend(response_text="NO_NOTIFY_NEEDED is not a real ticker symbol.")
         db = RecordingDb()
-        deliverer = FakeJobDeliverer()
-        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=_PLACEHOLDER_DELIVERER)  # type: ignore[arg-type]
 
         await handler.execute(_targeted_job())
-        assert len(deliverer.calls) == 1
+        assert len(calls) == 1

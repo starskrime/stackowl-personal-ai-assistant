@@ -58,7 +58,7 @@ from stackowl.pipeline.steps.execute import _snapshot_consequential
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
 from stackowl.tools.base import ToolResult
 from stackowl.tools.meta.owl_build import OwlBuildTool
-from tests._story_7_2_helpers import RecordingDb, disable_guard
+from tests._story_7_2_helpers import RecordingDb, disable_guard, stub_submit_command
 
 # --- reuse proven per-story doubles/helpers (no rebuilt harnesses) ----------------
 from tests.pipeline.test_grounding_gate import (
@@ -79,7 +79,6 @@ from tests.pipeline.test_overclaim_gate import (
 from tests.pipeline.test_overclaim_gate import (
     _state as _oc_state,
 )
-from tests.scheduler.handlers.test_goal_execution_delivery import FakeJobDeliverer
 from tests.scheduler.handlers.test_goal_execution_honesty import (
     _FAB_URL,
     _REAL_URL,
@@ -238,16 +237,16 @@ async def test_eval5_schedule_fires_each_cycle_sourced(
         ),
         search_urls=(_REAL_URL,),
     )
-    deliverer = FakeJobDeliverer(rollup="delivered")
+    calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     handler = GoalExecutionHandler(
-        backend=real_backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=real_backend, db=RecordingDb(), job_deliverer=object(),  # type: ignore[arg-type]
     )
     for _ in range(3):
         await handler.execute(_poke_job())
 
-    assert len(deliverer.calls) == 3  # the recurring job actually fired 3×
-    for call in deliverer.calls:
-        msg = str(call["message"])
+    assert len(calls) == 3  # the recurring job actually fired 3×
+    for call in calls:
+        msg = str(call["payload"].message)
         assert _REAL_URL in msg  # every delivery carries a fetched source
         assert msg != _FLOOR_TEXT
 
@@ -259,12 +258,12 @@ async def test_eval5_schedule_fires_each_cycle_sourced(
         ),
         search_urls=(),
     )
-    empty_deliverer = FakeJobDeliverer(rollup="delivered")
+    empty_calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     empty_handler = GoalExecutionHandler(
-        backend=empty_backend, db=RecordingDb(), job_deliverer=empty_deliverer,  # type: ignore[arg-type]
+        backend=empty_backend, db=RecordingDb(), job_deliverer=object(),  # type: ignore[arg-type]
     )
     await empty_handler.execute(_poke_job())
-    delivered = str(empty_deliverer.calls[0]["message"])
+    delivered = str(empty_calls[0]["payload"].message)
     assert delivered == _FLOOR_TEXT
     assert _FAB_URL not in delivered
 
@@ -321,13 +320,13 @@ async def test_eval7_empty_cycle_honesty(monkeypatch: pytest.MonkeyPatch) -> Non
         ),
         search_urls=(),  # the empty cycle
     )
-    deliverer = FakeJobDeliverer(rollup="delivered")
+    calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     handler = GoalExecutionHandler(
-        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=backend, db=RecordingDb(), job_deliverer=object(),  # type: ignore[arg-type]
     )
     await handler.execute(_poke_job())
 
-    delivered = str(deliverer.calls[0]["message"])
+    delivered = str(calls[0]["payload"].message)
     assert delivered == _FLOOR_TEXT
     assert _FAB_URL not in delivered
     assert "gpt56" not in delivered.lower()

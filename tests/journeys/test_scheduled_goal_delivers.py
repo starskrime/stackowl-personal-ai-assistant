@@ -53,12 +53,14 @@ import pytest
 # import; a test that builds CronjobTool directly, with no orchestrator
 # boot, needs it explicitly (Story 4.7).
 import stackowl.scheduler.commands  # noqa: F401
+from stackowl.authz.standing_authority import grant
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import BriefSettings, Settings, SystemSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
+from stackowl.notifications.commands import DELIVER_GOAL_RESULT
 from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.delivery_ledger import DeliveryLedger
 from stackowl.notifications.proactive_job import ProactiveJobDeliverer
@@ -68,11 +70,12 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
-from stackowl.scheduler.job import Job
+from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.scheduler.scheduler_helpers import row_to_job
 from stackowl.tools.base import ToolResult
 from stackowl.tools.scheduling.cronjob import CronjobTool
+from stackowl.tools.consent import PRINCIPAL_AUTONOMOUS_SCHEDULER
 from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
@@ -237,7 +240,7 @@ async def _create_goal_via_tool(
 
 def _wire_goal_handler(
     db: DbPool, adapter: _RecordingTelegramAdapter
-) -> tuple[JobScheduler, _StubBackend]:
+) -> tuple[JobScheduler, _StubBackend, ProactiveDeliverer]:
     """Register the REAL GoalExecutionHandler over the morning_brief delivery wiring.
 
     Real ProactiveJobDeliverer ⟶ real ProactiveDeliverer ⟶ capturing adapter, plus
@@ -261,7 +264,38 @@ def _wire_goal_handler(
     )
     HandlerRegistry.instance().register(handler)
     scheduler = JobScheduler(db=db)
-    return scheduler, backend
+    return scheduler, backend, deliverer
+
+
+async def _run_now_as_an_unattended_fire(
+    scheduler: JobScheduler, job_id: str, db: DbPool, deliverer: ProactiveDeliverer,
+) -> JobResult | None:
+    """Fire ``job_id`` the way an UNATTENDED scheduled tick would (Story 4.8,
+    AD-1): ``run_now`` itself is a manual, owner-attended out-of-band trigger
+    (``scheduler/commands.py``'s own Design Notes: irreversible, always needs
+    step-up even for the owner) — but this journey's own intent, per its
+    module docstring, is "a fresh scheduler tick", i.e. an unattended
+    recurring fire. Binding the autonomous principal here (rather than
+    switching to `_poll()`, which would need `next_run_at` manipulated into
+    the past too) is the minimal way to exercise that scenario deterministically.
+    A matching standing-authority grant mirrors a grandfathered/seeded
+    production boot; `get_services()` wiring is what the migrated handler now
+    needs to resolve its db/deliverer through the command path.
+    """
+    await grant(
+        db, scope_kind="job", scope_id=job_id,
+        command_type=DELIVER_GOAL_RESULT, granted_by="autonomous", provenance="seeded",
+    )
+    ttoken = TraceContext.start(
+        session_key=None, trace_id="t-run-now", interactive=False, channel=None,
+        principal=PRINCIPAL_AUTONOMOUS_SCHEDULER,
+    )
+    stoken = set_services(StepServices(db_pool=db, proactive_deliverer=deliverer))
+    try:
+        return await scheduler.run_now(job_id)
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(stoken)
 
 
 async def _job_by_id(db: DbPool, job_id: str) -> Job | None:
@@ -312,9 +346,9 @@ async def test_scheduled_goal_delivers_answer_to_originating_chat(
 
     # --- FIRE HALF (real scheduler dispatch, AI stubbed) ---
     adapter = _RecordingTelegramAdapter()
-    scheduler, backend = _wire_goal_handler(migrated_db, adapter)
+    scheduler, backend, deliverer = _wire_goal_handler(migrated_db, adapter)
 
-    job_result = await scheduler.run_now(job_id)
+    job_result = await _run_now_as_an_unattended_fire(scheduler, job_id, migrated_db, deliverer)
 
     # OUTCOME — the user actually received the answer, exactly once, at chat 12345.
     assert len(adapter.sends) == 1, "the answer must reach the durable target exactly once"
@@ -374,9 +408,9 @@ async def test_scheduled_goal_with_no_target_is_undeliverable_not_completed(
 
     # FIRE — same real wiring; the answer is produced but there's nobody to send to.
     adapter = _RecordingTelegramAdapter()
-    scheduler, backend = _wire_goal_handler(migrated_db, adapter)
+    scheduler, backend, deliverer = _wire_goal_handler(migrated_db, adapter)
 
-    job_result = await scheduler.run_now(job_id)
+    job_result = await _run_now_as_an_unattended_fire(scheduler, job_id, migrated_db, deliverer)
 
     # OUTCOME — nothing was sent, and the status is honestly 'undeliverable'.
     assert adapter.sends == [], "no send when the recipient is unresolvable"

@@ -42,10 +42,14 @@ from stackowl.pipeline.delivery_gate import (
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
-from tests._story_7_2_helpers import RecordingDb, disable_guard, make_job
-from tests.scheduler.handlers.test_goal_execution_delivery import FakeJobDeliverer
+from tests._story_7_2_helpers import RecordingDb, disable_guard, make_job, stub_submit_command
 
 pytestmark = pytest.mark.asyncio
+
+#: Any non-None placeholder — the REAL job deliverer is never reached once
+#: submit_command itself is stubbed; this only needs to satisfy the
+#: "_job_deliverer is None" honest-degradation guard in _deliver_answer.
+_PLACEHOLDER_DELIVERER = object()
 
 _FAB_URL = "https://openai.example/gpt56-launch"
 _REAL_URL = "https://realsource.example/ai-weekly"
@@ -99,9 +103,9 @@ class DeliverBandBackend:
         return None
 
 
-def _delivered_message(deliverer: FakeJobDeliverer) -> str:
-    assert len(deliverer.calls) == 1
-    return str(deliverer.calls[0]["message"])
+def _delivered_message(calls: list[dict[str, Any]]) -> str:
+    assert len(calls) == 1
+    return str(calls[0]["payload"].message)
 
 
 def _poke_job(**overrides: Any) -> Any:
@@ -118,6 +122,7 @@ async def test_empty_cycle_floors_no_fabricated_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     disable_guard(monkeypatch)
+    calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     backend = DeliverBandBackend(
         draft=(
             "Big AI news today: GPT-5.6 just launched, read the full "
@@ -125,14 +130,13 @@ async def test_empty_cycle_floors_no_fabricated_url(
         ),
         search_urls=(),  # the empty cycle: web_search came back with nothing
     )
-    deliverer = FakeJobDeliverer(rollup="delivered")
     handler = GoalExecutionHandler(
-        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=backend, db=RecordingDb(), job_deliverer=_PLACEHOLDER_DELIVERER,  # type: ignore[arg-type]
     )
 
     await handler.execute(_poke_job())
 
-    delivered = _delivered_message(deliverer)
+    delivered = _delivered_message(calls)
     # The fabricated URL NEVER reaches the user.
     assert _FAB_URL not in delivered
     assert "gpt56" not in delivered.lower()
@@ -145,6 +149,7 @@ async def test_real_cycle_delivers_sourced_poke(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     disable_guard(monkeypatch)
+    calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     backend = DeliverBandBackend(
         draft=(
             "Here's what's genuinely new in AI this week, with the source: "
@@ -152,14 +157,13 @@ async def test_real_cycle_delivers_sourced_poke(
         ),
         search_urls=(_REAL_URL,),  # web_search actually returned this URL
     )
-    deliverer = FakeJobDeliverer(rollup="delivered")
     handler = GoalExecutionHandler(
-        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=backend, db=RecordingDb(), job_deliverer=_PLACEHOLDER_DELIVERER,  # type: ignore[arg-type]
     )
 
     await handler.execute(_poke_job())
 
-    delivered = _delivered_message(deliverer)
+    delivered = _delivered_message(calls)
     assert _REAL_URL in delivered  # the grounded source survives — poke is sent
     assert delivered != _FLOOR_TEXT
 
@@ -169,14 +173,14 @@ async def test_recurring_poke_routes_normal_for_quiet_hours(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     disable_guard(monkeypatch)
+    calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     backend = DeliverBandBackend(draft="all good, here's the news.", search_urls=())
-    deliverer = FakeJobDeliverer(rollup="delivered")
     handler = GoalExecutionHandler(
-        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=backend, db=RecordingDb(), job_deliverer=_PLACEHOLDER_DELIVERER,  # type: ignore[arg-type]
     )
 
     await handler.execute(_poke_job())  # recurring (no run_once)
-    assert deliverer.calls[0]["urgency"] == "normal"
+    assert calls[0]["payload"].urgency == "normal"
 
 
 async def test_execute_prefixes_todays_date_and_freshness_instruction(
@@ -188,10 +192,10 @@ async def test_execute_prefixes_todays_date_and_freshness_instruction(
     date + an explicit fetch-current instruction, keeping the original goal
     text intact after it."""
     disable_guard(monkeypatch)
+    stub_submit_command(monkeypatch, rollup="delivered", success=True)
     backend = DeliverBandBackend(draft="fresh answer.", search_urls=())
-    deliverer = FakeJobDeliverer(rollup="delivered")
     handler = GoalExecutionHandler(
-        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=backend, db=RecordingDb(), job_deliverer=_PLACEHOLDER_DELIVERER,  # type: ignore[arg-type]
     )
 
     await handler.execute(_poke_job())
@@ -207,14 +211,14 @@ async def test_one_shot_goal_stays_critical(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     disable_guard(monkeypatch)
+    calls = stub_submit_command(monkeypatch, rollup="delivered", success=True)
     backend = DeliverBandBackend(draft="one-off answer.", search_urls=())
-    deliverer = FakeJobDeliverer(rollup="delivered")
     handler = GoalExecutionHandler(
-        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+        backend=backend, db=RecordingDb(), job_deliverer=_PLACEHOLDER_DELIVERER,  # type: ignore[arg-type]
     )
 
     await handler.execute(_poke_job(params={"goal": "do it once", "run_once": True}))
-    assert deliverer.calls[0]["urgency"] == "critical"
+    assert calls[0]["payload"].urgency == "critical"
 
 
 # Wiring tripwire — the proactive path is only honest while BOTH real backends keep

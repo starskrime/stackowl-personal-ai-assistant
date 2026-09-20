@@ -820,6 +820,10 @@ class SchedulerAssembly:
             schedule="daily@08:00",
             target_channels=brief_channels,
             target_addresses=_resolve_owner_addresses(settings, brief_channels),
+            # Story 4.8 — a platform-seeded job gets its own delivery
+            # command's standing authority seeded alongside it, so its
+            # first unattended run delivers without a new approval.
+            delivery_command_type="notifications.deliver_brief",
         )
         # WS-C — check_in is a built+registered+honest-delivering handler that had
         # NO producer: nothing ever seeded its jobs row, so the scheduler never
@@ -838,6 +842,7 @@ class SchedulerAssembly:
                     schedule=settings.check_in.schedule,
                     target_channels=check_in_channels,
                     target_addresses=check_in_addresses,
+                    delivery_command_type="notifications.deliver_check_in",
                 )
             else:
                 # HONESTY: never seed a target-less, permanently-undeliverable row.
@@ -931,6 +936,7 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="notification_digest", schedule="every 5m",
             interval_minutes=5,
+            delivery_command_type="notifications.deliver_digest",
         )
         # F-87 — health sweep every 5m: collect in-process health, alert on
         # down/degraded. Cheap when everything is healthy (a quiet debug exit).
@@ -1587,6 +1593,21 @@ async def _repair_missing_target(
         return False
 
 
+async def _seed_delivery_authority(db: DbPool, *, job_id: str, command_type: str) -> None:
+    """Grant ``provenance="seeded"`` standing authority for a platform-seeded
+    job's own delivery command type (Story 4.8).
+
+    Delegates to ``authz/delivery_grandfather.py::seed_job_delivery_authority``
+    rather than calling ``standing_authority.grant`` directly —
+    ``grant``/``.revoke`` are writable ONLY from ``authz/``, ``commands/spec/``
+    or a subsystem's own ``*/commands.py`` handler module (NFR30, FR37,
+    tripwire-enforced), and ``scheduler/assembly.py`` is none of those.
+    """
+    from stackowl.authz.delivery_grandfather import seed_job_delivery_authority
+
+    await seed_job_delivery_authority(db, job_id=job_id, command_type=command_type)
+
+
 async def _seed_daily_schedule(
     db: DbPool,
     *,
@@ -1594,6 +1615,7 @@ async def _seed_daily_schedule(
     schedule: str,
     target_channels: list[str] | None = None,
     target_addresses: dict[str, str | int] | None = None,
+    delivery_command_type: str | None = None,
 ) -> None:
     """Idempotent: insert one `jobs` row for ``handler_name`` if none exists.
 
@@ -1602,6 +1624,12 @@ async def _seed_daily_schedule(
     state. When provided the row is inserted via the shared ``insert_job`` (the
     full SQL that persists the target columns); otherwise the legacy short insert
     is kept byte-identical for handlers with no proactive recipient.
+
+    ``delivery_command_type`` (Story 4.8) — when given, AFTER the job row is
+    confirmed (freshly seeded OR already present), grants this job
+    ``provenance="seeded"`` standing authority for that command type so its
+    first unattended run delivers without a new approval. ``None`` (every
+    pre-4.8 caller) is byte-identical.
     """
     existing = await db.fetch_all(_SELECT_EXISTING_SQL, (handler_name,))
     if existing:
@@ -1617,6 +1645,10 @@ async def _seed_daily_schedule(
             "[scheduler] schedule seed: already present — noop",
             extra={"_fields": {"handler": handler_name}},
         )
+        if delivery_command_type is not None:
+            await _seed_delivery_authority(
+                db, job_id=str(existing[0]["job_id"]), command_type=delivery_command_type,
+            )
         return
     job_id = f"{handler_name}-{uuid.uuid4().hex[:8]}"
     if target_channels:
@@ -1649,6 +1681,8 @@ async def _seed_daily_schedule(
                 }
             },
         )
+        if delivery_command_type is not None:
+            await _seed_delivery_authority(db, job_id=job_id, command_type=delivery_command_type)
         return
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
@@ -1669,6 +1703,8 @@ async def _seed_daily_schedule(
         "[scheduler] schedule seeded",
         extra={"_fields": {"handler": handler_name, "schedule": schedule, "job_id": job_id}},
     )
+    if delivery_command_type is not None:
+        await _seed_delivery_authority(db, job_id=job_id, command_type=delivery_command_type)
 
 
 async def seed_browser_maintenance_schedules(db: DbPool) -> None:
@@ -1734,6 +1770,7 @@ async def _seed_minutes_schedule(
     db: DbPool, *, handler_name: str, schedule: str, interval_minutes: int,
     target_channels: list[str] | None = None,
     target_addresses: dict[str, str | int] | None = None,
+    delivery_command_type: str | None = None,
 ) -> None:
     """Idempotent: insert one ``jobs`` row for a frequent (minute-scale) handler.
 
@@ -1742,6 +1779,9 @@ async def _seed_minutes_schedule(
     branch, for a minute-scale handler whose ``execute()`` must resolve a real
     send target (e.g. PB-CANARY's send-path proof). Omitted (the default for
     every existing every-Nm caller) preserves the exact prior no-target insert.
+
+    ``delivery_command_type`` (Story 4.8) — see ``_seed_daily_schedule``'s own
+    docstring; identical add-only behavior for a minute-scale seed.
     """
     existing = await db.fetch_all(_SELECT_EXISTING_SQL, (handler_name,))
     if existing:
@@ -1749,6 +1789,10 @@ async def _seed_minutes_schedule(
             "[scheduler] schedule seed (minutes): already present — noop",
             extra={"_fields": {"handler": handler_name}},
         )
+        if delivery_command_type is not None:
+            await _seed_delivery_authority(
+                db, job_id=str(existing[0]["job_id"]), command_type=delivery_command_type,
+            )
         return
     job_id = f"{handler_name}-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC)
@@ -1778,6 +1822,8 @@ async def _seed_minutes_schedule(
                 "addressed_channels": sorted(target_addresses or {}),
             }},
         )
+        if delivery_command_type is not None:
+            await _seed_delivery_authority(db, job_id=job_id, command_type=delivery_command_type)
         return
     await db.execute(
         _INSERT_JOB_SQL,
@@ -1794,3 +1840,5 @@ async def _seed_minutes_schedule(
             "interval_minutes": interval_minutes, "job_id": job_id,
         }},
     )
+    if delivery_command_type is not None:
+        await _seed_delivery_authority(db, job_id=job_id, command_type=delivery_command_type)

@@ -33,11 +33,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
 from stackowl.authz.requester import requester_kind_from_trace
+from stackowl.authz.standing_authority import find_active as find_active_authority
 from stackowl.commands.spec.context import CommandOutcome
 from stackowl.commands.spec.errors import CommandNeedsDecisionError, CommandRefusedError
 from stackowl.commands.spec.execute import execute_command_task
@@ -94,6 +95,7 @@ async def submit_command(
     command_id: str | None = None,
     run_inline: bool = True,
     notify_enqueued: Callable[[], Awaitable[None]] | None = None,
+    authority_scope: tuple[Literal["job"], str] | None = None,
 ) -> CommandSubmission:
     """Validate, enqueue and (inline, when possible) run one command.
 
@@ -101,6 +103,20 @@ async def submit_command(
     PRIOR call returned reuses that row instead of enqueuing a second one
     (the I/O matrix's "second call reuses an already-minted command_id" row).
     Left ``None`` (the ordinary case), a fresh id is minted.
+
+    ``authority_scope`` (Story 4.8) -- ``("job", job_id)`` for the 4 job-
+    triggered delivery command types ONLY (``notifications.deliver_brief``/
+    ``deliver_check_in``/``deliver_goal_result``/``deliver_digest``); the 3
+    owl/owner-attended types (``messaging.send_message``/``send_file``,
+    ``notifications.broadcast_urgent``) never pass one (``decide()``'s grant
+    carve-out only ever applies to ``requester_kind="autonomous"``). When
+    given AND the current trace resolves to ``"autonomous"``, this looks up
+    a matching ``standing_authority.find_active`` row BEFORE the task row is
+    created and carries its id on ``tasks.authority_grant_id`` (mirrors
+    ``gate_verdict``'s own precedent) for ``execute_command_task`` to pass
+    into ``action_policy.decide`` -- resolution happens HERE, never inside
+    ``execute_command_task`` (AD-7/4.6 Boundaries: that function stays
+    I/O-free).
 
     ``run_inline`` (default ``True``) is the existing claim-and-run behavior,
     unchanged — every caller today (``cronjob.py``) keeps it. A caller with
@@ -134,6 +150,28 @@ async def submit_command(
     requester_kind = requester_kind_from_trace()
     cid = command_id or str(uuid.uuid4())
     task_id = f"cmd-{cid}"
+
+    # Story 4.8 — resolve a job-scoped standing-authority grant BEFORE the
+    # task row is created (never inside execute_command_task, which stays
+    # I/O-free). Only ever attempted for an autonomous (unattended) run —
+    # decide()'s carve-out never applies to an attending requester kind, so
+    # resolving one for "owner"/"owl"/"voice-unverified" would be a lookup
+    # whose answer nothing ever reads.
+    authority_grant_id: str | None = None
+    if authority_scope is not None and requester_kind == "autonomous":
+        scope_kind, scope_id = authority_scope
+        grant = await find_active_authority(
+            db, scope_kind=scope_kind, scope_id=scope_id, command_type=command_type,
+        )
+        authority_grant_id = grant.id if grant is not None else None
+        log.tasks.debug(
+            "[commands] submit.submit_command: authority_scope resolved",
+            extra={"_fields": {
+                "command_type": command_type, "scope_id": scope_id,
+                "matched": authority_grant_id is not None,
+            }},
+        )
+
     task = DurableTask(
         task_id=task_id,
         goal=f"command:{command_type}",
@@ -144,6 +182,7 @@ async def submit_command(
         command_id=cid,
         requester_kind=requester_kind,
         trigger_kind="command",
+        authority_grant_id=authority_grant_id,
     )
     store = DurableTaskStore(db)
     # 2. DECISION — insert, or (a command_id retry) recognize the collision

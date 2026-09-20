@@ -500,8 +500,10 @@ class GoalExecutionHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id}},
             )
             return "completed", False
-        if self._job_deliverer is None:
-            # HONESTY — no deliverer wired. If the job was created WITH a delivery
+        if self._job_deliverer is None or self._db is None:
+            # HONESTY — no deliverer/db wired (submit_command needs a real db
+            # pool the same way the seam it wraps needed a deliverer). If the
+            # job was created WITH a delivery
             # target, delivery was expected and this is a wiring gap: record
             # "undeliverable" (never a fake "completed"). With no targets (the
             # legacy Story 7.2 surface) there was nothing to deliver — keep
@@ -544,12 +546,27 @@ class GoalExecutionHandler(JobHandler):
                 }
             },
         )
-        outcome = await self._job_deliverer.deliver_for_job(
-            job,
-            message=response_text,
-            category="goal_answer",
-            urgency=urgency,
+        # Story 4.8 (AD-1) — submits the declared, irreversible
+        # notifications.deliver_goal_result command instead of calling
+        # self._job_deliverer.deliver_for_job directly. authority_scope lets
+        # an unattended (scheduler-driven) run under a matching grandfathered/
+        # seeded grant deliver without a new approval.
+        from stackowl.commands.spec.submit import submit_command
+        from stackowl.notifications.commands import (
+            DELIVER_GOAL_RESULT,
+            DeliverGoalResultPayload,
+            outcome_from_submission,
         )
+
+        db = self._db  # narrowed non-None by the guard above
+        submission = await submit_command(
+            db, DELIVER_GOAL_RESULT,
+            DeliverGoalResultPayload(
+                job=job, message=response_text, category="goal_answer", urgency=urgency,
+            ),
+            authority_scope=("job", job.job_id),
+        )
+        outcome = outcome_from_submission(submission)
         # HONESTY INVARIANT — map the transport rollup to a job_results status AND
         # a retry signal. delivered/suppressed → completed; an undeliverable body is
         # NEVER recorded "completed". A transient delivery failure (failed/partial)
@@ -557,19 +574,31 @@ class GoalExecutionHandler(JobHandler):
         # scheduler retries; an undeliverable (no resolvable target) does NOT retry
         # (the create-time honesty warning + visible status already surface it, and
         # retrying a config problem only spams).
-        transient_failure = False
+        #
+        # Story 4.8 — a rollup that is neither a confirmed delivery
+        # ("delivered"/"suppressed") nor the permanent "undeliverable" (no
+        # resolvable target — retrying can't fix that) is NEVER assumed to
+        # have reached the user. This covers "partial"/"failed" (a genuine
+        # transport failure), "needs_approval" (outcome_from_submission's own
+        # rollup for a command the action-policy gate PARKED — e.g. no
+        # matching standing authority yet), "unknown" (a replayed command_id
+        # whose original outcome was never recorded — review fix,
+        # notifications/commands.py's own already-attempted branches), and
+        # any future rollup nobody has named here yet — a whitelist that only
+        # a KNOWN-GOOD/KNOWN-PERMANENT pair opts OUT of retry, rather than a
+        # whitelist that only specific KNOWN-BAD values opt IN to it, so a
+        # rollup this function has never seen before defaults to "retry",
+        # never to a silent JobResult.success=True for a body that was never
+        # confirmed sent.
         if outcome.rollup in ("delivered", "suppressed"):
             status = "completed"
+            transient_failure = False
         elif outcome.rollup == "undeliverable":
             status = "undeliverable"
-        elif outcome.rollup == "partial":
-            status = "partial"
-            transient_failure = True
-        elif outcome.rollup == "failed":
-            status = "failed"
-            transient_failure = True
+            transient_failure = False
         else:
             status = outcome.rollup
+            transient_failure = True
         log.scheduler.info(
             "[scheduler] goal_execution._deliver_answer: delivered",
             extra={

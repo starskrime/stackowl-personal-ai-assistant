@@ -229,6 +229,16 @@ class DurableTask(BaseModel):
     #: goal task, and for a command that ran at once and never parked.
     gate_verdict: str | None = None
 
+    # ---- standing authority (migration 0153, Story 4.6/4.8) ---------------
+    #: `submit_command`'s already-resolved `standing_authority.find_active` id
+    #: for this command's `authority_scope`, carried on the row the same way
+    #: `gate_verdict` already is. Resolved BEFORE the row is created (never
+    #: inside `execute_command_task`, which stays I/O-free) -- None for a goal
+    #: task, and for a command that carried no `authority_scope` or found no
+    #: matching active grant. `execute_command_task` reads this instead of
+    #: hardcoding None into `authz.action_policy.decide`'s own carve-out.
+    authority_grant_id: str | None = None
+
     # Defaulted so a caller enqueuing a task states only what it MEANS, not the
     # bookkeeping. The store still stamps updated_at on every transition.
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

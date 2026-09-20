@@ -7,6 +7,7 @@ and so neither test file is forced over the B2 300-line cap.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -95,3 +96,57 @@ class RecordingDb:
     async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         self.fetches.append((sql, tuple(params)))
         return list(self._fetch_returns)
+
+
+def stub_submit_command(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    rollup: str | None = "delivered",
+    success: bool | None = None,
+    error: str | None = None,
+    result: dict[str, Any] | None = None,
+    on_call: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Story 4.8 — stub ``commands/spec/submit.py::submit_command`` for a
+    handler-level test that wants to script the OUTCOME a submitted delivery
+    command reports, without driving the full action-policy gate or a real
+    ``ProactiveDeliverer``/``DbPool`` (morning_brief/check_in/goal_execution/
+    urgent_command all call ``submit_command`` via a deferred, call-time
+    ``from stackowl.commands.spec.submit import submit_command`` -- patching
+    the SOURCE module's attribute is what makes that late-bound import pick
+    up the fake).
+
+    Captures every call's ``(command_type, payload, kwargs)`` in the returned
+    list, so a test can assert on exactly what a handler submitted (message/
+    category/urgency/channels) — the same thing the old direct-deliverer
+    fakes let a test inspect, one layer up the new one-door seam.
+
+    ``rollup``/``result`` — mutually intended for different callers:
+    ``rollup`` is the shorthand the 3 job-scoped delivery translators
+    (``outcome_from_submission``) read; ``result`` is the raw dict for a
+    caller (e.g. ``UrgentCommand``) that reads different keys
+    (``delivered``/``failed``/``total``). Passing ``result`` overrides
+    ``rollup`` entirely.
+    """
+    from stackowl.commands.spec.context import CommandOutcome
+    from stackowl.commands.spec.submit import CommandSubmission
+
+    calls: list[dict[str, Any]] = []
+    resolved_result = (
+        dict(result) if result is not None
+        else ({"rollup": rollup} if rollup is not None else {})
+    )
+    resolved_success = success if success is not None else True
+
+    async def _fake(db: Any, command_type: str, payload: Any, **kwargs: Any) -> CommandSubmission:
+        record = {"command_type": command_type, "payload": payload, "kwargs": kwargs}
+        calls.append(record)
+        if on_call is not None:
+            on_call(record)
+        outcome = CommandOutcome(success=resolved_success, result=dict(resolved_result), error=error)
+        return CommandSubmission(
+            command_id=f"stub-{len(calls)}", task_id=f"stub-task-{len(calls)}", outcome=outcome,
+        )
+
+    monkeypatch.setattr("stackowl.commands.spec.submit.submit_command", _fake)
+    return calls

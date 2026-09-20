@@ -328,13 +328,20 @@ class AutonomicHealthAssembler:
         )
         by_status = {str(r["status"]): int(str(r["n"])) for r in rows}
         ran = sum(by_status.values())
-        failed = by_status.get("failed", 0)
+        # Review fix — Story 4.8's `needs_approval` (a scheduled delivery
+        # PARKED with no matching standing authority) is a real failure to
+        # deliver, not a success; folding it out of this count would hide a
+        # job stuck repeatedly parking for approval from the platform's own
+        # self-healing/health reporting — exactly the new failure mode this
+        # story introduces.
+        failed = by_status.get("failed", 0) + by_status.get("needs_approval", 0)
         if ran:
             items.append(f"jobs_24h ran:{ran} failed:{failed}")
             if failed:
                 worst = await self._db.fetch_all(
                     "SELECT job_id, COUNT(*) AS n FROM job_results "
-                    "WHERE run_at >= datetime('now', '-1 day') AND status = 'failed' "
+                    "WHERE run_at >= datetime('now', '-1 day') "
+                    "AND status IN ('failed', 'needs_approval') "
                     "GROUP BY job_id ORDER BY n DESC LIMIT 3",
                 )
                 for r in worst:

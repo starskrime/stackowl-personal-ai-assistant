@@ -18,11 +18,14 @@ from typing import cast
 
 import pytest
 
+from stackowl.authz.standing_authority import grant
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
+from stackowl.infra.trace import TraceContext
+from stackowl.notifications.commands import DELIVER_DIGEST
 from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.delivery_ledger import DeliveryLedger
 from stackowl.notifications.digest_job import NotificationDigestJob
@@ -34,13 +37,14 @@ from stackowl.notifications.undelivered_outbox import (
     UndeliveredOutbox,
     render_banner,
 )
-from stackowl.pipeline.services import StepServices, set_services
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import assemble
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job
 from stackowl.scheduler.scheduler_helpers import insert_job
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+from stackowl.tools.consent import PRINCIPAL_AUTONOMOUS_SCHEDULER
 
 pytestmark = pytest.mark.asyncio
 
@@ -668,7 +672,7 @@ async def test_undeliverable_row_surfaces_once_pa5b_parity(tmp_db: DbPool) -> No
 class _AlwaysFailDeliverer:
     """A digest-injected deliverer whose transport always fails."""
 
-    async def transport(self, channel: str, message: str) -> str:
+    async def transport(self, channel: str, message: str, *, context: object = None) -> str:
         return "failed"
 
 
@@ -698,9 +702,27 @@ async def test_digest_dead_letter_writes_durable_row(tmp_db: DbPool) -> None:
         "scheduled_for, message, attempts) VALUES (?,?,?,?,?,?,?,?,?)",
         (nid, "hash16", "normal", "digest", "cli", None, due, "digest body lost otherwise", 4),
     )
-    handler = NotificationDigestJob(tmp_db, _AlwaysFailDeliverer())  # type: ignore[arg-type]
-
-    await handler.execute(_digest_job())
+    deliverer = _AlwaysFailDeliverer()
+    handler = NotificationDigestJob(tmp_db, deliverer)  # type: ignore[arg-type]
+    job = _digest_job()
+    # A GENUINE transport failure (not a parked/pending_approval command, which
+    # is excluded from the dead-letter count — review fix) needs to actually
+    # reach the handler: grant standing authority + bind an autonomous trace +
+    # wire get_services(), the same shape a real unattended tick uses.
+    await grant(
+        tmp_db, scope_kind="job", scope_id=job.job_id,
+        command_type=DELIVER_DIGEST, granted_by="autonomous", provenance="seeded",
+    )
+    ttoken = TraceContext.start(
+        session_key=None, trace_id="t-dead-letter", interactive=False, channel=None,
+        principal=PRINCIPAL_AUTONOMOUS_SCHEDULER,
+    )
+    stoken = set_services(StepServices(db_pool=tmp_db, proactive_deliverer=deliverer))
+    try:
+        await handler.execute(job)
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(stoken)
 
     queue_rows = await tmp_db.fetch_all(
         "SELECT notification_id FROM notification_queue WHERE notification_id = ?", (nid,)

@@ -1,4 +1,4 @@
-"""Story 4.3/4.7 — the four AD-1 "one door" tripwires.
+"""Story 4.3/4.7/4.8 — the AD-1 "one door" tripwires.
 
 1. Import-boundary (AD-7): ``commands/spec/`` imports only ``stackowl.authz``,
    ``stackowl.pipeline.durable``, itself, ``stackowl.infra`` (cross-cutting
@@ -19,6 +19,14 @@
    ``objectives/commands.py`` — the SAME AD-1 guarantee as item 2, proven for
    the ``objectives`` domain so the story's advertised coverage is symmetric
    between scheduling and objectives, not scheduling-only.
+6. ``ProactiveDeliverer.deliver``/``.transport`` are called only from
+   ``notifications/commands.py`` (plus each's own named, pre-existing,
+   still-unmigrated exceptions — Story 4.8's Design Notes: "7 of its 10 real
+   callers are not [migrated]").
+7. ``ProactiveJobDeliverer.deliver_for_job`` is called only from
+   ``notifications/commands.py`` (plus its own named, pre-existing,
+   still-unmigrated exceptions) — ``check_in``/``goal_execution``/
+   ``morning_brief`` no longer call it directly.
 
 Modelled on ``tests/authz/test_severities_and_principal_have_one_home.py``'s
 own AST-scan style (module-level ``pytestmark = pytest.mark.tripwire`` so
@@ -437,4 +445,142 @@ def test_objective_store_create_and_add_subgoals_are_called_only_from_the_allowl
         f"the allowlist names caller(s) that no longer call create/"
         f"add_subgoals: {sorted(stale)} — a subset check would not catch "
         "this drift"
+    )
+
+
+# =============================================================================
+# 6. ProactiveDeliverer.deliver/.transport is called only from the allowlist
+# =============================================================================
+
+#: A textual pre-filter (mirrors ``_files_importing_job_scheduler``'s own
+#: naive substring match) — BOTH the class name (a typed import/annotation)
+#: AND the lower-cased attribute name (``get_services().proactive_deliverer``,
+#: which several callers reach for WITHOUT ever importing the class itself)
+#: are checked, since a caller here is as likely to be duck-typed as typed.
+_DELIVERER_MARKERS = ("ProactiveDeliverer", "proactive_deliverer")
+_DELIVERER_METHODS: tuple[str, ...] = ("deliver", "transport")
+
+#: ``commands/urgent_command.py`` stays here NOT because it still calls
+#: ``ProactiveDeliverer.deliver`` directly (Story 4.8 migrated that call to
+#: ``notifications.broadcast_urgent``) — it is caught by this detector's own
+#: coarse, receiver-blind ``.deliver(``/``.transport(`` match because its
+#: DEGRADED, no-transport-seam path (``_route_only``) still legitimately
+#: calls ``NotificationRouter.deliver`` (an unrelated method on a different
+#: class). Removing it here would make the test fail on a caller that was
+#: never in scope to migrate.
+_ALLOWED_DELIVERER_CALLERS = frozenset({
+    "notifications/commands.py",
+    "commands/urgent_command.py",
+    "control_plane/server.py",
+    "notifications/event_bridge.py",
+    "notifications/proactive_job.py",
+    "pipeline/durable/store.py",
+    "pipeline/steps/deliver.py",
+    "scheduler/assembly.py",
+    "startup/orchestrator.py",
+    "tools/scheduling/heartbeat_respond.py",
+})
+
+
+def _files_referencing(markers: tuple[str, ...]) -> list[Path]:
+    files: list[Path] = []
+    for py in sorted(_SRC_ROOT.rglob("*.py")):
+        try:
+            source = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):  # pragma: no cover — not our concern
+            continue
+        if any(m in source for m in markers):
+            files.append(py)
+    return files
+
+
+def test_proactive_deliverer_deliver_and_transport_are_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in _files_referencing(_DELIVERER_MARKERS):
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "notifications/deliverer.py":
+            continue  # the definition site — never calls itself
+        if _calls_any(py, _DELIVERER_METHODS):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_DELIVERER_CALLERS
+    assert not unexpected, (
+        "ProactiveDeliverer.deliver/.transport called from outside the "
+        "allowlist — every declared delivery command must go through "
+        f"notifications/commands.py's handler (AD-1, Story 4.8): {sorted(unexpected)}"
+    )
+    for migrated in (
+        "notifications/digest_job.py",
+        "tools/scheduling/send_file.py",
+        "tools/scheduling/send_message.py",
+    ):
+        assert migrated not in actual, (
+            f"{migrated} still calls ProactiveDeliverer.deliver/.transport "
+            "directly — its migration (Story 4.8) has regressed"
+        )
+    stale = _ALLOWED_DELIVERER_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call deliver/transport: "
+        f"{sorted(stale)} — a subset check would not catch this drift"
+    )
+
+
+def test_files_referencing_finds_a_real_denominator() -> None:
+    assert len(_files_referencing(_DELIVERER_MARKERS)) > 0, (
+        "the ProactiveDeliverer marker scan found no files — the guard is vacuous"
+    )
+
+
+# =============================================================================
+# 7. ProactiveJobDeliverer.deliver_for_job is called only from the allowlist
+# =============================================================================
+
+_JOB_DELIVERER_MARKERS = ("ProactiveJobDeliverer",)
+_JOB_DELIVERER_METHODS: tuple[str, ...] = ("deliver_for_job",)
+
+#: The Boundaries-named "7 of its 10 real callers are not [migrated]"
+#: exceptions, plus ``notifications/commands.py`` (the newly migrated
+#: caller). ``check_in``/``goal_execution``/``morning_brief`` are the 3 that
+#: WERE here and are gone — they now submit ``notifications.deliver_*``
+#: commands instead.
+_ALLOWED_JOB_DELIVERER_CALLERS = frozenset({
+    "notifications/commands.py",
+    "objectives/driver.py",
+    "scheduler/handlers/capability_gap_escalation.py",
+    "scheduler/handlers/perch.py",
+    "scheduler/handlers/telegram_canary.py",
+    "scheduler/handlers/threshold_watch.py",
+    "scheduler/handlers/website_watch.py",
+    "scheduler/scheduler.py",
+})
+
+
+def test_proactive_job_deliverer_deliver_for_job_is_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in _files_referencing(_JOB_DELIVERER_MARKERS):
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "notifications/proactive_job.py":
+            continue  # the definition site — never calls itself
+        if _calls_any(py, _JOB_DELIVERER_METHODS):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_JOB_DELIVERER_CALLERS
+    assert not unexpected, (
+        "ProactiveJobDeliverer.deliver_for_job called from outside the "
+        "allowlist — every declared delivery command must go through "
+        f"notifications/commands.py's handler (AD-1, Story 4.8): {sorted(unexpected)}"
+    )
+    for migrated in (
+        "scheduler/handlers/check_in.py",
+        "scheduler/handlers/goal_execution.py",
+        "scheduler/handlers/morning_brief.py",
+    ):
+        assert migrated not in actual, (
+            f"{migrated} still calls ProactiveJobDeliverer.deliver_for_job "
+            "directly — its migration (Story 4.8) has regressed"
+        )
+    stale = _ALLOWED_JOB_DELIVERER_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call deliver_for_job: "
+        f"{sorted(stale)} — a subset check would not catch this drift"
     )

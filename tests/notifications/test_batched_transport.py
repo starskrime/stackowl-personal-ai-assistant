@@ -9,16 +9,21 @@ from typing import cast
 
 import pytest
 
+from stackowl.authz.standing_authority import grant
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
+from stackowl.infra.trace import TraceContext
+from stackowl.notifications.commands import DELIVER_DIGEST
 from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.digest_job import NotificationDigestJob
 from stackowl.notifications.router import Notification, NotificationRouter
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.scheduler.job import Job
+from stackowl.tools.consent import PRINCIPAL_AUTONOMOUS_SCHEDULER
 from tests._schema_template import seed_schema
 
 
@@ -74,6 +79,27 @@ def _clean_registry():  # type: ignore[no-untyped-def]
     ChannelRegistry.instance().reset()
 
 
+async def _execute_autonomous(digest: NotificationDigestJob, job: Job, db: DbPool, deliverer: object) -> object:
+    """Story 4.8 — the digest flush now submits ``notifications.deliver_digest``
+    through the one door; a real transport attempt needs the job's own
+    standing authority granted (mirrors a grandfathered/seeded production
+    boot) AND an autonomous trace + db_pool wired via ``get_services()``."""
+    await grant(
+        db, scope_kind="job", scope_id=job.job_id,
+        command_type=DELIVER_DIGEST, granted_by="autonomous", provenance="seeded",
+    )
+    ttoken = TraceContext.start(
+        session_key=None, trace_id="t-batched", interactive=False, channel=None,
+        principal=PRINCIPAL_AUTONOMOUS_SCHEDULER,
+    )
+    stoken = set_services(StepServices(db_pool=db, proactive_deliverer=deliverer))  # type: ignore[arg-type]
+    try:
+        return await digest.execute(job)
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(stoken)
+
+
 async def test_batched_persists_body_then_flush_transports(tmp_db: DbPool) -> None:
     TestModeGuard.deactivate()
     adapter = _RecordingAdapter("cli")
@@ -104,7 +130,7 @@ async def test_batched_persists_body_then_flush_transports(tmp_db: DbPool) -> No
         ((datetime(2026, 5, 30, tzinfo=UTC) - timedelta(hours=1)).isoformat(),),
     )
     digest = NotificationDigestJob(db=tmp_db, deliverer=deliverer)
-    result = await digest.execute(_job())
+    result = await _execute_autonomous(digest, _job(), tmp_db, deliverer)
 
     assert result.success is True
     assert adapter.sent == ["queued message"]  # transported on flush
@@ -168,7 +194,7 @@ async def test_flush_transport_failed_retains_row_no_false_delivered(tmp_db: DbP
         ((datetime(2026, 5, 30, tzinfo=UTC) - timedelta(hours=1)).isoformat(),),
     )
     digest = NotificationDigestJob(db=tmp_db, deliverer=deliverer)
-    result = await digest.execute(_job())
+    result = await _execute_autonomous(digest, _job(), tmp_db, deliverer)
 
     assert result.success is True
     assert adapter.attempts == 2  # one send + one bounded retry, then failed
@@ -207,7 +233,10 @@ async def test_flush_dead_letters_after_max_attempts(tmp_db: DbPool) -> None:
         ),
     )
     digest = NotificationDigestJob(db=tmp_db, deliverer=deliverer)
-    await digest.execute(_job())
+    # A GENUINE transport failure (not a parked/pending_approval command) needs
+    # to actually reach the handler — grant standing authority + wire
+    # get_services()/an autonomous trace, same as the other tests in this file.
+    await _execute_autonomous(digest, _job(), tmp_db, deliverer)
 
     # Row removed (no longer hot-looping the queue).
     remaining = await tmp_db.fetch_all("SELECT notification_id FROM notification_queue", ())

@@ -110,7 +110,12 @@ async def grant(
     scope_id: str,
     command_type: str,
     granted_by: str,
-    provenance: Literal["granted", "grandfathered"] = "granted",
+    # Story 4.8 — widened to include "seeded" (a platform-seeded job's own
+    # delivery authority, granted by the same startup routine that grandfathers
+    # existing enabled jobs, never a human decision this story either).
+    # Deferred from 4.6 pending real evidence a live caller needed it — 4.8's
+    # `scheduler/assembly.py` seed-time grant calls are that caller.
+    provenance: Literal["granted", "grandfathered", "seeded"] = "granted",
 ) -> StandingAuthorityRecord:
     """Write one new ACTIVE ``standing_authority`` row.
 

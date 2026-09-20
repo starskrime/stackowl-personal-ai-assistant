@@ -2328,12 +2328,33 @@ class StartupOrchestrator:
         # ONLY two CommandSpecs that ever write standing_authority).
         # Story 4.7 — same shape again, for scheduling.set_objective (the
         # ONLY CommandSpec that ever writes an objectives row).
+        # Story 4.8 — same shape again, for the 7 messaging/notifications
+        # delivery command types (the ONLY module that ever calls
+        # ProactiveDeliverer.deliver/.transport or ProactiveJobDeliverer.
+        # deliver_for_job on the migrated surfaces' behalf).
         import stackowl.authz.commands  # noqa: F401
+        import stackowl.notifications.commands  # noqa: F401
         import stackowl.objectives.commands  # noqa: F401
         import stackowl.scheduler.commands  # noqa: F401
+        from stackowl.authz.delivery_grandfather import (
+            grandfather_existing_job_delivery_authority,
+        )
         from stackowl.commands.assembly import CommandDeps, register_all_commands
         from stackowl.integrations.registry import IntegrationRegistry
         from stackowl.plugins.registry import PluginRegistry
+
+        # Story 4.8 — grandfather EXISTING enabled jobs' delivery authority,
+        # once per boot, now that both scheduling commands (4.7) and delivery
+        # commands (4.8, imported directly above) exist. Runs AFTER migrations
+        # (much earlier in this function) and SchedulerAssembly.build() (just
+        # above), so both the standing_authority table and every enabled
+        # job's real row already exist. Idempotent — a repeat boot re-runs
+        # this and grants nothing new.
+        _grandfathered = await grandfather_existing_job_delivery_authority(db_pool)
+        log.info(
+            "[startup] gateway: delivery authority grandfathered",
+            extra={"_fields": {"granted": _grandfathered}},
+        )
 
         # Cooperative shutdown event — created here so /bye can trip it; the
         # signal handlers below (SIGTERM/SIGINT) set the SAME event.

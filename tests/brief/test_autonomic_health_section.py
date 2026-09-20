@@ -85,6 +85,34 @@ async def test_failing_background_jobs_are_named(tmp_db):
 
 
 @pytest.mark.asyncio
+async def test_needs_approval_jobs_count_as_failed(tmp_db):
+    """Story 4.8 review fix — a scheduled delivery PARKED with no matching
+    standing authority (job_results.status='needs_approval') is a real
+    failure to deliver, not a success. A job stuck repeatedly parking must
+    show up in the health report's own failed count and named breakdown —
+    otherwise this exact new failure mode is invisible to self-healing."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    for _ in range(2):
+        await tmp_db.execute(
+            "INSERT INTO job_results (job_id, run_at, status, result_text, duration_ms) "
+            "VALUES (?, datetime('now'), 'needs_approval', 'parked', 1.0)",
+            ("morning_brief-1",),
+        )
+    await tmp_db.execute(
+        "INSERT INTO job_results (job_id, run_at, status, result_text, duration_ms) "
+        "VALUES (?, datetime('now'), 'failed', 'boom', 1.0)",
+        ("check_in-1",),
+    )
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    assert "jobs_24h ran:3 failed:3" in section.items
+    assert "failing:morning_brief-1 x2" in section.items
+    assert "failing:check_in-1 x1" in section.items
+
+
+@pytest.mark.asyncio
 async def test_old_job_failures_are_not_reported_as_todays(tmp_db):
     """A 24h window that silently included ancient history would make the brief
     permanently alarming and therefore permanently ignored."""

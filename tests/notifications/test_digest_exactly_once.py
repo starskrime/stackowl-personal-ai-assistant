@@ -18,10 +18,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from stackowl.authz.standing_authority import grant
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
+from stackowl.infra.trace import TraceContext
+from stackowl.notifications.commands import DELIVER_DIGEST
 from stackowl.notifications.digest_job import NotificationDigestJob
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.scheduler.job import Job
+from stackowl.tools.consent import PRINCIPAL_AUTONOMOUS_SCHEDULER
 
 pytestmark = pytest.mark.asyncio
 
@@ -32,7 +37,7 @@ class _CountingDeliverer:
     def __init__(self) -> None:
         self.sends: list[tuple[str, str]] = []
 
-    async def transport(self, channel: str, message: str) -> str:
+    async def transport(self, channel: str, message: str, *, context: object = None) -> str:
         self.sends.append((channel, message))
         return "delivered"
 
@@ -47,6 +52,31 @@ def _job() -> Job:
         next_run_at="2026-01-01T00:00:00Z",
         status="pending",
     )
+
+
+async def _execute_autonomous(
+    handler: NotificationDigestJob, job: Job, db: DbPool, deliverer: object,
+) -> object:
+    """Story 4.8 — the digest flush now submits ``notifications.deliver_digest``
+    through the one door; a real transport attempt needs the job's own
+    standing authority granted (mirrors a grandfathered/seeded production
+    boot) AND an autonomous trace + db_pool wired via ``get_services()``, the
+    same shape the scheduler's own tick binds for a real unattended run.
+    """
+    await grant(
+        db, scope_kind="job", scope_id=job.job_id,
+        command_type=DELIVER_DIGEST, granted_by="autonomous", provenance="seeded",
+    )
+    ttoken = TraceContext.start(
+        session_key=None, trace_id="t-digest", interactive=False, channel=None,
+        principal=PRINCIPAL_AUTONOMOUS_SCHEDULER,
+    )
+    stoken = set_services(StepServices(db_pool=db, proactive_deliverer=deliverer))  # type: ignore[arg-type]
+    try:
+        return await handler.execute(job)
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(stoken)
 
 
 async def _insert_queue_row(db: DbPool, notification_id: str, message: str) -> None:
@@ -77,7 +107,7 @@ async def test_already_delivered_notification_is_not_resent(tmp_db: DbPool) -> N
          datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat(), "hash16"),
     )
 
-    result = handler and await handler.execute(_job())
+    result = await _execute_autonomous(handler, _job(), tmp_db, deliverer)
     assert result.success is True
     # The message was NOT re-sent — the notification_id guard suppressed the duplicate.
     assert deliverer.sends == []
@@ -95,13 +125,14 @@ async def test_fresh_notification_is_delivered_once(tmp_db: DbPool) -> None:
     handler = NotificationDigestJob(tmp_db, deliverer)  # type: ignore[arg-type]
 
     nid = "note-fresh-1"
+    job = _job()
     await _insert_queue_row(tmp_db, nid, "hello once")
-    await handler.execute(_job())
+    await _execute_autonomous(handler, job, tmp_db, deliverer)
     assert deliverer.sends == [("cli", "hello once")]
 
     # A second tick: the row is gone (deleted on success) AND a delivered log
     # exists — so even a re-inserted duplicate id would be suppressed. Re-insert
     # the SAME id to prove the guard, then tick again.
     await _insert_queue_row(tmp_db, nid, "hello once")
-    await handler.execute(_job())
+    await _execute_autonomous(handler, job, tmp_db, deliverer)
     assert deliverer.sends == [("cli", "hello once")]  # still ONE send total

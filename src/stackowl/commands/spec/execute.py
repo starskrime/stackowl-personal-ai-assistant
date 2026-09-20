@@ -95,19 +95,19 @@ async def execute_command_task(task: DurableTask) -> CommandOutcome:
     # and re-deciding would open a second Needs-you item for a command_id
     # whose first one is already resolved and free.
     #
-    # Story 4.6 — `decide()`'s `authority_grant_id` input is never passed a
-    # real value here: no live caller resolves a `standing_authority` row
-    # before this call yet (spec-4-6 Boundaries — the whole mechanism is
-    # proven by direct unit tests against `decide()` itself). `gate.
-    # authority_grant_id` is therefore always `None` on this path today, and
-    # `context.authority_grant_id` below carries that same `None` — declared
-    # and threaded, not yet load-bearing, the same shape `nonce`/
-    # `utterance_id` shipped in Story 4.3.
-    authority_grant_id: str | None = None
+    # Story 4.8 — `decide()`'s `authority_grant_id` input is now the task
+    # row's OWN already-resolved value (`submit_command`'s `authority_scope`
+    # resolution, carried on `tasks.authority_grant_id` — this function stays
+    # I/O-free, never resolving one itself). `None` for every command that
+    # carried no `authority_scope` (every command before 4.8, and the 3
+    # owl/owner-attended 4.8 types) — byte-identical to the always-`None`
+    # Story 4.6 shipped this parameter with.
+    authority_grant_id: str | None = task.authority_grant_id
     if task.gate_verdict != "approved":
         gate = decide(
             severity=spec.severity, reversible=spec.reversible,
             requester_kind=requester_kind,  # type: ignore[arg-type]
+            authority_grant_id=authority_grant_id,
         )
         if gate.outcome != "run_at_once":
             payload_summary = json.dumps(

@@ -75,7 +75,12 @@ _SELECT_FIELDS = (
     # marker. `execute_command_task` reads it to skip re-deciding a resumed
     # row; omitting it here would make every fetch silently forget which
     # rows were already approved.
-    "gate_verdict"
+    "gate_verdict, "
+    # Migration 0153 (Story 4.6/4.8) — the already-resolved standing-authority
+    # grant id. `execute_command_task` reads it to pass into `action_policy.
+    # decide`; omitting it here would silently lose which grant authorized an
+    # unattended irreversible command on every fetch after the initial write.
+    "authority_grant_id"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -419,6 +424,11 @@ class DurableTaskStore(OwnedRepository):
             # resume marker. None for every existing caller (a fresh row is
             # never born already "approved").
             "gate_verdict": task.gate_verdict,
+            # Migration 0153 (Story 4.6/4.8) — the already-resolved standing-
+            # authority grant id. None for every caller that never passed
+            # `submit_command`'s `authority_scope` (every command before 4.8,
+            # and the 3 owl/owner-attended 4.8 command types).
+            "authority_grant_id": task.authority_grant_id,
         }
 
     async def create(self, task: DurableTask) -> None:
@@ -2883,6 +2893,11 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         # `gate_verdict` value read here, and None is the correct reading.
         gate_verdict=(None if row.get("gate_verdict") is None
                       else str(row["gate_verdict"])),
+        # Migration 0153 (Story 4.6/4.8) — .get()-safe, same reasoning as
+        # `gate_verdict` above: a legacy row (or a narrower select list) has
+        # no `authority_grant_id` value read here, and None is correct.
+        authority_grant_id=(None if row.get("authority_grant_id") is None
+                            else str(row["authority_grant_id"])),
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
         goal=str(row["goal"]),

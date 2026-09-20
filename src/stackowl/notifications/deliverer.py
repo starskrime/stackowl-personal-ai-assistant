@@ -23,6 +23,7 @@ from __future__ import annotations
 import time as _time
 from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
+from stackowl.commands.spec.context import CommandContext
 from stackowl.infra.observability import log
 from stackowl.journal.delivery_events import record_delivery_attempted, record_provider_rerouted
 from stackowl.notifications.router import DeliveryStatus
@@ -219,7 +220,11 @@ class ProactiveDeliverer:
         return getattr(self, "_preference_store", None) is not None
 
     async def deliver(
-        self, notification: Notification, *, surface_undelivered: bool = True
+        self,
+        notification: Notification,
+        *,
+        surface_undelivered: bool = True,
+        context: CommandContext | None = None,
     ) -> DeliveryStatus:
         """Route + transport ``notification``; never raises.
 
@@ -233,6 +238,15 @@ class ProactiveDeliverer:
         below. A synthetic probe (PB-CANARY) passes ``False`` so its own marker
         never durably lands in the user-facing undelivered-outbox banner — a
         failed canary send is an operator-alerting signal, not lost user content.
+
+        ``context`` (Story 4.8) — the submitting ``notifications.*``/
+        ``messaging.*`` command's :class:`CommandContext`, add-only and
+        declared for a future story, the same shape ``nonce``/``utterance_id``
+        shipped in Story 4.3: ``None`` (every pre-4.8 caller) is byte-identical
+        to before this parameter existed, and a real value changes nothing in
+        this method's own body either — the receipt-check-first/write-last
+        idempotency guard this carries for lives in the calling
+        ``notifications/commands.py`` handler, never here.
         """
         # 1. ENTRY
         log.notifications.debug(
@@ -589,13 +603,18 @@ class ProactiveDeliverer:
             )
             return status
 
-    async def transport(self, channel: str, message: str) -> DeliveryStatus:
+    async def transport(
+        self, channel: str, message: str, *, context: CommandContext | None = None,
+    ) -> DeliveryStatus:
         """Transport an already-decided message body to ``channel``.
 
         Used by the digest flush, where the routing decision was made when the
         notification was first batched — re-deciding here would be wrong. Same
         self-healing contract as :meth:`deliver`: never raises; ``"failed"`` on
         unknown channel or a send that fails after one retry.
+
+        ``context`` (Story 4.8) — see :meth:`deliver`'s own docstring: add-only,
+        declared for a future story, changes nothing in this method's body.
         """
         log.notifications.debug(
             "[notifications] deliverer.transport: entry",

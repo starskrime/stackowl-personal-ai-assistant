@@ -89,12 +89,21 @@ class CheckInHandler(JobHandler):
         TestModeGuard.assert_not_test_mode("check_in.execute")
         t0 = time.monotonic()
 
-        # 2. DECISION — assemble a light body. No body OR no deliverer => skip
-        # HONESTLY (never a fake success-as-delivery).
+        # 2. DECISION — assemble a light body. No body OR no deliverer/db => skip
+        # HONESTLY (never a fake success-as-delivery). submit_command needs a
+        # real db pool the same way the seam it wraps needed a deliverer.
         rendered = await self._assemble_body(job)
-        if not rendered or self._job_deliverer is None:
+        if not rendered or self._job_deliverer is None or self._db is None:
             duration_ms = (time.monotonic() - t0) * 1000
-            reason = "empty_body" if not rendered else "no_deliverer"
+            # Review fix — `_db`/`_job_deliverer` are independently-optional
+            # constructor args; a missing db pool is a DIFFERENT wiring gap
+            # from a missing deliverer and must not be mislabeled as one.
+            if not rendered:
+                reason = "empty_body"
+            elif self._db is None:
+                reason = "no_db"
+            else:
+                reason = "no_deliverer"
             log.scheduler.info(
                 "[scheduler] check_in.execute: skipped (no send)",
                 extra={"_fields": {"job_id": job.job_id, "reason": reason}},
@@ -109,11 +118,27 @@ class CheckInHandler(JobHandler):
                 metadata={"delivery_status": "skipped", "reason": reason},
             )
 
-        # 3. STEP — deliver through the SAME seam as the morning brief; record the
-        # honest aggregate (delivered only after a real transport success).
-        outcome: ProactiveDeliveryOutcome = await self._job_deliverer.deliver_for_job(
-            job, message=rendered, category=_CATEGORY
+        # 3. STEP — submit the declared, irreversible notifications.
+        # deliver_check_in command instead of calling
+        # self._job_deliverer.deliver_for_job directly (Story 4.8, AD-1); the
+        # handler (notifications/commands.py) does the actual delivery
+        # through the SAME seam as the morning brief. authority_scope lets an
+        # unattended (scheduler-driven) run under a matching grandfathered/
+        # seeded grant deliver without a new approval.
+        from stackowl.commands.spec.submit import submit_command
+        from stackowl.notifications.commands import (
+            DELIVER_CHECK_IN,
+            DeliverCheckInPayload,
+            outcome_from_submission,
         )
+
+        db = self._db  # narrowed non-None by the guard above
+        submission = await submit_command(
+            db, DELIVER_CHECK_IN,
+            DeliverCheckInPayload(job=job, message=rendered, category=_CATEGORY),
+            authority_scope=("job", job.job_id),
+        )
+        outcome: ProactiveDeliveryOutcome = outcome_from_submission(submission)
         duration_ms = (time.monotonic() - t0) * 1000
 
         # An unresolved recipient => undeliverable => 'skipped' in the result

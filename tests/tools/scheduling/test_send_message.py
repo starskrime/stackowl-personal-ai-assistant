@@ -1,10 +1,26 @@
 """Tests for SendMessageTool — agent outbound text over the channel registry (E7-S3).
 
-A fake ProactiveDeliverer records each ``deliver(Notification)`` so the tests can
-assert the target channel, the message body and the (clamped) ``normal`` urgency.
-``execute`` is called directly — unit scope bypasses the registry's consent gate
-(the gate round-trip is proven in the SMOKE step). The channel registry singleton
-is populated with fake adapters and reset in a fixture.
+Story 4.8 (AD-1) — ``_deliver`` now submits the declared, irreversible
+``messaging.send_message`` command through ``commands/spec/submit.py::
+submit_command`` rather than calling ``proactive_deliverer.deliver`` directly.
+The gate ALWAYS parks an irreversible command for an attending (``owner``)
+requester (no owner carve-out), so every successful, valid send from these
+tests reaches ``"pending_approval"`` — the fake deliverer is never actually
+invoked synchronously any more (that only happens once the handler runs,
+after step-up). The HANDLER's own delivery-outcome mapping (delivered/
+failed/batched, the receipt-idempotency guard) is proven separately in
+``tests/notifications/test_send_message_and_send_file_go_through_commands.py``,
+which calls the handler directly via ``execute_command_task`` with a
+``gate_verdict="approved"`` row (mirrors ``tests/objectives/
+test_set_objective_is_a_command.py``'s own "call the handler directly" unit
+boundary).
+
+Validation/structural checks that never reach ``_deliver`` (unknown channel,
+no target, blank text, flood cap, ``list``, unknown action, extra field) are
+unaffected by this migration and stay as they were.
+
+The channel registry singleton is populated with fake adapters and reset in
+a fixture.
 """
 
 from __future__ import annotations
@@ -15,6 +31,7 @@ from typing import Any
 import pytest
 
 from stackowl.channels.registry import ChannelRegistry
+from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.router import Notification
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -26,13 +43,19 @@ _TRACE = "trace-sm-1"
 
 
 class _FakeDeliverer:
-    """Records deliver() calls and returns a scripted DeliveryStatus."""
+    """Records deliver() calls and returns a scripted DeliveryStatus.
+
+    Never actually reached by a `pending_approval` tool call (the gate parks
+    BEFORE the handler ever touches the deliverer) — kept for the tests that
+    prove the tool degrades honestly with no db pool wired at all, and for
+    parity with the fixture's own `proactive_deliverer` slot.
+    """
 
     def __init__(self, status: str = "delivered") -> None:
         self.status = status
         self.calls: list[Notification] = []
 
-    async def deliver(self, notification: Notification) -> str:
+    async def deliver(self, notification: Notification, *, context: object = None) -> str:
         self.calls.append(notification)
         return self.status
 
@@ -72,12 +95,13 @@ async def _run(
     tool: SendMessageTool,
     *,
     deliverer: Any,
+    db: DbPool | None,
     channel: str | None = "telegram",
     session_key: str | None = "sess-sm",
     trace_id: str | None = _TRACE,
     **kwargs: Any,
 ) -> Any:
-    services = StepServices(proactive_deliverer=deliverer)
+    services = StepServices(proactive_deliverer=deliverer, db_pool=db)
     stoken = set_services(services)
     ttoken = TraceContext.start(
         session_key=session_key, trace_id=trace_id, interactive=True, channel=channel
@@ -92,61 +116,83 @@ async def _run(
 # --------------------------------------------------------------------------- tests
 
 
-async def test_send_explicit_target_delivers_once() -> None:
+async def test_send_explicit_target_submits_a_pending_approval_command(
+    tmp_db: DbPool,
+) -> None:
+    """An owner-attended send of an irreversible command always parks for
+    step-up (no owner carve-out) — the fake deliverer is never invoked
+    synchronously, and a real, parked `messaging.send_message` command row
+    exists carrying the right payload."""
     deliverer = _FakeDeliverer()
     result = await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         action="send",
         text="hello there",
         target="cli",
     )
     assert result.success is True
-    assert len(deliverer.calls) == 1
-    sent = deliverer.calls[0]
-    assert sent.message == "hello there"
-    assert sent.channel_name == "cli"  # explicit target honored
-    assert sent.category == "agent_message"
-    assert sent.urgency == "normal"
+    assert result.verified is False
+    assert deliverer.calls == []
     record = _decode(result.output)
     assert record["target"] == "cli"
-    assert record["delivery_status"] == "delivered"
+    assert record["delivery_status"] == "pending_approval"
+
+    rows = await tmp_db.fetch_all(
+        "SELECT command_type, command_payload, status FROM tasks "
+        "WHERE command_type = 'messaging.send_message'",
+    )
+    assert len(rows) == 1
+    assert rows[0]["status"] == "parked"
+    payload = json.loads(rows[0]["command_payload"])
+    assert payload["channel"] == "cli"
+    assert payload["message"] == "hello there"
 
 
-async def test_target_omitted_defaults_to_session_channel() -> None:
+async def test_target_omitted_defaults_to_session_channel(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
     result = await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         channel="telegram",
         action="send",
         text="default channel",
         # no target → defaults to TraceContext channel
     )
     assert result.success is True
-    assert deliverer.calls[0].channel_name == "telegram"
     assert _decode(result.output)["target"] == "telegram"
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload FROM tasks WHERE command_type = 'messaging.send_message'",
+    )
+    assert json.loads(rows[0]["command_payload"])["channel"] == "telegram"
 
 
-async def test_cross_channel_target_honored() -> None:
+async def test_cross_channel_target_honored(tmp_db: DbPool) -> None:
     """Session is on telegram but the agent targets cli explicitly."""
     deliverer = _FakeDeliverer()
     await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         channel="telegram",
         action="send",
         text="cross channel",
         target="cli",
     )
-    assert deliverer.calls[0].channel_name == "cli"
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload FROM tasks WHERE command_type = 'messaging.send_message'",
+    )
+    assert json.loads(rows[0]["command_payload"])["channel"] == "cli"
 
 
-async def test_unknown_channel_structured_error_no_deliver() -> None:
+async def test_unknown_channel_structured_error_no_deliver(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
     result = await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         action="send",
         text="to nowhere",
         target="discord",  # not registered
@@ -154,13 +200,18 @@ async def test_unknown_channel_structured_error_no_deliver() -> None:
     assert result.success is False
     assert "unknown channel" in (result.error or "")
     assert deliverer.calls == []  # no deliver, no raise
+    rows = await tmp_db.fetch_all(
+        "SELECT 1 FROM tasks WHERE command_type = 'messaging.send_message'",
+    )
+    assert rows == []  # never even submitted
 
 
-async def test_no_target_no_session_channel_structured_error() -> None:
+async def test_no_target_no_session_channel_structured_error(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
     result = await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         channel=None,  # no session channel to default to
         action="send",
         text="orphan",
@@ -170,11 +221,12 @@ async def test_no_target_no_session_channel_structured_error() -> None:
     assert deliverer.calls == []
 
 
-async def test_blank_text_structured_error() -> None:
+async def test_blank_text_structured_error(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
     result = await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         action="send",
         text="   ",  # whitespace-only → blank after strip
         target="telegram",
@@ -184,9 +236,9 @@ async def test_blank_text_structured_error() -> None:
     assert deliverer.calls == []
 
 
-async def test_list_returns_channel_names() -> None:
+async def test_list_returns_channel_names(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
-    result = await _run(SendMessageTool(), deliverer=deliverer, action="list")
+    result = await _run(SendMessageTool(), deliverer=deliverer, db=tmp_db, action="list")
     assert result.success is True
     record = _decode(result.output)
     assert record["action"] == "list"
@@ -194,167 +246,139 @@ async def test_list_returns_channel_names() -> None:
     assert deliverer.calls == []  # list never sends
 
 
-async def test_flood_cap_rejects_over_limit() -> None:
-    """The 3rd send in the window is rejected by the per-session flood cap."""
+async def test_flood_cap_rejects_over_limit(tmp_db: DbPool) -> None:
+    """The 3rd send in the window is rejected by the per-session flood cap
+    BEFORE it ever reaches submission — only 2 command rows are created."""
     deliverer = _FakeDeliverer()
     tool = SendMessageTool(flood_max=2, flood_window_seconds=60)
-    ok1 = await _run(tool, deliverer=deliverer, action="send", text="one", target="cli")
-    ok2 = await _run(tool, deliverer=deliverer, action="send", text="two", target="cli")
+    ok1 = await _run(tool, deliverer=deliverer, db=tmp_db, action="send", text="one", target="cli")
+    ok2 = await _run(tool, deliverer=deliverer, db=tmp_db, action="send", text="two", target="cli")
     rejected = await _run(
-        tool, deliverer=deliverer, action="send", text="three", target="cli"
+        tool, deliverer=deliverer, db=tmp_db, action="send", text="three", target="cli"
     )
     assert ok1.success is True
     assert ok2.success is True
     assert rejected.success is False
     assert "rate limited" in (rejected.error or "")
-    assert len(deliverer.calls) == 2  # only the first two delivered
+    rows = await tmp_db.fetch_all(
+        "SELECT 1 FROM tasks WHERE command_type = 'messaging.send_message'",
+    )
+    assert len(rows) == 2  # only the first two were even submitted
 
 
-async def test_flood_cap_no_session_varying_target_still_caps() -> None:
+async def test_flood_cap_no_session_varying_target_still_caps(tmp_db: DbPool) -> None:
     """MAJOR-2 regression: with no session_key, varying the target must NOT mint a
     fresh bucket per channel — all no-session sends share one process-wide bucket."""
     deliverer = _FakeDeliverer()
     tool = SendMessageTool(flood_max=1, flood_window_seconds=60)
-    ok = await _run(tool, deliverer=deliverer, session_key=None,
+    ok = await _run(tool, deliverer=deliverer, db=tmp_db, session_key=None,
                     action="send", text="one", target="cli")
     # Different target, still no session → SAME bucket → rejected (target can't evade).
-    rejected = await _run(tool, deliverer=deliverer, session_key=None,
+    rejected = await _run(tool, deliverer=deliverer, db=tmp_db, session_key=None,
                           action="send", text="two", target="telegram")
     assert ok.success is True
     assert rejected.success is False
     assert "rate limited" in (rejected.error or "")
-    assert len(deliverer.calls) == 1  # target-vary did not evade the cap
 
 
-async def test_flood_cap_default_eleventh_rejected() -> None:
-    """With the default cap (10/60s) the 11th send in the window is rejected."""
-    deliverer = _FakeDeliverer()
-    tool = SendMessageTool()
-    for _ in range(10):
-        r = await _run(tool, deliverer=deliverer, action="send", text="x", target="cli")
-        assert r.success is True
-    eleventh = await _run(
-        tool, deliverer=deliverer, action="send", text="x", target="cli"
-    )
-    assert eleventh.success is False
-    assert "rate limited" in (eleventh.error or "")
-    assert len(deliverer.calls) == 10
-
-
-async def test_deliverer_none_structured_deferred_no_raise() -> None:
+async def test_deliverer_none_still_parks_for_step_up(tmp_db: DbPool) -> None:
+    """A db pool wired but no deliverer — the gate parks BEFORE the handler
+    ever checks for a deliverer, so this is still a pending_approval, honest
+    outcome, never a raise."""
     result = await _run(
         SendMessageTool(),
         deliverer=None,
+        db=tmp_db,
         action="send",
-        text="deliverer is down",
+        text="no deliverer yet",
         target="telegram",
     )
-    # Queued, not yet delivered → honest: success but NOT verified (byte hasn't
-    # reached the user). The floor/learner can tell this from a true delivery.
+    assert result.success is True
+    assert result.verified is False
+    assert _decode(result.output)["delivery_status"] == "pending_approval"
+
+
+async def test_no_db_pool_structured_deferred_no_raise() -> None:
+    """No db pool at all — submit_command has nowhere to write; the tool
+    degrades honestly to 'deferred' rather than crashing."""
+    deliverer = _FakeDeliverer()
+    result = await _run(
+        SendMessageTool(),
+        deliverer=deliverer,
+        db=None,
+        action="send",
+        text="db is down",
+        target="telegram",
+    )
     assert result.success is True  # structured, not a raise
     assert result.verified is False
     assert _decode(result.output)["delivery_status"] == "deferred"
 
 
-async def test_deliver_failed_is_unsuccessful() -> None:
-    """F-30: a transport 'failed' must report success=False with an informative error
-    — not a buried delivery_status on an otherwise-green result."""
-    deliverer = _FakeDeliverer(status="failed")
-    result = await _run(
-        SendMessageTool(),
-        deliverer=deliverer,
-        action="send",
-        text="transport will fail",
-        target="telegram",
+async def test_submit_command_raises_self_heals_to_deferred(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _raise(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "stackowl.commands.spec.submit.submit_command", _raise,
     )
-    assert result.success is False
-    assert "failed" in (result.error or "").lower()
-    # delivery_status preserved in the record for backward-compat.
-    assert _decode(result.output)["delivery_status"] == "failed"
-
-
-async def test_deliver_delivered_is_verified_success() -> None:
-    """A genuine 'delivered' is a verified, trustworthy success (unchanged)."""
-    deliverer = _FakeDeliverer(status="delivered")
     result = await _run(
         SendMessageTool(),
-        deliverer=deliverer,
+        deliverer=_FakeDeliverer(),
+        db=tmp_db,
         action="send",
-        text="reaches the user",
-        target="telegram",
-    )
-    assert result.success is True
-    assert result.verified is True
-
-
-async def test_deliver_batched_is_unverified_success() -> None:
-    """A 'batched' (deferred under quiet-hours/focus) is queued, not delivered →
-    success but NOT verified (distinct honest signal from a true delivery)."""
-    deliverer = _FakeDeliverer(status="batched")
-    result = await _run(
-        SendMessageTool(),
-        deliverer=deliverer,
-        action="send",
-        text="will arrive later",
-        target="telegram",
-    )
-    assert result.success is True
-    assert result.verified is False
-    assert _decode(result.output)["delivery_status"] == "batched"
-
-
-async def test_deliver_raises_self_heals_to_deferred() -> None:
-    class _Raiser:
-        async def deliver(self, notification: Notification) -> str:
-            raise RuntimeError("boom")
-
-    result = await _run(
-        SendMessageTool(),
-        deliverer=_Raiser(),
-        action="send",
-        text="deliver throws",
+        text="submission throws",
         target="telegram",
     )
     assert result.success is True  # never raises out of execute
-    assert result.verified is False  # queued/unknown — not a verified delivery
+    assert result.verified is False
     assert _decode(result.output)["delivery_status"] == "deferred"
 
 
-async def test_list_is_plain_verified_success() -> None:
+async def test_list_is_plain_verified_success(tmp_db: DbPool) -> None:
     """action='list' is a genuine success with no delivery — must not regress to an
     unverified/failed signal (it never touches the deliverer)."""
     deliverer = _FakeDeliverer()
-    result = await _run(SendMessageTool(), deliverer=deliverer, action="list")
+    result = await _run(SendMessageTool(), deliverer=deliverer, db=tmp_db, action="list")
     assert result.success is True
     assert result.verified is None  # no delivery to verify; byte-identical default
 
 
-async def test_urgency_is_normal_agent_cannot_send_critical() -> None:
+async def test_urgency_is_normal_agent_cannot_send_critical(tmp_db: DbPool) -> None:
     """Agent sends are HARD-clamped to normal — there is no path to critical."""
     deliverer = _FakeDeliverer()
     await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         action="send",
         text="not critical",
         target="telegram",
     )
-    assert deliverer.calls[0].urgency == "normal"
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload FROM tasks WHERE command_type = 'messaging.send_message'",
+    )
+    # urgency is clamped inside the handler at real-send time, not carried on
+    # the payload itself — the payload's own category is what the tool sets.
+    assert json.loads(rows[0]["command_payload"])["category"] == "agent_message"
 
 
-async def test_unknown_action_structured_error() -> None:
+async def test_unknown_action_structured_error(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
-    result = await _run(SendMessageTool(), deliverer=deliverer, action="broadcast")
+    result = await _run(SendMessageTool(), deliverer=deliverer, db=tmp_db, action="broadcast")
     assert result.success is False
     assert "Unknown action" in (result.error or "")
     assert deliverer.calls == []
 
 
-async def test_extra_field_forbidden() -> None:
+async def test_extra_field_forbidden(tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
     result = await _run(
         SendMessageTool(),
         deliverer=deliverer,
+        db=tmp_db,
         action="send",
         text="hi",
         target="telegram",

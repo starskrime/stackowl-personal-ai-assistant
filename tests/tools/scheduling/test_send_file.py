@@ -77,13 +77,20 @@ _TRACE = "trace-sf-1"
 
 
 class _FakeDeliverer:
-    """Records deliver() calls and returns a scripted DeliveryStatus."""
+    """Records deliver() calls and returns a scripted DeliveryStatus.
+
+    Story 4.8 — never actually reached by an owner-attended `pending_approval`
+    tool call any more (the gate parks BEFORE the handler ever touches the
+    deliverer); kept for the "no deliverer wired" honest-degradation test and
+    for the handler-level tests in
+    ``tests/notifications/test_send_message_and_send_file_go_through_commands.py``.
+    """
 
     def __init__(self, status: str = "delivered") -> None:
         self.status = status
         self.calls: list[Notification] = []
 
-    async def deliver(self, notification: Notification) -> str:
+    async def deliver(self, notification: Notification, *, context: object = None) -> str:
         self.calls.append(notification)
         return self.status
 
@@ -130,12 +137,13 @@ async def _run(
     tool: SendFileTool,
     *,
     deliverer: Any,
+    db: DbPool | None = None,
     channel: str | None = "telegram",
     session_key: str | None = "sess-sf",
     trace_id: str | None = _TRACE,
     **kwargs: Any,
 ) -> Any:
-    services = StepServices(proactive_deliverer=deliverer)
+    services = StepServices(proactive_deliverer=deliverer, db_pool=db)
     stoken = set_services(services)
     ttoken = TraceContext.start(
         session_key=session_key, trace_id=trace_id, interactive=True, channel=channel
@@ -153,60 +161,89 @@ def _make_file(workspace: Path, name: str = "clip.mp4", size: int = 16) -> Path:
     return p
 
 
-async def test_happy_path_delivers_file_path_and_caption(_workspace: Path) -> None:
+async def test_happy_path_submits_a_pending_approval_command(
+    _workspace: Path, tmp_db: DbPool,
+) -> None:
+    """Story 4.8 (AD-1) — an owner-attended send of an irreversible command
+    always parks for step-up (no owner carve-out): the fake deliverer is
+    never invoked synchronously, and a real, parked `messaging.send_file`
+    command row exists carrying the right payload. The handler's own
+    delivery-outcome mapping is proven in
+    ``tests/notifications/test_send_message_and_send_file_go_through_commands.py``.
+    """
     deliverer = _FakeDeliverer()
     f = _make_file(_workspace)
     result = await _run(
         SendFileTool(),
         deliverer=deliverer,
+        db=tmp_db,
         file_path=str(f),
         caption="here is your clip",
         target="telegram",
     )
     assert result.success is True
-    assert len(deliverer.calls) == 1
-    sent = deliverer.calls[0]
-    assert sent.file_path == str(f.resolve())  # threaded through
-    assert sent.message == "here is your clip"  # caption rides on message
-    assert sent.channel_name == "telegram"
-    assert sent.category == "agent_file"
-    assert sent.urgency == "normal"  # hard-clamped
+    assert result.verified is False
+    assert deliverer.calls == []
     record = _decode(result.output)
-    assert record["delivery_status"] == "delivered"
+    assert record["delivery_status"] == "pending_approval"
     assert record["file_path"] == str(f.resolve())
 
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload, status FROM tasks WHERE command_type = 'messaging.send_file'",
+    )
+    assert len(rows) == 1
+    assert rows[0]["status"] == "parked"
+    payload = json.loads(rows[0]["command_payload"])
+    assert payload["file_path"] == str(f.resolve())
+    assert payload["caption"] == "here is your clip"
+    assert payload["channel"] == "telegram"
+    assert payload["category"] == "agent_file"
 
-async def test_target_omitted_defaults_to_session_channel(_workspace: Path) -> None:
+
+async def test_target_omitted_defaults_to_session_channel(
+    _workspace: Path, tmp_db: DbPool,
+) -> None:
     deliverer = _FakeDeliverer()
     f = _make_file(_workspace)
     result = await _run(
-        SendFileTool(), deliverer=deliverer, channel="telegram", file_path=str(f)
+        SendFileTool(), deliverer=deliverer, db=tmp_db, channel="telegram", file_path=str(f)
     )
     assert result.success is True
-    assert deliverer.calls[0].channel_name == "telegram"
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload FROM tasks WHERE command_type = 'messaging.send_file'",
+    )
+    assert json.loads(rows[0]["command_payload"])["channel"] == "telegram"
 
 
-async def test_caption_optional_blank_message(_workspace: Path) -> None:
+async def test_caption_optional_blank_message(_workspace: Path, tmp_db: DbPool) -> None:
     deliverer = _FakeDeliverer()
     f = _make_file(_workspace)
-    result = await _run(SendFileTool(), deliverer=deliverer, file_path=str(f), target="cli")
+    result = await _run(
+        SendFileTool(), deliverer=deliverer, db=tmp_db, file_path=str(f), target="cli",
+    )
     assert result.success is True
-    assert deliverer.calls[0].message == ""  # no caption → empty message
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload FROM tasks WHERE command_type = 'messaging.send_file'",
+    )
+    assert json.loads(rows[0]["command_payload"])["caption"] == ""  # no caption → empty
 
 
 async def test_bare_relative_name_resolves_under_workspace_and_sends(
-    _workspace: Path,
+    _workspace: Path, tmp_db: DbPool,
 ) -> None:
     """A bare filename resolves to <workspace>/<name> and is accepted (H2)."""
     deliverer = _FakeDeliverer()
     _make_file(_workspace, name="video.mp4")
     result = await _run(
-        SendFileTool(), deliverer=deliverer, file_path="video.mp4", target="telegram"
+        SendFileTool(), deliverer=deliverer, db=tmp_db, file_path="video.mp4", target="telegram"
     )
     assert result.success is True
     expected = str((_workspace / "video.mp4").resolve())
-    assert deliverer.calls[0].file_path == expected  # resolved under workspace
     assert _decode(result.output)["file_path"] == expected
+    rows = await tmp_db.fetch_all(
+        "SELECT command_payload FROM tasks WHERE command_type = 'messaging.send_file'",
+    )
+    assert json.loads(rows[0]["command_payload"])["file_path"] == expected
 
 
 async def test_missing_bare_name_gives_instructive_not_found_error(
@@ -317,77 +354,62 @@ async def test_no_target_no_session_channel_structured_error(_workspace: Path) -
     assert deliverer.calls == []
 
 
-async def test_flood_cap_rejects_over_limit(_workspace: Path) -> None:
+async def test_flood_cap_rejects_over_limit(_workspace: Path, tmp_db: DbPool) -> None:
+    """The 3rd send in the window is rejected BEFORE it ever reaches
+    submission — only 2 command rows are created."""
     deliverer = _FakeDeliverer()
     f = _make_file(_workspace)
     tool = SendFileTool(flood_max=2, flood_window_seconds=60)
-    ok1 = await _run(tool, deliverer=deliverer, file_path=str(f), target="cli")
-    ok2 = await _run(tool, deliverer=deliverer, file_path=str(f), target="cli")
-    rejected = await _run(tool, deliverer=deliverer, file_path=str(f), target="cli")
+    ok1 = await _run(tool, deliverer=deliverer, db=tmp_db, file_path=str(f), target="cli")
+    ok2 = await _run(tool, deliverer=deliverer, db=tmp_db, file_path=str(f), target="cli")
+    rejected = await _run(tool, deliverer=deliverer, db=tmp_db, file_path=str(f), target="cli")
     assert ok1.success is True
     assert ok2.success is True
     assert rejected.success is False
     assert "rate limited" in (rejected.error or "")
-    assert len(deliverer.calls) == 2
+    rows = await tmp_db.fetch_all(
+        "SELECT 1 FROM tasks WHERE command_type = 'messaging.send_file'",
+    )
+    assert len(rows) == 2
 
 
-async def test_deliverer_none_structured_deferred_no_raise(_workspace: Path) -> None:
+async def test_deliverer_none_still_parks_for_step_up(
+    _workspace: Path, tmp_db: DbPool,
+) -> None:
+    """A db pool wired but no deliverer — the gate parks BEFORE the handler
+    ever checks for a deliverer, so this is still a pending_approval, honest
+    outcome, never a raise."""
     f = _make_file(_workspace)
     result = await _run(
-        SendFileTool(), deliverer=None, file_path=str(f), target="telegram"
+        SendFileTool(), deliverer=None, db=tmp_db, file_path=str(f), target="telegram"
     )
-    # Queued, not yet delivered → honest: success but NOT verified.
+    assert result.success is True
+    assert result.verified is False
+    assert _decode(result.output)["delivery_status"] == "pending_approval"
+
+
+async def test_no_db_pool_structured_deferred_no_raise(_workspace: Path) -> None:
+    """No db pool at all — submit_command has nowhere to write; the tool
+    degrades honestly to 'deferred' rather than crashing."""
+    f = _make_file(_workspace)
+    result = await _run(
+        SendFileTool(), deliverer=_FakeDeliverer(), db=None, file_path=str(f), target="telegram"
+    )
     assert result.success is True  # structured, not a raise
     assert result.verified is False
     assert _decode(result.output)["delivery_status"] == "deferred"
 
 
-async def test_deliver_failed_is_unsuccessful(_workspace: Path) -> None:
-    """F-29: a transport 'failed' must report success=False with an informative
-    error — not a buried delivery_status on an otherwise-green result."""
-    deliverer = _FakeDeliverer(status="failed")
+async def test_submit_command_raises_self_heals_to_deferred(
+    _workspace: Path, tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _raise(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("stackowl.commands.spec.submit.submit_command", _raise)
     f = _make_file(_workspace)
     result = await _run(
-        SendFileTool(), deliverer=deliverer, file_path=str(f), target="telegram"
-    )
-    assert result.success is False
-    assert "failed" in (result.error or "").lower()
-    # delivery_status preserved in the record for backward-compat.
-    assert _decode(result.output)["delivery_status"] == "failed"
-
-
-async def test_deliver_delivered_is_verified_success(_workspace: Path) -> None:
-    """A genuine 'delivered' is a verified, trustworthy success (unchanged)."""
-    deliverer = _FakeDeliverer(status="delivered")
-    f = _make_file(_workspace)
-    result = await _run(
-        SendFileTool(), deliverer=deliverer, file_path=str(f), target="telegram"
-    )
-    assert result.success is True
-    assert result.verified is True
-
-
-async def test_deliver_batched_is_unverified_success(_workspace: Path) -> None:
-    """A 'batched' (deferred under quiet-hours/focus) is queued, not delivered →
-    success but NOT verified (distinct honest signal from a true delivery)."""
-    deliverer = _FakeDeliverer(status="batched")
-    f = _make_file(_workspace)
-    result = await _run(
-        SendFileTool(), deliverer=deliverer, file_path=str(f), target="telegram"
-    )
-    assert result.success is True
-    assert result.verified is False
-    assert _decode(result.output)["delivery_status"] == "batched"
-
-
-async def test_deliver_raises_self_heals_to_deferred(_workspace: Path) -> None:
-    class _Raiser:
-        async def deliver(self, notification: Notification) -> str:
-            raise RuntimeError("boom")
-
-    f = _make_file(_workspace)
-    result = await _run(
-        SendFileTool(), deliverer=_Raiser(), file_path=str(f), target="telegram"
+        SendFileTool(), deliverer=_FakeDeliverer(), db=tmp_db, file_path=str(f), target="telegram"
     )
     assert result.success is True  # never raises out of execute
     assert result.verified is False  # queued/unknown — not a verified delivery
@@ -799,24 +821,34 @@ async def test_smoke_send_file_consent_yes_uploads_document(
         assert kb, [m["text"] for m in env.bot.messages]
         assert kb[0]["chat_id"] == _USER_ID
 
-        # 2) YES tap → tool ran → REAL deliverer reported delivered.
-        record = json.loads(env.provider.results[0])["record"]
-        assert record["action"] == "send_file", env.provider.results[0]
-        assert record["delivery_status"] == "delivered", env.provider.results[0]
-        assert record["urgency"] == "normal"
+        # 2) YES tap → the tool's OWN pre-existing consequential gate passed →
+        # the tool submitted the messaging.send_file command — but Story 4.8
+        # makes that command IRREVERSIBLE, so the action-policy gate parks it
+        # for a SECOND, COMMAND-level step-up (no owner carve-out) rather than
+        # delivering synchronously. verified=False on an otherwise-"success"
+        # effect-classed tool call is exactly what the pipeline's own
+        # AcceptanceAuthority exists to catch — it overrides the model-facing
+        # result to its TOOL_FAILED sentinel rather than let an unconfirmed
+        # send read as done. This is the correct, honest outcome downstream:
+        # the file has NOT reached the user yet.
+        assert env.provider.results[0].startswith("\x00TOOL_FAILED\x00"), env.provider.results[0]
+        assert "send_file" in env.provider.results[0]
 
-        # 3) PROOF: the REAL ProactiveDeliverer uploaded the file via the adapter's
-        # send_file → the fake bot recorded a send_document to the user's chat.
-        assert len(env.bot.documents) == 1, env.bot.documents
-        assert env.bot.documents[0]["chat_id"] == _USER_ID
-        assert env.bot.documents[0]["caption"] == "your report"
+        # 3) PROOF: nothing was uploaded yet — the REAL ProactiveDeliverer is
+        # never reached until the command's own step-up is answered.
+        assert env.bot.documents == [], env.bot.documents
 
-        # 4) REAL router wrote a 'delivered' notification_log row.
+        # 4) A real, parked messaging.send_file command row exists, carrying
+        # the right payload — proof the tool submitted through the one door
+        # rather than transporting directly.
         rows = await tmp_db.fetch_all(
-            "SELECT channel, delivery_status FROM notification_log", ()
+            "SELECT command_payload, status FROM tasks WHERE command_type = 'messaging.send_file'",
         )
-        assert len(rows) == 1 and rows[0]["delivery_status"] == "delivered"
-        assert rows[0]["channel"] == "telegram"
+        assert len(rows) == 1
+        assert rows[0]["status"] == "parked"
+        payload = json.loads(rows[0]["command_payload"])
+        assert payload["file_path"] == str(sent_file.resolve())
+        assert payload["caption"] == "your report"
     finally:
         ChannelRegistry.instance().reset()
         TestModeGuard._active = prev  # type: ignore[attr-defined]

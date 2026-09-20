@@ -20,14 +20,17 @@ from typing import Any, cast
 
 import pytest
 
+from stackowl.authz.standing_authority import grant
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import BriefSettings, Settings, SystemSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
+from stackowl.notifications.commands import DELIVER_CHECK_IN
 from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.delivery_ledger import DeliveryLedger
 from stackowl.notifications.router import NotificationRouter
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.handlers.check_in import CheckInHandler
 from stackowl.scheduler.job import Job
@@ -87,7 +90,7 @@ def _clean() -> AsyncIterator[None]:  # type: ignore[misc]
 
 def _wire(
     db: DbPool, settings: Settings, adapter: _RecordingTelegramAdapter
-) -> JobScheduler:
+) -> tuple[JobScheduler, ProactiveDeliverer]:
     ChannelRegistry.instance().register(cast(Any, adapter))
     router = NotificationRouter(db=db, settings=settings)
     deliverer = ProactiveDeliverer(
@@ -112,7 +115,7 @@ def _wire(
         delivery_ledger=ledger,
     )
     HandlerRegistry.instance().register(handler)
-    return scheduler
+    return scheduler, deliverer
 
 
 async def _seed_due_check_in(
@@ -139,14 +142,26 @@ async def _seed_due_check_in(
 async def test_check_in_delivers_to_durable_target(migrated_db: DbPool) -> None:
     settings = _settings()
     adapter = _RecordingTelegramAdapter()
-    scheduler = _wire(migrated_db, settings, adapter)
+    scheduler, deliverer = _wire(migrated_db, settings, adapter)
     await _seed_due_check_in(
         migrated_db,
         target_channels=["telegram"],
         target_addresses={"telegram": 777},
     )
+    # Story 4.8 (AD-1) — check_in now submits notifications.deliver_check_in
+    # through the one door; an unattended run needs BOTH get_services() wired
+    # (the handler resolves its deliverer/db that way) AND a matching standing-
+    # authority grant (mirrors a grandfathered/seeded production boot).
+    await grant(
+        migrated_db, scope_kind="job", scope_id="check_in-fresh01",
+        command_type=DELIVER_CHECK_IN, granted_by="autonomous", provenance="seeded",
+    )
 
-    await scheduler._poll()
+    token = set_services(StepServices(db_pool=migrated_db, proactive_deliverer=deliverer))
+    try:
+        await scheduler._poll()
+    finally:
+        reset_services(token)
 
     assert len(adapter.sends) == 1, "the check-in must reach the durable target"
     text, chat_id = adapter.sends[0]
@@ -162,7 +177,7 @@ async def test_check_in_delivers_to_durable_target(migrated_db: DbPool) -> None:
 async def test_check_in_no_recipient_is_skipped_not_delivered(migrated_db: DbPool) -> None:
     settings = _settings()
     adapter = _RecordingTelegramAdapter()
-    scheduler = _wire(migrated_db, settings, adapter)
+    scheduler, _deliverer = _wire(migrated_db, settings, adapter)
     await _seed_due_check_in(
         migrated_db,
         target_channels=["telegram"],

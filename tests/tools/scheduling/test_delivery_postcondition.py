@@ -53,14 +53,6 @@ def test_helper_no_delivery_is_none() -> None:
 # --- through the real tool + the __call__ seam ---------------------------------
 
 
-class _FakeDeliverer:
-    def __init__(self, status: str) -> None:
-        self.status = status
-
-    async def deliver(self, notification: Any) -> str:
-        return self.status
-
-
 class _FakeAdapter:
     def __init__(self, name: str) -> None:
         self._name = name
@@ -93,9 +85,33 @@ def authority_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(base_mod, "_acceptance_authority_enabled", lambda: False)
 
 
-async def _call(tool: SendMessageTool, status: str, **kwargs: Any) -> Any:
-    """Invoke the tool through __call__ (exercises the post_condition seam)."""
-    services = StepServices(proactive_deliverer=_FakeDeliverer(status))
+async def _call(
+    tool: SendMessageTool, status: str, monkeypatch: pytest.MonkeyPatch, **kwargs: Any
+) -> Any:
+    """Invoke the tool through __call__ (exercises the post_condition seam).
+
+    Story 4.8 (AD-1) — ``_deliver`` now submits ``messaging.send_message``
+    through ``commands/spec/submit.py::submit_command`` rather than calling
+    ``proactive_deliverer.deliver`` directly, and an owner-attended
+    irreversible send ALWAYS parks for step-up (no owner carve-out) — there
+    is no longer a live path where this tool's own ``execute()`` observes a
+    synchronous "delivered" outcome. ``submit_command`` is stubbed here to
+    script the delivery-command OUTCOME this test needs (mirrors
+    ``notifications/commands.py``'s own handler result shape), so the real
+    subject under test — the tool's own post_condition/AcceptanceAuthority
+    wiring — is exercised exactly as before.
+    """
+    from stackowl.commands.spec.context import CommandOutcome
+    from stackowl.commands.spec.submit import CommandSubmission
+
+    async def _fake_submit_command(*_a: Any, **_kw: Any) -> CommandSubmission:
+        return CommandSubmission(
+            command_id="stub-delivery-postcondition", task_id="stub-task",
+            outcome=CommandOutcome(success=(status != "failed"), result={"delivery_status": status}),
+        )
+
+    monkeypatch.setattr("stackowl.commands.spec.submit.submit_command", _fake_submit_command)
+    services = StepServices(db_pool=object())  # type: ignore[arg-type]
     stoken = set_services(services)
     ttoken = TraceContext.start(
         session_key="s", trace_id="t", interactive=True, channel="cli"
@@ -108,27 +124,33 @@ async def _call(tool: SendMessageTool, status: str, **kwargs: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_delivered_verified_true_when_authority_on(authority_on: None) -> None:
-    result = await _call(SendMessageTool(), "delivered")
+async def test_delivered_verified_true_when_authority_on(
+    authority_on: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = await _call(SendMessageTool(), "delivered", monkeypatch)
     assert result.success is True
     assert result.verified is True  # authority observed the transport ack
     assert is_trustworthy_success(result.success, result.verified) is True
 
 
 @pytest.mark.asyncio
-async def test_batched_stays_unverified_when_authority_on(authority_on: None) -> None:
-    result = await _call(SendMessageTool(), "batched")
+async def test_batched_stays_unverified_when_authority_on(
+    authority_on: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = await _call(SendMessageTool(), "batched", monkeypatch)
     assert result.success is True
     assert result.verified is False  # queued, not delivered — not trustworthy
     assert is_trustworthy_success(result.success, result.verified) is False
 
 
 @pytest.mark.asyncio
-async def test_flag_off_delivered_is_byte_identical(authority_off: None) -> None:
+async def test_flag_off_delivered_is_byte_identical(
+    authority_off: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Flag explicitly forced OFF ⇒ ADR-1 seam skipped ⇒ the self-stamp's True is
     # demoted by the existing F-25 block to None (exactly pre-ADR behavior), still
     # trustworthy. (acceptance_authority now defaults True — see settings.py — so
     # this must force the flag off itself rather than assume an ambient default.)
-    result = await _call(SendMessageTool(), "delivered")
+    result = await _call(SendMessageTool(), "delivered", monkeypatch)
     assert result.verified is None
     assert is_trustworthy_success(result.success, result.verified) is True

@@ -33,6 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from stackowl.commands.spec.context import CommandContext
 from stackowl.infra.observability import log
 from stackowl.notifications.recipient import DeliverySpec, resolve_owner_addresses
 from stackowl.notifications.router import Notification
@@ -148,8 +149,14 @@ class ProactiveJobDeliverer:
         urgency: str = "normal",
         surface_undelivered: bool = True,
         ephemeral: bool = False,
+        context: CommandContext | None = None,
     ) -> ProactiveDeliveryOutcome:
         """Deliver ``message`` to every durable recipient of ``job``; never raises.
+
+        ``context`` (Story 4.8) — threaded straight into every per-channel
+        :meth:`ProactiveDeliverer.deliver` call below; see that method's own
+        docstring for what it does (nothing, yet — add-only, declared for a
+        future story). ``None`` (every pre-4.8 caller) is byte-identical.
 
         Returns an honest :class:`ProactiveDeliveryOutcome`. A channel with no
         durable address is reported ``undeliverable`` (never sent, never
@@ -247,7 +254,7 @@ class ProactiveJobDeliverer:
                 ephemeral=ephemeral,
             )
             status: DeliveryStatus = await self._deliverer.deliver(
-                notification, surface_undelivered=surface_undelivered
+                notification, surface_undelivered=surface_undelivered, context=context,
             )
             per_channel[channel] = status
             # Flip the ledger row to the ACTUAL transport outcome. A non-delivered
