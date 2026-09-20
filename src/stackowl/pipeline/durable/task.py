@@ -219,6 +219,16 @@ class DurableTask(BaseModel):
     #: Declared for voice (4.4+); stored, unused beyond that, this story.
     utterance_id: str | None = None
 
+    # ---- the action-policy gate (migration 0152, Story 4.4) ---------------
+    #: Set by `store.park_for_decision` to the gate's own outcome
+    #: ("needs_approval"/"needs_step_up") when a COMMAND task parks; set to
+    #: "approved" by `store.resume_command_after_answer` once the row's
+    #: Needs-you item is answered "approved" -- `execute_command_task` reads
+    #: `gate_verdict == "approved"` to skip straight to the handler on
+    #: resume, with no re-decision and no second Needs-you item. None for a
+    #: goal task, and for a command that ran at once and never parked.
+    gate_verdict: str | None = None
+
     # Defaulted so a caller enqueuing a task states only what it MEANS, not the
     # bookkeeping. The store still stamps updated_at on every transition.
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

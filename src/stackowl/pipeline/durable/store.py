@@ -24,15 +24,18 @@ from stackowl.infra.resilience import jittered
 from stackowl.journal import (
     ActorKind,
     JournalEvent,
+    NeedsYouKind,
     Outcome,
     RecordRef,
 )
 from stackowl.journal import fanout as journal_fanout
+from stackowl.journal import needs_you
 from stackowl.journal import record as journal_record
 from stackowl.journal.command_events import (
     CommandCompletedAttrs,
     CommandEnqueuedAttrs,
     CommandFailedAttrs,
+    CommandPendingApprovalAttrs,
 )
 from stackowl.journal.task_events import (
     TaskClaimedAttrs,
@@ -65,7 +68,12 @@ _SELECT_FIELDS = (
     # reserved-slot logic and `_row_to_task` both need these; a select list
     # that omitted them would silently claim a command row as a goal.
     "kind, command_type, command_payload, command_id, requester_kind, "
-    "nonce, utterance_id"
+    "nonce, utterance_id, "
+    # Migration 0152 (Story 4.4) — the action-policy gate's durable resume
+    # marker. `execute_command_task` reads it to skip re-deciding a resumed
+    # row; omitting it here would make every fetch silently forget which
+    # rows were already approved.
+    "gate_verdict"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -405,6 +413,10 @@ class DurableTaskStore(OwnedRepository):
             "requester_kind": task.requester_kind,
             "nonce": task.nonce,
             "utterance_id": task.utterance_id,
+            # Migration 0152 (Story 4.4) — the action-policy gate's durable
+            # resume marker. None for every existing caller (a fresh row is
+            # never born already "approved").
+            "gate_verdict": task.gate_verdict,
         }
 
     async def create(self, task: DurableTask) -> None:
@@ -519,6 +531,146 @@ class DurableTaskStore(OwnedRepository):
         log.tasks.info(
             "[commands] store.record_command_failed: exit",
             extra={"_fields": {"task_id": task_id, "failure_class": failure_class}},
+        )
+
+    async def park_for_decision(
+        self, task_id: str, *, command_type: str, command_id: str,
+        requester_kind: str, outcome: str, payload_summary: str,
+    ) -> str | None:
+        """Park a COMMAND task the action-policy gate decided may not run at
+        once (Story 4.4, AD-27/AD-28) -- called by BOTH this task kind's
+        callers (``submit.py``'s inline path, ``loop.py``'s tick-driven
+        dispatch) the moment ``execute.execute_command_task`` raises
+        ``CommandNeedsDecisionError``.
+
+        Sets ``status='parked'``/``gate_verdict=outcome`` and releases any
+        lease -- the row holds no worker (AD-27: "parked ... holding no
+        worker", and ``parked`` is excluded from ``CLAIMABLE_WHERE``
+        regardless). Records ``command.pending_approval``, whose own
+        NEEDS_YOU wiring (``journal.record()``) opens ONE ``approval``
+        Needs-you item keyed by ``command_id`` -- or, on a second call for
+        the same ``command_id`` (a lease-reclaim race), no-ops the OPEN
+        through the SAME partial unique index :meth:`_create_command_row`
+        already relies on, so the row is re-parked but no second item opens.
+        Then binds a durable COMMAND-task waiter onto that item
+        (``waiter_kind='command'``, NO ``expires_at`` -- its durability
+        comes from the parked row surviving a restart, never a TTL, and
+        ``needs_you.expire_stranded_turn_waiters`` only ever touches
+        ``waiter_kind='turn'``). All three writes share ONE transaction
+        (AD-24).
+
+        Returns the bound item's id, or ``None`` if nothing was open to bind
+        onto (a caller bug -- ``record()``'s own NEEDS_YOU wiring above
+        always opens or already has this ``command_id``'s item open).
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[commands] store.park_for_decision: entry",
+            extra={"_fields": {
+                "task_id": task_id, "command_type": command_type,
+                "command_id": command_id, "outcome": outcome,
+            }},
+        )
+        now = datetime.now(UTC)
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                f"UPDATE {self._table} SET status='parked', gate_verdict=?, "  # noqa: S608
+                "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+                "WHERE task_id=? AND owner_id=?",
+                (outcome, now.isoformat(), task_id, self._owner_id),
+            )
+            await journal_record(conn, JournalEvent(
+                type="command.pending_approval",
+                schema_version=1,
+                actor_kind=ActorKind.AUTONOMOUS,
+                actor_id=self._owner_id,
+                target_kind=ActorKind.OWNER,
+                # `task_id`, NOT `command_id` -- matches command.enqueued/
+                # completed/failed's own target_id convention exactly (all
+                # three key off task_id), which is what the registered task
+                # NameResolver (`pipeline/durable/journal_names.py`) looks
+                # up by. `task_id` and `command_id` are 1:1 for every row
+                # this store ever creates (`submit.py` mints
+                # `task_id=f"cmd-{command_id}"`), so the dedupe guarantee
+                # ("at most one Needs-you item per command_id") holds
+                # identically either way.
+                target_id=task_id,
+                outcome=Outcome.PARKED,
+                record_ref=RecordRef(
+                    kind="sqlite", locator={"table": self._table, "task_id": task_id},
+                ),
+                attrs=CommandPendingApprovalAttrs(
+                    command_type=command_type[:64], requester_kind=requester_kind[:64],
+                    outcome=outcome[:64], payload_summary=payload_summary[:256],
+                ),
+            ))
+            item_id = await needs_you.bind_waiter(
+                conn, kind=NeedsYouKind.APPROVAL, target_kind=ActorKind.OWNER.value,
+                target_id=task_id, waiter_kind=needs_you.WAITER_KIND_COMMAND,
+                waiter_id=task_id, expires_at=None,
+            )
+        journal_fanout.notify_committed()
+        # 4. EXIT
+        log.tasks.info(
+            "[commands] store.park_for_decision: exit",
+            extra={"_fields": {
+                "task_id": task_id, "command_id": command_id, "item_id": item_id,
+            }},
+        )
+        return item_id
+
+    async def resume_command_after_answer(
+        self, task_id: str, *, approved: bool, reason: str | None = None,
+    ) -> None:
+        """Resume a parked COMMAND task once its bound Needs-you item
+        settles (Story 4.4, AD-27/AD-28) -- called ONLY by the durable-state
+        sweep (``pipeline/durable/command_resume_sweep.py``), never from an
+        in-memory waiter (Design Notes: "the waiter re-materialises from
+        durable state instead of expiring" -- this is what makes that true).
+
+        Approved: ``status='pending'``, ``gate_verdict='approved'`` -- the
+        next claim re-runs ``execute.execute_command_task``, which reads
+        that verdict and skips straight to the handler (no re-decision, no
+        second Needs-you item -- the item's ``dedupe_key`` is already
+        resolved and free). Anything else (denied): requeued or
+        dead-lettered through the EXISTING ``fail_and_requeue(failure_class
+        ="command_denied")`` ceiling rules (I/O matrix: "Requeued/
+        dead-lettered per existing ceiling rules") -- a denial is not itself
+        a permanent failure class this story.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[commands] store.resume_command_after_answer: entry",
+            extra={"_fields": {"task_id": task_id, "approved": approved}},
+        )
+        if approved:
+            now = datetime.now(UTC)
+            # 2/3. DECISION+STEP -- plain UPDATE, no paired journal event:
+            # mirrors `fail_and_requeue`'s own retry branch (the row goes
+            # back to `pending` with no `task.*` row of its own either; only
+            # a TERMINAL transition journals here).
+            await self._db.execute(
+                f"UPDATE {self._table} SET status='pending', "  # noqa: S608
+                "gate_verdict='approved', lease_owner=NULL, lease_expires_at=NULL, "
+                "updated_at=? WHERE task_id=? AND owner_id=?",
+                (now.isoformat(), task_id, self._owner_id),
+            )
+            # 4. EXIT
+            log.tasks.info(
+                "[commands] store.resume_command_after_answer: exit -- "
+                "approved, re-queued for the handler",
+                extra={"_fields": {"task_id": task_id}},
+            )
+            return
+        await self.fail_and_requeue(
+            task_id,
+            error=f"command denied: {reason}" if reason else "command denied",
+            failure_class="command_denied",
+        )
+        # 4. EXIT
+        log.tasks.info(
+            "[commands] store.resume_command_after_answer: exit -- denied",
+            extra={"_fields": {"task_id": task_id, "reason": reason}},
         )
 
     async def get(self, task_id: str) -> DurableTask:
@@ -2556,6 +2708,11 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         nonce=(None if row.get("nonce") is None else str(row["nonce"])),
         utterance_id=(None if row.get("utterance_id") is None
                       else str(row["utterance_id"])),
+        # Migration 0152 (Story 4.4) — .get()-safe, same reasoning as `kind`
+        # above: a legacy row (or a narrower select list) has no
+        # `gate_verdict` value read here, and None is the correct reading.
+        gate_verdict=(None if row.get("gate_verdict") is None
+                      else str(row["gate_verdict"])),
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
         goal=str(row["goal"]),

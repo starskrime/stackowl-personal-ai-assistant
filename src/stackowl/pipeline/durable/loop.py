@@ -66,6 +66,14 @@ class _Store(Protocol):
         self, task_id: str, *, error: str, failure_class: str = "",
         banned: tuple[str, ...] = (),
     ) -> str: ...
+    #: Story 4.4 (AD-27/AD-28) — parks a COMMAND task the action-policy gate
+    #: decided may not run at once, and opens/reuses its Needs-you item. On
+    #: the protocol rather than reached for with getattr, so a store that
+    #: cannot park is a type error here and not a silently swallowed park.
+    async def park_for_decision(
+        self, task_id: str, *, command_type: str, command_id: str,
+        requester_kind: str, outcome: str, payload_summary: str,
+    ) -> str | None: ...
     async def enqueue(self, task: Any) -> None: ...
     async def set_dependencies(
         self, task_id: str, depends_on: tuple[str, ...],
@@ -340,6 +348,13 @@ class TaskLoop:
         # their own module. This is the call site.
         if await self._maybe_reshape(task):
             return
+        # Lazy import — same style as `task_loop_runner.py::_run_command`'s own
+        # `from stackowl.commands.spec.execute import execute_command_task`:
+        # this module stays importable without pulling in the command-dispatch
+        # chain for a caller (e.g. a unit test double) that only drives goal
+        # tasks.
+        from stackowl.commands.spec.errors import CommandNeedsDecisionError
+
         try:
             result = await self._runner(task)
         except NoAddresseeCompletion as done:
@@ -348,6 +363,13 @@ class TaskLoop:
             # attempt can change, and mark_delivered would claim a delivery that
             # did not happen — so this is the third terminal the loop lacked.
             await self._safe_complete_unaddressed(task, result=done.result)
+            return
+        except CommandNeedsDecisionError as needs_decision:
+            # NOT a failure either — the action-policy gate (Story 4.4, AD-27)
+            # decided this command needs a human decision before it may run.
+            # Requeueing would spend attempts re-deciding the same answer;
+            # this parks the row and opens (or reuses) its Needs-you item.
+            await self._safe_park(task, exc=needs_decision)
             return
         except Exception as exc:
             failure_class = classify_failure(exc)
@@ -398,6 +420,31 @@ class TaskLoop:
                 "[loop] could not record an unaddressed completion — it will be "
                 "retried when its lease expires",
                 exc_info=exc, extra={"_fields": {"task_id": task.task_id}},
+            )
+
+    async def _safe_park(self, task: Any, *, exc: Any) -> None:
+        """Park a COMMAND task awaiting a decision (Story 4.4, AD-27).
+        NEVER raises into the gather — mirrors `_safe_fail`/
+        `_safe_complete_unaddressed`'s own shape.
+
+        ``exc`` is the caught ``CommandNeedsDecisionError`` — typed ``Any``
+        here (not imported at module level) for the same lazy-import reason
+        `_dispatch` imports it locally.
+        """
+        try:
+            await self._store.park_for_decision(
+                task.task_id,
+                command_type=exc.command_type,
+                command_id=getattr(task, "command_id", None) or task.task_id,
+                requester_kind=getattr(task, "requester_kind", None) or "owner",
+                outcome=exc.outcome,
+                payload_summary=exc.payload_summary,
+            )
+        except Exception as park_exc:
+            log.tasks.error(
+                "[loop] could not park a command task awaiting a decision — "
+                "its lease will expire and the sweep will recover it",
+                exc_info=park_exc, extra={"_fields": {"task_id": task.task_id}},
             )
 
     async def _maybe_reshape(self, task: Any) -> bool:

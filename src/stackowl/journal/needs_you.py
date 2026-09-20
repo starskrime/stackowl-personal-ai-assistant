@@ -108,7 +108,7 @@ _INTENSITY_ORDER_SQL = (
     f"CASE intensity WHEN '{Intensity.HIGH.value}' THEN 0 ELSE 1 END"
 )
 
-#: Story 3.3 -- the ONLY `waiter_kind` that exists until Epic 4's durable
+#: Story 3.3 -- the ONLY `waiter_kind` that existed until Epic 4's durable
 #: COMMAND-task waiters: an in-memory `asyncio.Future`/`asyncio.Event`
 #: belonging to a live turn, gone the moment its process restarts (spec
 #: Intent). Shared by :func:`bind_waiter`'s real callers,
@@ -116,6 +116,19 @@ _INTENSITY_ORDER_SQL = (
 #: settle-on-abandon primitive's docstring -- never a bare string literal
 #: repeated at each call site (review pass 1, low finding).
 WAITER_KIND_TURN = "turn"
+
+#: Story 4.4 (AD-27/AD-28) -- the OTHER `waiter_kind`: a durable `tasks` row
+#: (`kind='command'`, `status='parked'`) rather than anything held in
+#: memory. Unlike `WAITER_KIND_TURN`, a command waiter survives a restart on
+#: its own -- its durability comes from the parked ROW, never a TTL, which
+#: is exactly why `expire_stranded_turn_waiters` above filters on
+#: `waiter_kind = WAITER_KIND_TURN` and never touches this one (a command
+#: item carries NO `expires_at` at all -- see :func:`bind_waiter`'s widened
+#: signature). A durable-state sweep
+#: (`pipeline.durable.command_resume_sweep.resume_resolved_parked_commands`)
+#: is what resumes one instead, reading purely durable rows either way --
+#: whether the answer arrived a second ago or during a restart.
+WAITER_KIND_COMMAND = "command"
 
 
 class NeedsYouOpenedAttrs(JournalAttrsBase):
@@ -283,7 +296,7 @@ async def bind_waiter(
     target_id: str,
     waiter_kind: str,
     waiter_id: str,
-    expires_at: str,
+    expires_at: str | None = None,
 ) -> str | None:
     """Bind a waiter onto the item ``record()``'s own generic wiring just
     opened for ``(kind, target_kind, target_id)`` -- a SECOND statement in
@@ -300,6 +313,17 @@ async def bind_waiter(
     row a moment earlier in this same transaction -- so the caller must pass
     the SAME ``kind``/``target_kind``/``target_id`` it used to trigger that
     opening event.
+
+    ``expires_at`` widened to ``str | None`` (default ``None``) in Story 4.4
+    (AD-27/AD-28) -- additive, every existing caller (``WAITER_KIND_TURN``)
+    still passes a real ISO8601 string unchanged. ``None`` is for
+    :data:`WAITER_KIND_COMMAND` alone: a durable COMMAND-task waiter has NO
+    expiry at all -- its durability comes from the parked row surviving a
+    restart, never a TTL (spec Boundaries: "a command-kind waiter has NO
+    expires_at"), so :func:`expire_stranded_turn_waiters` (which filters on
+    ``waiter_kind = WAITER_KIND_TURN``) and :func:`sweep_expired_items`
+    (which filters on ``expires_at IS NOT NULL``) both structurally never
+    touch it either way.
 
     Returns the bound item's id, or ``None`` if nothing is open for this
     ``dedupe_key`` (a caller bug -- the triggering event's own
@@ -1018,6 +1042,48 @@ async def open_items(db_pool: DbPool) -> list[NeedsYouItemView]:
         extra={"_fields": {"count": len(items)}},
     )
     return items
+
+
+async def get_item_by_waiter(
+    db_pool: DbPool, *, waiter_kind: str, waiter_id: str,
+) -> NeedsYouItemView | None:
+    """One item by its ``(waiter_kind, waiter_id)`` -- Story 4.4's
+    durable-state resume sweep (``pipeline.durable.command_resume_sweep``)
+    asks this INSTEAD OF holding anything in memory (Design Notes: "reads
+    purely durable state"). A plain SELECT, mirroring :func:`open_items`'s
+    own row-to-view shape -- no mutation, no opportunistic sweep (the caller
+    decides what a resolved-or-not row means, not this read).
+
+    Returns the resolved OR unresolved row for this waiter -- the sweep
+    itself decides what to do with either (an unresolved row means "still
+    waiting", not "gone"). ``None`` when no item was ever bound to this
+    waiter. Orders by ``opened_cursor DESC`` so a caller always sees the
+    MOST RECENT item for a waiter id -- there is no uniqueness constraint on
+    ``(waiter_kind, waiter_id)`` at the table level (unlike ``dedupe_key``),
+    so this is a defensive tie-break rather than a real collision expected
+    in practice (one COMMAND task's ``task_id`` binds exactly one item,
+    Story 4.4's own I/O matrix: "at most one Needs-you item").
+    """
+    # 1. ENTRY
+    log.journal.debug(
+        "[journal] needs_you.get_item_by_waiter: entry",
+        extra={"_fields": {"waiter_kind": waiter_kind, "waiter_id": waiter_id}},
+    )
+    rows = await db_pool.fetch_all(
+        "SELECT * FROM needs_you WHERE waiter_kind = ? AND waiter_id = ? "
+        "ORDER BY opened_cursor DESC LIMIT 1",
+        (waiter_kind, waiter_id),
+    )
+    item = NeedsYouItemView.model_validate(dict(rows[0])) if rows else None
+    # 4. EXIT
+    log.journal.debug(
+        "[journal] needs_you.get_item_by_waiter: exit",
+        extra={"_fields": {
+            "waiter_kind": waiter_kind, "waiter_id": waiter_id,
+            "found": item is not None,
+        }},
+    )
+    return item
 
 
 #: Story 3.1 -- module-global pool, wired once at startup (mirrors

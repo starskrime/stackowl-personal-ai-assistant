@@ -39,7 +39,7 @@ from pydantic import BaseModel
 
 from stackowl.authz.requester import requester_kind_from_trace
 from stackowl.commands.spec.context import CommandOutcome
-from stackowl.commands.spec.errors import CommandRefusedError
+from stackowl.commands.spec.errors import CommandNeedsDecisionError, CommandRefusedError
 from stackowl.commands.spec.execute import execute_command_task
 from stackowl.commands.spec.registry import CommandSpecRegistry
 
@@ -223,6 +223,32 @@ async def submit_command(
     fresh = await store.get(task_id)
     try:
         outcome = await execute_command_task(fresh)
+    except CommandNeedsDecisionError as needs_decision:
+        # NOT a failure — the action-policy gate (Story 4.4, AD-27) decided
+        # this command needs a decision before it may run. Caught BEFORE the
+        # generic `except Exception` below, mirroring `loop.py::_dispatch`'s
+        # own tick-path branch: parks the row and opens (or reuses) its one
+        # Needs-you item, rather than requeuing or reporting a handler
+        # failure that never happened.
+        await store.park_for_decision(
+            task_id,
+            command_type=needs_decision.command_type,
+            command_id=cid,
+            requester_kind=requester_kind,
+            outcome=needs_decision.outcome,
+            payload_summary=needs_decision.payload_summary,
+        )
+        log.tasks.info(
+            "[commands] submit.submit_command: parked awaiting a decision",
+            extra={"_fields": {
+                "command_id": cid, "command_type": command_type,
+                "outcome": needs_decision.outcome,
+            }},
+        )
+        # The existing "not yet decided" convention (I/O matrix: outcome is
+        # None only when this call did not itself observe a terminal
+        # result) — the durable-state sweep resumes this row once answered.
+        return CommandSubmission(command_id=cid, task_id=task_id, outcome=None)
     except Exception as exc:
         failure_class = (
             _FAILURE_CLASS_REFUSED if isinstance(exc, CommandRefusedError)

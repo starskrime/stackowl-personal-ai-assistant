@@ -74,11 +74,13 @@ from stackowl.journal.narrator import (
     reset_name_resolvers_for_tests,
 )
 from stackowl.journal.needs_you import (
+    WAITER_KIND_COMMAND,
     WAITER_KIND_TURN,
     NeedsYouResolution,
     bind_waiter,
     compute_item_digest,
     expire_stranded_turn_waiters,
+    get_item_by_waiter,
     open_items,
     resolve,
     settle_or_abandon,
@@ -91,6 +93,7 @@ from stackowl.journal.write_gate import reset_for_tests as reset_write_gate_for_
 
 __all__ = [
     "ATTENTION_POLICY_VERSION",
+    "WAITER_KIND_COMMAND",
     "WAITER_KIND_TURN",
     "ActorKind",
     "AttentionClass",
@@ -114,6 +117,7 @@ __all__ = [
     "compute_registry_digest",
     "current_max_cursor",
     "expire_stranded_turn_waiters",
+    "get_item_by_waiter",
     "get_registry",
     "narrate",
     "narrate_full",

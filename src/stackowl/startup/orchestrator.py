@@ -1212,6 +1212,21 @@ class StartupOrchestrator:
 
         await _expire_stranded_turn_waiters(db_pool)
 
+        # Story 4.4 (AD-27/AD-28) -- right next to the boot call above, the
+        # OTHER half of the same durable-wait story: a COMMAND task's
+        # `waiter_kind='command'` is exactly the kind that re-materialises
+        # from durable state instead of stranding at boot (that call's own
+        # comment: "Epic 4's durable COMMAND-task waiter_kind is the only
+        # kind that will ever re-materialise instead of stranding here").
+        # This resumes any row whose Needs-you item was already answered
+        # while this process was down -- before the gateway accepts turns,
+        # same placement rationale as the call above.
+        from stackowl.pipeline.durable.command_resume_sweep import (
+            resume_resolved_parked_commands as _resume_resolved_parked_commands,
+        )
+
+        await _resume_resolved_parked_commands(db_pool)
+
         # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
         # "everything in md or sqlite. No data duplication."
         #

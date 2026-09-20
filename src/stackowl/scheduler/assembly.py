@@ -199,6 +199,9 @@ class SchedulerAssembly:
             register_capability_gap_escalation_handler,
         )
         from stackowl.scheduler.handlers.check_in import CheckInHandler
+        from stackowl.scheduler.handlers.command_resume_sweep import (
+            register_command_resume_sweep_handler,
+        )
         from stackowl.scheduler.handlers.db_reclaim import register_db_reclaim_handler
         from stackowl.scheduler.handlers.downloads_janitor import (
             register_downloads_janitor_handler,
@@ -330,6 +333,14 @@ class SchedulerAssembly:
         # here, seeded on its own 1-minute cadence below (not journal_prune's
         # hourly one -- see the handler module's own docstring for why).
         register_needs_you_expiry_sweep_handler(db)
+        # The action-policy gate's parked COMMAND tasks need their own resume
+        # leg -- a row whose Needs-you item was answered must not stay
+        # `status='parked'` just because nothing holds it in memory to
+        # re-drive it (Story 4.4, AD-27/AD-28: "a durable-state sweep ...
+        # resumes it"). Registered here, seeded on the SAME 1-minute cadence
+        # as needs_you_expiry_sweep just above (see the handler module's own
+        # docstring for why).
+        register_command_resume_sweep_handler(db)
         # Stray virtualenvs need the same decay leg. Measured 2026-08-22: FOUR envs
         # in the workspace totalling 707 MB, two of them byte-identical, none
         # referenced anywhere in src/ — built ad hoc through `shell` because the
@@ -1031,6 +1042,12 @@ class SchedulerAssembly:
         # the strip for up to an hour after it should have expired.
         await _seed_minutes_schedule(
             db, handler_name="needs_you_expiry_sweep", schedule="every 1m",
+            interval_minutes=1,
+        )
+        # Command resume sweep -- same 1-minute cadence, opposite side of the
+        # same durable wait (Story 4.4, AD-27/AD-28).
+        await _seed_minutes_schedule(
+            db, handler_name="command_resume_sweep", schedule="every 1m",
             interval_minutes=1,
         )
         # Workspace env janitor — reclaim stray per-tool virtualenvs. Daily rather

@@ -8,6 +8,12 @@ authorizer) build on it.
 
 from __future__ import annotations
 
+from stackowl.authz.action_policy import (
+    ActionPolicyDecision,
+    ActionPolicyOutcome,
+    attends,
+    decide,
+)
 from stackowl.authz.bounds import (
     BoundsSpec,
     BoundsViolation,
@@ -39,6 +45,8 @@ from stackowl.authz.state_change_census import (
 
 __all__ = [
     "ALL_SEVERITIES",
+    "ActionPolicyDecision",
+    "ActionPolicyOutcome",
     "BoundsSpec",
     "BoundsViolation",
     "CONSEQUENTIAL",
@@ -51,8 +59,10 @@ __all__ = [
     "RequesterKind",
     "ResourceCaps",
     "WRITE",
+    "attends",
     "check_effective_bounds",
     "check_tool_bounds",
+    "decide",
     "effective_bounds",
     "principal_for",
     "requester_kind_from_trace",

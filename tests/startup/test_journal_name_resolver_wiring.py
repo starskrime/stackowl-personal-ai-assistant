@@ -252,6 +252,62 @@ def test_phase_gateway_expires_stranded_turn_waiters_after_needs_you_db_pool_is_
     )
 
 
+def test_phase_gateway_resumes_parked_commands_after_stranded_waiters_expire() -> None:
+    """``resume_resolved_parked_commands(db_pool)`` (Story 4.4, AD-27/AD-28)
+    is wired into ``_phase_gateway``, unconditionally, right after
+    ``expire_stranded_turn_waiters(db_pool)`` -- so a COMMAND task whose
+    Needs-you item was already answered while this process was down resumes
+    before the gateway accepts any turn (same placement rationale as the
+    stranded-turn sweep beside it).
+
+    THE BUG THIS GUARDS AGAINST: if this call is silently removed, reordered
+    above the stranded-turn-waiter sweep, or wrapped in a conditional, a
+    parked COMMAND task whose answer arrived during a restart stays
+    ``status='parked'`` forever with nothing else catching the regression
+    (``resume_resolved_parked_commands`` itself never raises on a bad row).
+    Same AST-guard rationale as the tests above.
+    """
+    fn = _phase_gateway_ast()
+
+    call = _find_call_by_name(fn, "_resume_resolved_parked_commands")
+
+    assert len(call.args) == 1, (
+        "resume_resolved_parked_commands must take exactly one argument"
+    )
+    arg = call.args[0]
+    assert isinstance(arg, ast.Name) and arg.id == "db_pool", (
+        f"resume_resolved_parked_commands must be called with the local "
+        f"`db_pool`, got: {ast.dump(arg)}"
+    )
+
+    db_pool_lineno = _find_assignment_lineno(fn, "db_pool")
+    assert call.lineno > db_pool_lineno, (
+        "resume_resolved_parked_commands(db_pool) must run AFTER `db_pool` "
+        f"is bound. call at line {call.lineno}, db_pool assigned at line "
+        f"{db_pool_lineno}."
+    )
+
+    stranded_call = _find_call_by_name(fn, "_expire_stranded_turn_waiters")
+    assert call.lineno > stranded_call.lineno, (
+        "resume_resolved_parked_commands(db_pool) must run AFTER "
+        "expire_stranded_turn_waiters(db_pool) -- durable-state "
+        f"re-materialization order. call at line {call.lineno}, "
+        f"expire_stranded_turn_waiters at line {stranded_call.lineno}."
+    )
+
+    is_top_level = any(
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Await)
+        and stmt.value.value is call
+        for stmt in fn.body
+    )
+    assert is_top_level, (
+        "resume_resolved_parked_commands(db_pool) must be a plain, "
+        "unconditional, top-level `await` statement in _phase_gateway, not "
+        "nested inside an if/try/etc."
+    )
+
+
 def test_phase_gateway_constructs_clarify_gateway_with_db_pool() -> None:
     """Story 3.3 (AD-28) -- the one real ``ClarifyGateway(...)`` construction
     inside ``_phase_gateway`` passes ``db_pool=db_pool``, so a real blocking

@@ -46,6 +46,21 @@ from stackowl.scheduler.job import Job
 pytestmark = pytest.mark.asyncio
 
 
+def _restore_real_hold_sources() -> None:
+    """Re-register every hold source a real boot registers at import time --
+    today, just ``needs_you`` -- mirrors ``tests/journal/test_retention_
+    holds.py``'s own helper of the same name/shape. ``reset_retention_holds_
+    for_tests()`` clears the WHOLE process-global singleton, real
+    registration included; left un-restored here, any OTHER file's test that
+    asserts "needs_you" is already registered (e.g.
+    ``tests/journal/test_needs_you.py::TestRetentionHold``) would fail
+    whenever it happens to run, in the SAME session, after this file --
+    order-dependent, and not this file's story to own asserting on."""
+    get_retention_hold_registry().register_hold_source(
+        "needs_you", needs_you_module._held_cursors,  # noqa: SLF001
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_process_global_state() -> None:
     """``journal/health.py``, ``journal/retention_holds.py`` and the
@@ -55,7 +70,19 @@ def _reset_process_global_state() -> None:
     reset mirrors ``tests/journal/conftest.py``'s own autouse fixtures (this
     file lives outside that package, so it repeats them locally); the
     registry reset mirrors ``test_downloads_janitor.py``'s own
-    ``_reset_registry`` fixture."""
+    ``_reset_registry`` fixture.
+
+    SETUP stays a bare reset (empty registry) -- two tests in this file
+    (``TestAnUnresolvedNeedsYouItemHoldsItsOpeningEvent``) deliberately
+    re-register the real ``needs_you`` checker THEMSELVES onto that empty
+    registry, and restoring it here first would make their own registration
+    a duplicate. TEARDOWN restores the real ``needs_you`` hold source
+    (mirrors ``tests/journal/test_retention_holds.py``'s own fixture) --
+    this file's reset is process-wide, so leaving the registry empty after
+    the LAST test here would strip that production wiring for every OTHER
+    test file sharing the same session, not just this one's own tests
+    (measured: ``tests/journal/test_needs_you.py::TestRetentionHold`` fails
+    exactly this way when this file runs first)."""
     HandlerRegistry.reset()
     _reset_journal_health()
     reset_retention_holds_for_tests()
@@ -63,6 +90,7 @@ def _reset_process_global_state() -> None:
     HandlerRegistry.reset()
     _reset_journal_health()
     reset_retention_holds_for_tests()
+    _restore_real_hold_sources()
 
 
 @pytest.fixture()

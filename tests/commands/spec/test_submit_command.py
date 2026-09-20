@@ -71,9 +71,16 @@ def _isolate_registries() -> Any:
 
 
 def _register_pilot(*, ran: list[str] | None = None, succeed: bool = True) -> None:
+    # reversible=True (Story 4.4, AD-27): this file's whole point is proving
+    # submit_command's enqueue-then-run-inline mechanics, which needs the
+    # action-policy gate to decide `run_at_once` — the owner's own reversible
+    # WRITE order (FR34). An irreversible command now always needs step-up
+    # (authz.action_policy.decide) and would park instead of running inline,
+    # which is Story 4.4's own suite (test_submit_command_parks_for_decision.py),
+    # not this one.
     CommandSpecRegistry.register(CommandSpec(
         command_type=_TYPE, payload_model=_Payload, severity="write",
-        reversible=False, undo_command_type=None,
+        reversible=True, undo_command_type=f"{_TYPE}.undo",
     ))
 
     async def _handler(payload: _Payload, context: CommandContext) -> CommandOutcome:
