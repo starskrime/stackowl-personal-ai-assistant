@@ -74,7 +74,7 @@ development_status:
   4-3-a-declared-command-runs-through-one-door: done
   4-4-one-action-policy-gate-decides: done
   4-5-undo-for-24-hours: done
-  4-6-standing-authority-is-explicit-and-yours-alone: backlog
+  4-6-standing-authority-is-explicit-and-yours-alone: done
   4-7-scheduling-runs-on-commands: backlog
   4-8-messages-and-files-are-sent-through-commands: backlog
   4-9-owls-skills-and-tools-change-only-through-commands: backlog
