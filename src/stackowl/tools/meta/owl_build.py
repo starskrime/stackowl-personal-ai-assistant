@@ -28,15 +28,8 @@ from typing import TYPE_CHECKING
 
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.commands.config_helpers import config_path
-from stackowl.commands.owls_command import OwlsCommand
-from stackowl.commands.owls_helpers import (
-    delete_owl,
-    owl_is_persisted,
-    persist_owl,
-    restore_owl,
-    snapshot_owl,
-)
-from stackowl.infra import presented_tools
+from stackowl.commands.owls_helpers import owl_is_persisted
+from stackowl.commands.spec.submit import submit_command
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.clarify_gateway import CLARIFY_TTL_SECONDS, OUTCOME_ANSWERED
@@ -45,6 +38,26 @@ from stackowl.owls.tool_presets import is_root_owl
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.meta.owl_build_authz import build_agent_manifest, clamp_bounds
+from stackowl.tools.meta.owl_build_commands import (
+    CREATE as _CMD_CREATE,
+)
+from stackowl.tools.meta.owl_build_commands import (
+    EDIT as _CMD_EDIT,
+)
+from stackowl.tools.meta.owl_build_commands import (
+    GRANT as _CMD_GRANT,
+)
+from stackowl.tools.meta.owl_build_commands import (
+    RENAME as _CMD_RENAME,
+)
+from stackowl.tools.meta.owl_build_commands import (
+    RETIRE as _CMD_RETIRE,
+)
+from stackowl.tools.meta.owl_build_commands import (
+    OwlManifestPayload,
+    RenameOwlPayload,
+    RetireOwlPayload,
+)
 from stackowl.tools.meta.owl_build_existence import existing_near_match
 from stackowl.tools.meta.owl_build_guards import (
     configured_owl_cap,
@@ -70,8 +83,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 _TOOLSET_GROUP = "owl_admin"
 # A NON-dangerous, tool-declared consent category — the model cannot relax its gating.
 _CONSENT_CATEGORY = "owl_build"
-# Source name under which agent-minted owls register (so they survive/unregister cleanly).
-_SOURCE_NAME = "agent_owls"
 # Audit source — reuses the skills audit sink's "learned" lane for provenance (DRY with
 # tool_build), so owl create/edit/retire is provenance-tracked the same way.
 _AUDIT_SOURCE: SkillSource = "learned"
@@ -591,7 +602,11 @@ class OwlBuildTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
-            command_types=("owls.build",),
+            command_types=(
+                "owls.build.create", "owls.build.edit", "owls.build.rename",
+                "owls.build.retire", "owls.build.restore", "owls.build.grant",
+                "scheduling.pause_owl_job", "scheduling.resume_owl_job",
+            ),
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
             effect_class="creates_persistent_entity",
@@ -957,60 +972,45 @@ class OwlBuildTool(Tool):
             "tools": widened_tools,
         })
 
-        snapshot = await snapshot_owl(updated.name)
-        try:
-            await persist_owl(updated)
-            # `replace`, NOT `register` — and this one word is why no grant has
-            # ever survived. `register` guards against DUPLICATES and a grant is by
-            # definition applied to an owl that already exists, so it raised
-            # ManifestValidationError("duplicate owl name") every single time; the
-            # except below then rolled the durable write back. Measured live
-            # 2026-08-22: three consecutive grant attempts on `mailbutler`, all
-            # rolled back on that exception, which is Bakir's "agents forget
-            # granted accesses ... never saved permanently".
-            #
-            # Every sibling mutation here already had it right (`_edit` and both
-            # rebuild paths all call `replace`), and registry.replace documents
-            # itself as "the dual of register's duplicate guard" — this call site
-            # was the only one that reached for the wrong verb.
-            registry.replace(updated)
-        except Exception as exc:  # B5 — no-hidden-errors, atomic rollback
-            log.tool.error(
-                "owl_build._grant: persist/register failed — rolling back",
-                exc_info=exc, extra={"_fields": {"owl": updated.name}},
+        # AD-1 — the ONLY authority-widening action, always submitted at
+        # severity="consequential": `authz.action_policy.decide()` needs
+        # step-up UNCONDITIONALLY for that severity (never approvable by
+        # voice, never bypassed by a standing-authority grant — AC2). It is
+        # never granted synchronously inside this call any more, even after
+        # the `authority_widening` consent above already ran — that consent
+        # gates the TOOL call; the command-level gate is the second, separate
+        # door every widening now has to clear (mirrors `send_message`'s own
+        # kept tool-level + command-level double-gate).
+        db = get_services().db_pool
+        if db is None:
+            return self._err("owl store unavailable — cannot grant tools.", t0)
+        submission = await submit_command(
+            db, _CMD_GRANT, OwlManifestPayload(manifest=updated, actor=spec.name),
+        )
+        if submission.outcome is None:
+            log.tool.info(
+                "owl_build.grant: parked awaiting owner step-up (AC2)",
+                extra={"_fields": {"owl": updated.name, "granted": adding}},
             )
-            await restore_owl(updated.name, snapshot)
-            return self._err(f"failed to grant tools to '{updated.name}': {exc}", t0)
-
-        await self._audit("grant", updated.name, spec.name)
-        # INFO, because this is the evidence line for "who widened what, and when".
-        #
-        # IT USED TO SAY "with the user's approval" AND THAT WAS NOT TRUE. Measured
-        # 2026-08-26: a grant fired with no human present, and the consent record
-        # for the SAME event in the SAME second read reason="official_channel"
-        # beside "[consent] authority judged by ORIGIN, not by attendance". The
-        # user had approved nothing — the request had merely ARRIVED on an official
-        # channel, which this platform deliberately treats as carrying their
-        # authority whether or not they are watching.
-        #
-        # The rule is right and is NOT changed here. The sentence was wrong. This
-        # is the line someone reads when asking "why does this owl hold that
-        # tool?", and "the user approved it" ends the enquiry at the wrong place —
-        # the real answer lives in the consent decision for this trace. So it now
-        # says what this code actually knows and points at what it does not.
-        log.tool.info(
-            "owl_build.grant: authority WIDENED — see the [consent] decision for "
-            "this trace for the basis (an explicit approval, or official-channel "
-            "origin); this line does not establish that a human approved it",
-            extra={"_fields": {
-                "owl": updated.name, "granted": adding, "now_holds": widened_tools,
-            }},
-        )
-        return self._ok(
-            f"Granted {', '.join(adding)} to owl '{spec.name}'. It may now use: "
-            f"{', '.join(widened_tools)}.",
-            t0, extra={"owl": updated.name, "op": "grant"},
-        )
+            return self._ok(
+                f"Grant request for {', '.join(adding)} on owl '{spec.name}' is "
+                "pending your approval — nothing has widened yet.",
+                t0, extra={"owl": updated.name, "op": "grant", "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(
+                submission.outcome.error or f"failed to grant tools to '{updated.name}'.", t0,
+            )
+        # Structurally unreachable, kept only so this function has an
+        # exhaustive return (review finding, 2026-09-22 pass): `owls.build.
+        # grant` is severity="consequential", and `decide()`'s first check
+        # returns `needs_step_up` for CONSEQUENTIAL unconditionally, for
+        # every requester_kind, with no carve-out — `submission.outcome` is
+        # therefore always `None` above, and this line never runs. A
+        # synchronous "Granted ..." confirmation here would also be
+        # dishonest: AC2's whole point is that a grant never completes
+        # without a separate step-up first.
+        return self._ok(f"Granted {', '.join(adding)} to owl '{spec.name}'.", t0)
 
     async def _consent_or_refuse(
         self, summary: str, name: str, *, reversible: bool = False,
@@ -1325,46 +1325,30 @@ class OwlBuildTool(Tool):
         if refusal is not None:
             return self._err(refusal, t0)
 
-        # 7. Persist with rollback. Snapshot the yaml first so a failed register can
-        #    restore the exact prior bytes (10k-DB-safe: never leave a half state).
-        snapshot = await snapshot_owl(manifest.name)
-        try:
-            await persist_owl(manifest)
-        except Exception as exc:  # B5 — no-hidden-errors
-            log.tool.error(
-                "owl_build.execute: persist failed — nothing registered",
-                exc_info=exc,
+        # 7/8/9/10 — AD-1: submit the declared command instead of calling
+        # persist_owl/registry.register/DNA-capture/reconcile directly. The
+        # handler (owl_build_commands.py::_create_handler) does the persist +
+        # register with rollback, the DNA baseline capture and the schedule
+        # reconcile, all as ONE mutation, and writes the audit row itself.
+        db = svc.db_pool
+        if db is None:
+            return self._err("owl store unavailable — cannot create an owl.", t0)
+        submission = await submit_command(
+            db, _CMD_CREATE, OwlManifestPayload(manifest=manifest, actor=creator),
+        )
+        if submission.outcome is None:
+            log.tool.info(
+                "owl_build.execute: create parked awaiting a decision",
                 extra={"_fields": {"owl": manifest.name}},
             )
-            await restore_owl(manifest.name, snapshot)
-            return self._err(f"failed to persist owl '{manifest.name}': {exc}", t0)
-
-        await self._audit("create", manifest.name, creator)
-
-        # 8. Register LIVE — on failure restore the yaml snapshot (atomic rollback).
-        try:
-            registry.register(manifest, source_name=_SOURCE_NAME)
-        except Exception as exc:  # B5 — roll back the persisted yaml
-            log.tool.error(
-                "owl_build.execute: live registration failed — rolling back yaml",
-                exc_info=exc,
-                extra={"_fields": {"owl": manifest.name}},
+            return self._ok(
+                f"Owl '{manifest.name}' is pending approval before it is created.",
+                t0, extra={"owl": manifest.name, "op": "create", "pending": True},
             )
-            await restore_owl(manifest.name, snapshot)
-            await self._audit("delete", manifest.name, creator)
+        if not submission.outcome.success:
             return self._err(
-                f"failed to register owl '{manifest.name}' ({exc}) — rolled back.", t0
+                submission.outcome.error or f"failed to create owl '{manifest.name}'.", t0,
             )
-
-        # 9. Capture authored DNA baseline (fail-safe — won't break creation).
-        if svc.db_pool is not None:
-            from stackowl.owls.dna_authored import capture_one_authored
-
-            await capture_one_authored(svc.db_pool, manifest.name, manifest.dna)
-
-        # 10. Reconcile the scheduler projection (ADR-B) — a scheduled owl gets its
-        #     owned job now, without a reboot. No-op for an on-demand owl.
-        await self._reconcile_schedules()
 
         # 11. Success. A SCHEDULED owl PROVES itself (TS9): the confirmation shows the
         #     MEASURED next fire time read from the projected job row + an honest "it
@@ -1422,36 +1406,11 @@ class OwlBuildTool(Tool):
         )
 
     # ------------------------------------------------------------------ helpers
-
-    @staticmethod
-    async def _reconcile_schedules() -> None:
-        """Re-project owl schedules after a create/edit/retire (ADR-B / S9+S10).
-
-        Manifest = truth; the scheduler rows are reconciled, never imperatively
-        poked — so a retired/edited owl's owned job is torn down/updated in the SAME
-        operation (no reboot, no orphaned cron). Fail-safe: a reconcile error is
-        logged but never fails the build (the manifest mutation already committed).
-        """
-        svc = get_services()
-        db = svc.db_pool
-        registry = svc.owl_registry
-        if db is None or registry is None:
-            log.tool.debug(
-                "owl_build.execute: no db/registry for schedule reconcile — skipped"
-            )
-            return
-        try:
-            from stackowl.scheduler.owl_lifecycle import reconcile_owl_schedules
-
-            settings = svc.settings
-            tz = settings.system.timezone if settings is not None else "UTC"
-            await reconcile_owl_schedules(registry, db, tz=tz or "UTC", settings=settings)
-        except Exception as exc:  # B5 — never fail the build on a reconcile hiccup
-            log.tool.error(
-                "owl_build.execute: schedule reconcile failed — owl change persisted",
-                exc_info=exc,
-                extra={"_fields": {}},
-            )
+    #
+    # Schedule reconcile and frozen-prompt invalidation after a create/edit/
+    # rename/retire/restore now live in owl_build_commands.py's handlers (the
+    # mutation moved there with everything else AD-1 requires go through the
+    # one door) — this tool no longer calls either directly.
 
     @staticmethod
     def _exists(registry: object, name: str) -> bool:
@@ -1464,36 +1423,6 @@ class OwlBuildTool(Tool):
             return True
         except Exception:  # OwlNotFoundError — the not-found path is expected
             return False
-
-    async def _invalidate_prompt(self, owl_name: str, *, cause: str) -> None:
-        """Clear an edited owl's frozen prompt so the change lands next turn (D01.4).
-
-        The IN-FLIGHT turn deliberately keeps the prompt it started with — an owl
-        never rewrites the prompt it is currently reasoning under, which is what
-        keeps Law 1 true. Clearing the row now means the NEXT turn cold-builds,
-        so a self-extending owl can use what it just changed instead of stalling
-        until the 04:00 rollover.
-
-        Fail-open: the owl edit has already persisted, so a missing store costs a
-        stale prompt until rollover, never the edit. Logged all the same — an owl
-        silently ignoring its own change is indistinguishable from a bug.
-        """
-        # D05.2 — the presented TOOL set is memoized per session and keyed on the
-        # owl's NAME, not a fingerprint of its manifest. An edit that touched
-        # capability_profile or tools must drop it for the same reason it drops
-        # the prompt: otherwise the owl keeps being handed its pre-edit toolset
-        # for the rest of the session and cannot use what it just gave itself.
-        # Done before the store lookup so a missing prompt store cannot skip it.
-        presented_tools.clear_owl(owl_name)
-        store = getattr(get_services(), "session_prompt_store", None)
-        if store is None:
-            log.tool.error(
-                "owl_build.execute: cannot invalidate the frozen prompt — no store "
-                "wired; the change will not apply until the session rolls over",
-                extra={"_fields": {"owl": owl_name, "cause": cause}},
-            )
-            return
-        await store.invalidate_owl(owl_name=owl_name, cause=cause)
 
     @staticmethod
     def _yaml_snapshot() -> bytes | None:
@@ -1605,19 +1534,21 @@ class OwlBuildTool(Tool):
                 f"{', '.join(a for a, _ in _EDIT_CHECKED_FIELDS)}.", t0
             )
         rebuilt = current.model_copy(update=updates)
-        snapshot = await snapshot_owl(rebuilt.name)
-        try:
-            await persist_owl(rebuilt)
-            registry.replace(rebuilt)
-            await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
-        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
-            log.tool.error(
-                "owl_build.execute: builtin/human edit persist failed — rolling back yaml",
-                exc_info=exc, extra={"_fields": {"owl": rebuilt.name}},
+        db = get_services().db_pool
+        if db is None:
+            return self._err("owl store unavailable — cannot edit an owl.", t0)
+        submission = await submit_command(
+            db, _CMD_EDIT, OwlManifestPayload(manifest=rebuilt, actor=creator),
+        )
+        if submission.outcome is None:
+            return self._ok(
+                f"Owl '{rebuilt.name}' edit is pending approval.", t0,
+                extra={"owl": rebuilt.name, "op": "edit", "pending": True},
             )
-            await restore_owl(rebuilt.name, snapshot)
-            return self._err(f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0)
-        await self._audit("edit", rebuilt.name, creator)
+        if not submission.outcome.success:
+            return self._err(
+                submission.outcome.error or f"failed to edit owl '{rebuilt.name}'.", t0,
+            )
         # 4. EXIT
         log.tool.info(
             "owl_build.execute: edit unbound owl exit",
@@ -1716,28 +1647,24 @@ class OwlBuildTool(Tool):
             if refusal is not None:
                 return self._err(refusal, t0)
 
-        # 6. Persist + register with snapshot rollback (atomic — never a half state).
-        snapshot = await snapshot_owl(rebuilt.name)
-        try:
-            await persist_owl(rebuilt)
-            registry.replace(rebuilt)
-            await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
-        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
-            log.tool.error(
-                "owl_build.execute: edit persist/register failed — rolling back yaml",
-                exc_info=exc,
-                extra={"_fields": {"owl": rebuilt.name}},
+        # 6. AD-1 — submit the declared command instead of persist/register/
+        # invalidate/reconcile directly (the handler does all four as one
+        # mutation, mirrors _edit_unbound above).
+        db = get_services().db_pool
+        if db is None:
+            return self._err("owl store unavailable — cannot edit an owl.", t0)
+        submission = await submit_command(
+            db, _CMD_EDIT, OwlManifestPayload(manifest=rebuilt, actor=creator),
+        )
+        if submission.outcome is None:
+            return self._ok(
+                f"Owl '{rebuilt.name}' edit is pending approval.", t0,
+                extra={"owl": rebuilt.name, "op": "edit", "pending": True},
             )
-            await restore_owl(rebuilt.name, snapshot)
+        if not submission.outcome.success:
             return self._err(
-                f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0
+                submission.outcome.error or f"failed to edit owl '{rebuilt.name}'.", t0,
             )
-
-        await self._audit("edit", rebuilt.name, creator)
-
-        # Reconcile the scheduler projection — a changed lifecycle/trigger updates
-        # the owned job in place (no duplicate), an on_demand edit tears it down.
-        await self._reconcile_schedules()
 
         tools_str = ", ".join(sorted(new_tools)) or "(none)"
         msg = f"Updated owl '{rebuilt.name}'. Tools: {tools_str}."
@@ -1874,29 +1801,27 @@ class OwlBuildTool(Tool):
             return self._err(guard, t0)
 
         new_display = (spec.display_name or "").strip()
-        rebuilt = current.model_copy(update={"display_name": new_display})
 
-        snapshot = await snapshot_owl(rebuilt.name)
-        try:
-            await persist_owl(rebuilt)
-            registry.replace(rebuilt)
-            await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
-        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
-            log.tool.error(
-                "owl_build.execute: rename persist/register failed — rolling back yaml",
-                exc_info=exc,
-                extra={"_fields": {"owl": rebuilt.name}},
+        db = svc.db_pool
+        if db is None:
+            return self._err("owl store unavailable — cannot rename an owl.", t0)
+        submission = await submit_command(
+            db, _CMD_RENAME,
+            RenameOwlPayload(name=current.name, display_name=new_display, actor=creator),
+        )
+        if submission.outcome is None:
+            return self._ok(
+                f"Rename of owl '{current.name}' is pending approval.", t0,
+                extra={"owl": current.name, "op": "rename", "pending": True},
             )
-            await restore_owl(rebuilt.name, snapshot)
+        if not submission.outcome.success:
             return self._err(
-                f"failed to rename owl '{rebuilt.name}' ({exc}) — rolled back.", t0
+                submission.outcome.error or f"failed to rename owl '{current.name}'.", t0,
             )
-
-        await self._audit("rename", rebuilt.name, creator)
 
         return self._ok(
-            f"Renamed owl '{rebuilt.name}' to '{new_display}'.", t0,
-            extra={"owl": rebuilt.name, "op": "rename"},
+            f"Renamed owl '{current.name}' to '{new_display}'.", t0,
+            extra={"owl": current.name, "op": "rename"},
         )
 
     async def _pause(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
@@ -1942,18 +1867,14 @@ class OwlBuildTool(Tool):
             return self._err(f"'{spec.name}' has no schedule to {op}.", t0)
         # 3. STEP — reuse the existing scheduler primitive on the owned job row.
         from stackowl.scheduler.owl_lifecycle import _job_id_for
-        from stackowl.scheduler.scheduler import JobScheduler
 
-        settings = svc.settings
-        tz = settings.system.timezone if settings is not None else "UTC"
-        scheduler = JobScheduler(db=db, tz=tz or "UTC")
         job_id = _job_id_for(spec.name)
-        # 3b. VERIFY the owned row actually exists before trusting either scheduler
-        #     call's silence — pause() has no rowcount check (a non-matching job_id
-        #     "succeeds" with zero effect) and resume() only logs+returns on a miss.
-        #     manifest says scheduled but the projected row is missing (e.g. reconcile
-        #     never ran) reads the SAME to the caller as "not scheduled at all": there
-        #     is nothing to pause/resume, so reuse that exact refusal message.
+        # 3b. VERIFY the owned row actually exists before trusting the command's
+        #     own outcome — a non-matching job_id would otherwise "succeed" with
+        #     zero effect. manifest says scheduled but the projected row is
+        #     missing (e.g. reconcile never ran) reads the SAME to the caller as
+        #     "not scheduled at all": there is nothing to pause/resume, so reuse
+        #     that exact refusal message.
         row_exists = await db.fetch_all(
             "SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)
         )
@@ -1964,10 +1885,29 @@ class OwlBuildTool(Tool):
                 extra={"_fields": {"op": op, "name": spec.name, "job_id": job_id}},
             )
             return self._err(f"'{spec.name}' has no schedule to {op}.", t0)
-        if resume:
-            await scheduler.resume(job_id)
-        else:
-            await scheduler.pause(job_id)
+        # AD-1 — reuses Story 4.7's already-registered scheduling.pause_owl_job/
+        # resume_owl_job types (declared distinctly from cronjob's own pause/
+        # resume pair so the audit/undo trails never merge) instead of calling
+        # JobScheduler.pause/.resume directly.
+        from stackowl.scheduler.commands import (
+            PAUSE_OWL_JOB,
+            RESUME_OWL_JOB,
+            JobLifecyclePayload,
+        )
+
+        submission = await submit_command(
+            db, RESUME_OWL_JOB if resume else PAUSE_OWL_JOB,
+            JobLifecyclePayload(job_id=job_id),
+        )
+        if submission.outcome is None:
+            return self._ok(
+                f"{'Resume' if resume else 'Pause'} of '{spec.name}' is pending approval.",
+                t0, extra={"owl": spec.name, "op": op, "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(
+                submission.outcome.error or f"failed to {op} owl '{spec.name}'.", t0,
+            )
         creator = str(TraceContext.get().get("owl_name") or _SECRETARY_NAME)
         await self._audit(op, spec.name, creator)
         # 4. EXIT
@@ -2008,37 +1948,29 @@ class OwlBuildTool(Tool):
         if guard is not None:
             return self._err(guard, t0)
 
-        # 3. Remove from yaml (DURABLE) FIRST, then deregister (in-memory), with snapshot
-        #    rollback. Durable store leads: if the yaml remove fails nothing changed in
-        #    memory → clean error. If deregister fails after a successful yaml remove, the
-        #    next boot simply won't re-register it (consistent — the durable store already
-        #    dropped it), never a yaml-present/registry-absent zombie that resurrects.
-        snapshot = await snapshot_owl(spec.name)
-        try:
-            await delete_owl(spec.name)  # durable first — the sqlite home
-            if current.origin == "builtin":
-                # Tombstone it — register_builtin_personas() re-adds any factory
-                # persona absent from the registry, so without this a retired
-                # builtin would silently respawn at the next boot.
-                OwlsCommand()._add_retired_builtin(spec.name)  # noqa: SLF001
-            registry.deregister(spec.name)
-        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
-            log.tool.error(
-                "owl_build.execute: retire failed — rolling back yaml",
-                exc_info=exc,
-                extra={"_fields": {"owl": spec.name}},
+        # 3. AD-1 — submit the declared command instead of calling delete_owl/
+        # registry.deregister directly. The handler does the durable-first
+        # delete, the builtin tombstone, the deregister (with snapshot
+        # rollback) and the schedule reconcile (S10's transactional teardown)
+        # all as one mutation.
+        db = svc.db_pool
+        if db is None:
+            return self._err("owl store unavailable — cannot retire an owl.", t0)
+        submission = await submit_command(
+            db, _CMD_RETIRE,
+            RetireOwlPayload(
+                name=spec.name, is_builtin=current.origin == "builtin", actor=creator,
+            ),
+        )
+        if submission.outcome is None:
+            return self._ok(
+                f"Retirement of owl '{spec.name}' is pending approval.", t0,
+                extra={"owl": spec.name, "op": "retire", "pending": True},
             )
-            await restore_owl(spec.name, snapshot)
+        if not submission.outcome.success:
             return self._err(
-                f"failed to retire owl '{spec.name}' ({exc}) — rolled back.", t0
+                submission.outcome.error or f"failed to retire owl '{spec.name}'.", t0,
             )
-
-        await self._audit("retire", spec.name, creator)
-
-        # S10 — TRANSACTIONAL teardown: the retired owl's owned scheduler row is
-        # deleted in the SAME operation (reconcile sees the owl is gone). A retired
-        # owl with a live job is the exact failure this prevents.
-        await self._reconcile_schedules()
 
         return self._ok(f"Retired owl '{spec.name}'.", t0, extra={"owl": spec.name, "op": "retire"})
 

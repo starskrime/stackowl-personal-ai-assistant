@@ -17,38 +17,49 @@ Sub-phase 3b of Learning Commit 3 (see plan gleaming-finding-puppy.md).
 
 from __future__ import annotations
 
-import shutil
+import contextlib
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast, get_args
+from typing import TYPE_CHECKING, get_args
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.dry_run import strip_sigil
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.response import Action, CommandResponse
-from stackowl.commands.skill_helpers import (
-    SkillInstallError,
-    hash_dir,
-    install_from_archive_url,
-    install_from_git_url,
-    install_from_local_path,
-    record_skill_mutation,
-    reindex_after_change,
-    restore_snapshot,
-)
+from stackowl.commands.spec.submit import submit_command
 from stackowl.infra.observability import log
+from stackowl.pipeline.services import get_services, reset_services, set_services
 from stackowl.skills import standard as std
 from stackowl.skills import standard_migration as migration
 from stackowl.skills.loader import SkillLoader
 from stackowl.skills.manifest import SkillSource
 from stackowl.skills.store import Skill, SkillIndexStore
 from stackowl.skills.use_prompt import build_use_prompt
+from stackowl.tools.knowledge.skill_commands import (
+    DEDUPE,
+    DELETE,
+    INSTALL,
+    MIGRATE_STANDARD,
+    RELOAD_INDEX,
+    RESTORE_VERSION,
+    SET_ENABLED,
+    SET_PINNED,
+    SkillDedupePayload,
+    SkillDeletePayload,
+    SkillInstallPayload,
+    SkillMigratePayload,
+    SkillReloadPayload,
+    SkillRestoreVersionPayload,
+    SkillSetEnabledPayload,
+    SkillSetPinnedPayload,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.pipeline.state import PipelineState
-    from stackowl.providers.registry import ProviderRegistry
 
 
 _CONFIRMATION = "YES"
@@ -362,6 +373,40 @@ class SkillCommand(SlashCommand):
         # 4. EXIT
         log.skills.debug("[commands] skill.init: exit")
 
+    def _db_pool(self) -> DbPool | None:
+        """The live ``DbPool`` behind ``self._store`` — reached via its own
+        private field (mirrors ``skill_helpers.py::record_skill_mutation``'s
+        own ``store._db``/``store.owner_id`` reach-through, ``# noqa: SLF001``)
+        since :class:`SkillCommand` is constructed with a ready ``SkillIndexStore``
+        rather than a raw pool. ``None`` when no store is wired (guarded by
+        every caller's own ``handle()`` dispatch already)."""
+        return getattr(self._store, "_db", None)  # noqa: SLF001
+
+    @contextlib.contextmanager
+    def _bound_services(self):  # type: ignore[no-untyped-def]
+        """AD-1's command door reads its subsystems off ``get_services()``
+        (mirrors every other migrated handler's own shape) — but ordinary
+        slash-command dispatch never binds that ContextVar the way the LLM
+        tool-execution pipeline does (``pipeline/services.py::get_services``'s
+        own docstring: "an EMPTY set if none are bound"). This merges THIS
+        command's own already-injected deps onto whatever is ambient (never
+        replacing a real outer value with ``None`` — mirrors ``owl_build.py``'s
+        own ``OwlCommand._build``'s identical DEBT-34 merge) so
+        ``skill_commands.py``'s handlers see a live store/db regardless."""
+        current = get_services()
+        token = set_services(replace(
+            current,
+            skill_store=self._store or current.skill_store,
+            db_pool=self._db_pool() or current.db_pool,
+            embedding_registry=self._embedding_registry or current.embedding_registry,
+            provider_registry=self._provider_registry or current.provider_registry,  # type: ignore[arg-type]
+            consent_gate=self._consent_gate or current.consent_gate,  # type: ignore[arg-type]
+        ))
+        try:
+            yield
+        finally:
+            reset_services(token)
+
     @property
     def command(self) -> str:
         return "skill"
@@ -435,12 +480,11 @@ class SkillCommand(SlashCommand):
                     extra={"_fields": {"sub": sub[:40]}},
                 )
                 return render_usage("skill", _SKILL_META)
-        except SkillInstallError as exc:  # user-facing, expected
-            log.skills.warning(
-                "[commands] skill.handle: install failed",
-                extra={"_fields": {"sub": sub, "reason": str(exc)}},
-            )
-            return f"✗ /skill {sub}: {exc}"
+        # Story 4.9 — the SkillInstallError catch that used to live here is
+        # GONE: `_add` submits `skill.install` through the command door now,
+        # and skill_commands.py's handler catches SkillInstallError itself
+        # (returning a structured CommandOutcome), so it can no longer
+        # propagate up to this dispatch.
         except Exception as exc:  # B5
             log.skills.error(
                 "[commands] skill.handle: subcommand crashed",
@@ -573,49 +617,53 @@ class SkillCommand(SlashCommand):
                         extra={"_fields": {"args_len": len(args)}})
         if not args:
             return "Usage: /skill add <local-path>   OR   /skill add --url <url>"
-        # 2. DECISION — URL vs local
+        # 2. DECISION — URL vs local (this classification stays here — it
+        # decides WHICH install function the command asks for, and is pure/
+        # read-only; the actual download/clone/copy moves to the handler).
         if args.startswith("--url"):
             url = args[len("--url"):].strip()
             if not url:
                 return "Usage: /skill add --url <url>"
             if url.endswith(".git") or url.startswith("git@"):
-                result = await install_from_git_url(url, self._root)
-                actor_kind = "git"
+                source, kind = url, "git"
             elif url.startswith("http://") or url.startswith("https://"):
-                # Try git if URL points to a git host repo path, else archive.
                 if _looks_like_git_repo(url):
-                    result = await install_from_git_url(url, self._root)
-                    actor_kind = "git"
+                    source, kind = url, "git"
                 else:
-                    result = await install_from_archive_url(url, self._root)
-                    actor_kind = "archive"
+                    source, kind = url, "archive"
             else:
                 return f"✗ /skill add: unsupported URL scheme: {url}"
         else:
-            src_path = Path(args).expanduser()
-            result = await install_from_local_path(src_path, self._root)
-            actor_kind = "local"
-        # 3. STEP — refresh index + audit through the provenance chokepoint
-        # (snapshot included so /skill restore can roll forward to this version).
-        async def _reindex() -> None:
-            await reindex_after_change(
-                self._loader, self._store, self._root,
-                embedding_registry=self._embedding_registry,
-            )
+            source, kind = str(Path(args).expanduser()), "local"
 
-        await record_skill_mutation(
-            self._store,
-            skill_name=result.name, source="installed", op="create",
-            actor=f"user:{actor_kind}", target_dir=result.path,
-            mutate=_reindex, snapshot_when="after",
-            details={"path": str(result.path)},
-        )
+        # 3. STEP — AD-1: submit the declared command instead of calling
+        # install_from_*/record_skill_mutation directly.
+        db = self._db_pool()
+        if db is None:
+            return "✗ /skill add: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, INSTALL,
+                SkillInstallPayload(
+                    kind=kind, source=source, actor=f"user:{kind}",
+                    skills_root=str(self._root),
+                ),
+            )
+        if submission.outcome is None:
+            return f"⚠ Installing from {kind} is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill add: {submission.outcome.error or 'install failed'}"
+        result = submission.outcome.result
+        reindex_note = str(result.get("reindex_note") or "")
         # 4. EXIT
         log.skills.info(
             "[commands] skill.add: exit",
-            extra={"_fields": {"final_name": result.name, "kind": actor_kind}},
+            extra={"_fields": {"final_name": result.get("name"), "kind": kind}},
         )
-        return f"✓ Installed skill '{result.name}' from {actor_kind} → {result.path}"
+        return (
+            f"✓ Installed skill '{result.get('name')}' from {kind} → "
+            f"{result.get('path')}." + reindex_note
+        )
 
     async def _migrate(self, args: str) -> str:
         """Preview or apply authoring-standard migration."""
@@ -644,34 +692,44 @@ class SkillCommand(SlashCommand):
             # asked to apply would read as "there was nothing to migrate".
             return ("✗ /skill migrate: no provider registry wired — migration "
                     "rewrites content and needs a model.")
-        registry = cast("ProviderRegistry", self._provider_registry)
-        provider, model = registry.get_with_cascade("fast")
 
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        report = await migration.SkillStandardMigrator(
-            self._store, provider,
-            archive_root=self._root.parent / "pre-migration",
-            model=model, consent_gate=self._consent_gate,
-        ).run(apply=apply, limit=limit, stamp=stamp)
+        # AD-1 — submit the declared command instead of constructing
+        # SkillStandardMigrator and running it directly.
+        db = self._db_pool()
+        if db is None:
+            return "✗ /skill migrate: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, MIGRATE_STANDARD,
+                SkillMigratePayload(apply=apply, limit=limit, skills_root=str(self._root)),
+            )
+        if submission.outcome is None:
+            return "⚠ Skill migration is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill migrate: {submission.outcome.error or 'migration failed'}"
+        result = submission.outcome.result
 
-        if not report.outcomes:
+        if not result.get("has_outcomes"):
             return (f"✓ /skill migrate: every skill already meets standard "
                     f"v{std.STANDARD_VERSION}.")
 
-        lines = [f"{'Applied' if report.applied else 'PREVIEW'} — {report.summary()}", ""]
-        lines += [o.describe() for o in report.outcomes]
-        if report.applied and report.archive_path is not None:
-            lines += ["", f"Originals archived: {report.archive_path}"]
-        elif not report.applied:
+        applied = bool(result.get("applied"))
+        lines = [f"{'Applied' if applied else 'PREVIEW'} — {result.get('summary')}", ""]
+        lines += list(result.get("outcome_lines") or [])
+        archive_path = result.get("archive_path")
+        if applied and archive_path:
+            lines += ["", f"Originals archived: {archive_path}"]
+        elif not applied:
             lines += ["", "Nothing changed. Re-run with --apply to carry this out."]
-        if report.remaining:
-            lines.append(f"{report.remaining} skill(s) still to migrate — re-run to continue.")
+        remaining = result.get("remaining") or 0
+        if remaining:
+            lines.append(f"{remaining} skill(s) still to migrate — re-run to continue.")
 
         # 4. EXIT
         log.skills.info("[commands] skill.migrate: exit",
-                        extra={"_fields": {"apply": apply, "migrated": report.migrated,
-                                           "failed": report.failed,
-                                           "remaining": report.remaining}})
+                        extra={"_fields": {"apply": apply, "migrated": result.get("migrated"),
+                                           "failed": result.get("failed"),
+                                           "remaining": remaining}})
         return "\n".join(lines)
 
     async def _dedupe(self, args: str) -> str:
@@ -688,39 +746,46 @@ class SkillCommand(SlashCommand):
             return (f"✗ /skill dedupe: unknown option {args.strip()!r}. "
                     f"Use /skill dedupe or /skill dedupe --apply.")
 
-        from stackowl.skills.consolidation import SkillConsolidator
+        # AD-1 — submit the declared command instead of constructing
+        # SkillConsolidator and running it directly.
+        db = self._db_pool()
+        if db is None:
+            return "✗ /skill dedupe: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, DEDUPE, SkillDedupePayload(apply=apply, skills_root=str(self._root)),
+            )
+        if submission.outcome is None:
+            return "⚠ Skill dedupe is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill dedupe: {submission.outcome.error or 'dedupe failed'}"
+        result = submission.outcome.result
 
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        plan = await SkillConsolidator(self._store, self._root).run(
-            apply=apply, stamp=stamp,
-        )
-
-        if not plan.families and not plan.skipped:
+        n_families = int(result.get("n_families") or 0)
+        skipped = list(result.get("skipped") or [])
+        if not n_families and not skipped:
             return "✓ /skill dedupe: no numbered duplicate families found."
 
-        lines = [f"{'Applied' if plan.applied else 'PREVIEW'} — {plan.summary()}", ""]
-        for family in plan.families[:40]:
-            lines.append(f"  {family.describe()}")
-            # Name what goes, capped. "drop 20" without the names is not a
-            # preview anyone can approve.
-            lines.append(f"      dropping: {', '.join(family.removed[:6])}"
-                         + (f" (+{len(family.removed) - 6} more)"
-                            if len(family.removed) > 6 else ""))
-        if len(plan.families) > 40:
-            lines.append(f"  ... and {len(plan.families) - 40} more families")
-        for skip in plan.skipped:
+        applied = bool(result.get("applied"))
+        lines = [f"{'Applied' if applied else 'PREVIEW'} — {result.get('summary')}", ""]
+        lines += list(result.get("family_lines") or [])
+        more = int(result.get("more_families") or 0)
+        if more:
+            lines.append(f"  ... and {more} more families")
+        for skip in skipped:
             lines.append(f"  skipped: {skip}")
-        if plan.applied and plan.archive_path is not None:
-            lines += ["", f"Archive: {plan.archive_path}",
+        archive_path = result.get("archive_path")
+        if applied and archive_path:
+            lines += ["", f"Archive: {archive_path}",
                       "Run /skill reload to refresh the index from disk."]
-        elif not plan.applied:
+        elif not applied:
             lines += ["", "Nothing changed. Re-run with --apply to carry this out."]
 
         # 4. EXIT
         log.skills.info("[commands] skill.dedupe: exit",
                         extra={"_fields": {"apply": apply,
-                                           "families": len(plan.families),
-                                           "rows_removed": plan.rows_removed}})
+                                           "families": n_families,
+                                           "rows_removed": result.get("rows_removed")}})
         return "\n".join(lines)
 
     async def _rm(self, args: str) -> str:
@@ -742,19 +807,23 @@ class SkillCommand(SlashCommand):
                     f"   Type: /skill rm {sk.name} YES to proceed.")
         path_to_delete = Path(sk.path)
 
-        # 3. STEP — delete from disk + index through the provenance chokepoint.
-        # snapshot_when="before" so /skill restore can resurrect the dir.
-        async def _delete() -> None:
-            shutil.rmtree(path_to_delete, ignore_errors=True)
-            await self._store.delete(sk.skill_id)
-
-        await record_skill_mutation(
-            self._store,
-            skill_name=sk.name, source=sk.source, op="delete",
-            actor="user:rm", target_dir=path_to_delete,
-            mutate=_delete, snapshot_when="before",
-            details={"path": str(path_to_delete)},
-        )
+        # AD-1 — submit the declared command instead of calling
+        # record_skill_mutation directly.
+        db = self._db_pool()
+        if db is None:
+            return "✗ /skill rm: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, DELETE,
+                SkillDeletePayload(
+                    name=sk.name, source=sk.source, target_dir=str(path_to_delete),
+                    skill_id=sk.skill_id, actor="user:rm", skills_root=str(self._root),
+                ),
+            )
+        if submission.outcome is None:
+            return f"⚠ Removal of '{sk.name}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill rm: {submission.outcome.error or 'delete failed'}"
         log.skills.info(
             "[commands] skill.rm: exit",
             extra={"_fields": {"name": sk.name, "source": sk.source}},
@@ -813,15 +882,26 @@ class SkillCommand(SlashCommand):
         sk = await self._find_one(args)
         if sk is None:
             return f"✗ /skill {verb}: no skill matching {args!r}"
-        # Enable/disable is a metadata toggle with no content snapshot — it does
-        # not route through record_skill_mutation (which is the content-mutation
-        # provenance chokepoint). The audit row carries no before/after hash, as
-        # before.
-        await self._store.set_enabled(sk.skill_id, enabled=enabled)
-        await self._store.audit_write(
-            skill_name=sk.name, source=sk.source, op=verb,
-            actor=f"user:{verb}",
-        )
+        # AD-1 — submit the declared command instead of calling
+        # store.set_enabled/.audit_write directly. skill_commands.py's shared
+        # handler routes this through record_skill_mutation(snapshot_when=
+        # "none") — same as skill_manage's own enable/disable — so both
+        # callers of this shared type get the identical audit shape.
+        db = self._db_pool()
+        if db is None:
+            return f"✗ /skill {verb}: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, SET_ENABLED,
+                SkillSetEnabledPayload(
+                    name=sk.name, source=sk.source, target_dir=sk.path,
+                    skill_id=sk.skill_id, enabled=enabled, actor=f"user:{verb}",
+                ),
+            )
+        if submission.outcome is None:
+            return f"⚠ '{verb}' for skill '{sk.name}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill {verb}: {submission.outcome.error or f'{verb} failed'}"
         log.skills.info(f"[commands] skill.{verb}: exit",
                         extra={"_fields": {"name": sk.name}})
         return f"✓ Skill '{sk.name}' {verb}d"
@@ -849,11 +929,23 @@ class SkillCommand(SlashCommand):
         sk = await self._find_one(args)
         if sk is None:
             return f"✗ /skill {verb}: no skill matching {args!r}"
-        await self._store.set_pinned(sk.skill_id, pinned)
-        await self._store.audit_write(
-            skill_name=sk.name, source=sk.source, op=verb,
-            actor=f"user:{verb}",
-        )
+        # AD-1 — submit the declared command instead of calling
+        # store.set_pinned/.audit_write directly.
+        db = self._db_pool()
+        if db is None:
+            return f"✗ /skill {verb}: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, SET_PINNED,
+                SkillSetPinnedPayload(
+                    name=sk.name, source=sk.source, skill_id=sk.skill_id,
+                    pinned=pinned, actor=f"user:{verb}",
+                ),
+            )
+        if submission.outcome is None:
+            return f"⚠ '{verb}' for skill '{sk.name}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill {verb}: {submission.outcome.error or f'{verb} failed'}"
         log.skills.info(f"[commands] skill.{verb}: exit",
                         extra={"_fields": {"name": sk.name, "pinned": pinned}})
         return (
@@ -865,13 +957,21 @@ class SkillCommand(SlashCommand):
 
     async def _reload(self) -> str:
         log.skills.info("[commands] skill.reload: entry")
-        loaded = await reindex_after_change(
-            self._loader, self._store, self._root,
-            embedding_registry=self._embedding_registry,
-        )
+        db = self._db_pool()
+        if db is None:
+            return "✗ /skill reload: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, RELOAD_INDEX, SkillReloadPayload(skills_root=str(self._root)),
+            )
+        if submission.outcome is None:
+            return "⚠ Skill reload is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill reload: {submission.outcome.error or 'reload failed'}"
+        loaded = int(submission.outcome.result.get("loaded") or 0)
         log.skills.info("[commands] skill.reload: exit",
-                        extra={"_fields": {"loaded": len(loaded)}})
-        return f"✓ Reloaded — {len(loaded)} skill(s) on disk"
+                        extra={"_fields": {"loaded": loaded}})
+        return f"✓ Reloaded — {loaded} skill(s) on disk"
 
     async def _restore(self, args: str) -> str:
         # 1. ENTRY
@@ -892,7 +992,8 @@ class SkillCommand(SlashCommand):
             return await self._restore_list_versions(
                 name, reason="missing --version flag",
             )
-        # 3. STEP — look up the requested version
+        # Read-only pre-check (kept here, not just in the handler) so a miss
+        # renders the "available versions" listing instead of a bare refusal.
         entry = await self._store.find_audit_by_hash(name, version)
         if entry is None:
             return await self._restore_list_versions(
@@ -904,50 +1005,37 @@ class SkillCommand(SlashCommand):
                     f"this op didn't change file content.")
         if entry.source == "builtin":
             return "✗ /skill restore: built-in skills are read-only."
-        # Compute current state for the audit trail.
-        target_dir = self._root / entry.source / name
-        before = hash_dir(target_dir) if target_dir.exists() else None
-        # 3. STEP — restore the file tree
-        try:
-            restore_snapshot(target_dir, entry.snapshot)
-        except Exception as exc:  # B5
-            log.skills.error(
-                "[commands] skill.restore: restore_snapshot failed",
-                exc_info=exc, extra={"_fields": {"name": name, "version": version}},
-            )
-            return f"✗ /skill restore: write failed: {exc}"
-        # Re-index + re-embed, then audit through the provenance chokepoint.
-        # before-hash was captured above (the live tree pre-overwrite); the
-        # snapshot is the restored audit entry's own snapshot, reused verbatim.
-        async def _reindex() -> None:
-            await reindex_after_change(
-                self._loader, self._store, self._root,
-                embedding_registry=self._embedding_registry,
-            )
 
-        await record_skill_mutation(
-            self._store,
-            skill_name=name, source=entry.source, op="restore",
-            actor="user:restore", target_dir=target_dir,
-            mutate=_reindex, snapshot_when="after",
-            snapshot=entry.snapshot, before_hash=before,
-            details={
-                "restored_from_audit_id": entry.audit_id,
-                "restored_from_op": entry.op,
-                "restored_from_actor": entry.actor,
-                "restored_hash": version,
-            },
-        )
+        # AD-1 — submit the declared command instead of calling
+        # restore_snapshot/record_skill_mutation directly. The handler
+        # (skill_commands.py::_restore_version_handler) does the SAME
+        # find_audit_by_hash lookup authoritatively.
+        db = self._db_pool()
+        if db is None:
+            return "✗ /skill restore: no database configured."
+        with self._bound_services():
+            submission = await submit_command(
+                db, RESTORE_VERSION,
+                SkillRestoreVersionPayload(
+                    name=name, version=version, actor="user:restore",
+                    skills_root=str(self._root),
+                ),
+            )
+        if submission.outcome is None:
+            return f"⚠ Restore of '{name}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /skill restore: {submission.outcome.error or 'restore failed'}"
+        result = submission.outcome.result
         # 4. EXIT
         log.skills.info(
             "[commands] skill.restore: exit",
             extra={"_fields": {
-                "name": name, "restored_from_audit_id": entry.audit_id,
-                "files": len(entry.snapshot),
+                "name": name, "restored_from_audit_id": result.get("restored_from_audit_id"),
+                "files": result.get("files"),
             }},
         )
-        return (f"✓ Restored '{name}' to audit entry {entry.audit_id} "
-                f"({entry.op} by {entry.actor}, {len(entry.snapshot)} file(s)).")
+        return (f"✓ Restored '{name}' to audit entry {result.get('restored_from_audit_id')} "
+                f"({entry.op} by {entry.actor}, {result.get('files')} file(s)).")
 
     async def _restore_list_versions(self, name: str, *, reason: str) -> str:
         """Pretty-print available restore versions when the user's --version

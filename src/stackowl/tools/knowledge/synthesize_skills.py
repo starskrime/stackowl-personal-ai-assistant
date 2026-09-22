@@ -31,16 +31,12 @@ errors).
 from __future__ import annotations
 
 import time
-import uuid
 
+from stackowl.commands.spec.submit import submit_command
 from stackowl.infra.observability import log
-from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
-from stackowl.scheduler.job import Job
-from stackowl.skills.synthesizer_handler import SkillSynthesizerHandler
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
-
-_HANDLER_NAME = "skill_synthesizer"
+from stackowl.tools.knowledge.skill_commands import SYNTHESIZE, SkillSynthesizePayload
 
 
 class SynthesizeSkillsTool(Tool):
@@ -87,7 +83,10 @@ class SynthesizeSkillsTool(Tool):
         log.tool.info("synthesize_skills.execute: entry", extra={"_fields": {}})
 
         services = get_services()
-        # 2. DECISION — require the synthesis subsystem deps; degrade structurally.
+        # 2. DECISION — require the synthesis subsystem deps; degrade structurally
+        # (the same checks skill_commands.py::_synthesize_handler repeats, so an
+        # unwired subsystem is reported here without a round trip through the
+        # command door first).
         missing = [
             label
             for label, dep in (
@@ -101,58 +100,26 @@ class SynthesizeSkillsTool(Tool):
         if missing:
             return self._unavailable(", ".join(missing), t0)
 
-        try:
-            # 3. STEP — construct the REAL handler from services + a synthetic Job,
-            # then call its existing .execute() (REUSE; no reimplementation here).
-            handler = SkillSynthesizerHandler(
-                db=services.db_pool,  # type: ignore[arg-type]
-                provider_registry=services.provider_registry,  # type: ignore[arg-type]
-                skill_store=services.skill_store,  # type: ignore[arg-type]
-                skills_root=StackowlHome.skills_dir(),
-                embedding_registry=services.embedding_registry,
-                owl_registry=services.owl_registry,
-                # Task 4 — thread the REAL consent gate through so a per-skill
-                # gated write (stackowl.skills.authoring) can actually be
-                # approved live (this call is itself already dispatched through
-                # ConsequentialActionGate.check() for action_severity=
-                # "consequential", but the inner write is a SEPARATE
-                # consent-policy identity — see resolve_consent_identity()).
-                # When called mid-turn (interactive TraceContext), the inner
-                # write uses the LIVE identity/channel/session (normal
-                # ALWAYS_ASK consent) — NOT the scheduled job's AUTO tier.
-                consent_gate=services.consent_gate,
+        # 3. STEP — AD-1: submit the declared command instead of constructing
+        # SkillSynthesizerHandler and calling it directly. The handler
+        # (skill_commands.py::_synthesize_handler) does the REAL synthesis run
+        # (REUSE — no reimplementation there either, just relocated).
+        db = services.db_pool
+        assert db is not None  # narrowed by the `missing` check above
+        submission = await submit_command(db, SYNTHESIZE, SkillSynthesizePayload())
+        if submission.outcome is None:
+            return self._ok(
+                "Skill synthesis is pending approval.", t0, metadata={"pending": True},
             )
-            job = self._synthetic_job()
-            result = await handler.execute(job)
-        except Exception as exc:  # B5 — degrade, never raise; no hidden errors.
-            log.tool.error(
-                "synthesize_skills.execute: handler failed — structured degradation",
-                exc_info=exc,
-            )
-            return self._err(f"skill synthesis failed: {type(exc).__name__}: {exc}", t0)
-
-        if not result.success:
+        if not submission.outcome.success:
             return self._err(
-                f"skill synthesis did not complete: {result.error or 'unknown error'}",
-                t0,
+                submission.outcome.error or "skill synthesis did not complete.", t0,
             )
-        output = result.output or "created:0 refined:0 deprecated:0"
+        result = submission.outcome.result
+        output = str(result.get("output") or "created:0 refined:0 deprecated:0")
+        metadata = {k: v for k, v in result.items() if k != "output"}
         # 4. EXIT
-        return self._ok(output, t0, metadata=result.metadata)
-
-    @staticmethod
-    def _synthetic_job() -> Job:
-        """Build a minimal manual Job the handler can run (mirrors the scheduler)."""
-        job_id = f"synthesize_skills-{uuid.uuid4().hex}"
-        return Job(
-            job_id=job_id,
-            handler_name=_HANDLER_NAME,
-            schedule="manual",
-            idempotency_key=job_id,
-            last_run_at=None,
-            next_run_at="",
-            status="running",
-        )
+        return self._ok(output, t0, metadata=metadata)
 
     # ------------------------------------------------------------------ helpers
 

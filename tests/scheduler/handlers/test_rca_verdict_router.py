@@ -76,14 +76,22 @@ def test_extract_argv_none_on_unbalanced_quotes() -> None:
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture()
-def _tool_build_services(tmp_home: Path) -> None:
+async def _tool_build_services(tmp_home: Path, tmp_db) -> None:  # noqa: ANN001
     """Bind an interactive TraceContext + a real, AUTO-trusted consent gate —
     the SAME seam tool_build_gateway tests use (ConsentPolicy's own TrustTier
     short-circuit, not a mocked gate.request()). tmp_home isolates the learned
-    tool's persisted spec file under an ephemeral STACKOWL_HOME."""
+    tool's persisted spec file under an ephemeral STACKOWL_HOME.
+
+    Story 4.9 — ``tool_build``'s create/delete now submit through
+    ``commands/spec/submit.py::submit_command``, which needs a real
+    ``db_pool`` (for the ``command_receipts``/``tasks`` tables) — ``tmp_db``
+    provides one, migrated, isolated per test.
+    """
     token = TraceContext.start("s-fix", interactive=True, channel="cli")
     gate = ConsequentialActionGate(ConsentPolicy(tiers={"tool_build": TrustTier.AUTO}))
-    services_token = set_services(StepServices(consent_gate=gate, tool_registry=None))
+    services_token = set_services(
+        StepServices(consent_gate=gate, tool_registry=None, db_pool=tmp_db)
+    )
     yield
     reset_services(services_token)
     TraceContext.reset(token)

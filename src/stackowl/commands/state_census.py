@@ -197,13 +197,23 @@ SUBCOMMAND_CENSUS: dict[str, CommandDeclaration] = {
     "owl.health": CommandDeclaration("read"),
     "owl.objectives": CommandDeclaration("read"),
     "owl.objective": CommandDeclaration("read"),
-    "owl.create": CommandDeclaration("consequential", ("owl.create",)),
-    # Stays a single `write` entry even though it can carry authority-widening
-    # fields (--tools/--capability_profile) — Story 4.9's classification-time
-    # call once it builds the real owl commands (deferred-work.md flag).
-    "owl.edit": CommandDeclaration("write", ("owl.edit",)),
-    "owl.rename": CommandDeclaration("write", ("owl.rename",)),
-    "owl.retire": CommandDeclaration("consequential", ("owl.retire",)),
+    # Story 4.9 resolved DW-36 — repointed at the consolidated owls.build.*
+    # types (`/owl` funnels every mutation through the single owl_build
+    # engine, so a separate owl.create/edit/rename/retire command type would
+    # mint two names for the identical real mutation; see
+    # owl_build_commands.py's own module docstring). owl_build._edit already
+    # re-clamps every edit against creation_ceiling before it can reach the
+    # command payload, so owls.build.edit never needs a widening-classified
+    # severity — the single, dedicated owls.build.grant path is the only way
+    # to widen an owl's authority.
+    # `action_severity` here matches the real registered CommandSpec.severity
+    # for each consolidated owls.build.* type exactly (both "write" — review
+    # finding, 2026-09-22 pass: this had drifted to "consequential" for
+    # create/retire, stale from before the consolidation).
+    "owl.create": CommandDeclaration("write", ("owls.build.create",)),
+    "owl.edit": CommandDeclaration("write", ("owls.build.edit",)),
+    "owl.rename": CommandDeclaration("write", ("owls.build.rename",)),
+    "owl.retire": CommandDeclaration("write", ("owls.build.retire",)),
     # Bucketed to 4.7 (scheduling), not 4.9 (owl authority) — Story 4.7's AC
     # text explicitly covers "any slash command that changes schedules", and
     # these two literally suspend/resume the owl's cron cadence.

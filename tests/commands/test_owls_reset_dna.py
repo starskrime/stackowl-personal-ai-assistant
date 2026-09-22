@@ -92,24 +92,27 @@ async def test_reset_dna_requires_confirm(tmp_db):
 
 @pytest.mark.asyncio
 async def test_reset_dna_reverts_to_authored_and_live_refreshes(tmp_db):
+    """Story 4.9 — ``owl.reset_dna`` is ``severity="consequential"``, which
+    ALWAYS parks for owner step-up rather than resetting inline, even after
+    the YES confirmation. See
+    ``tests/commands/test_owl_dna_and_objective_commands.py`` for the
+    handler-level coverage of the real DNA reset."""
     cmd, reg = _cmd(tmp_db)
     await capture_one_authored(tmp_db, "scout", OwlDNA(challenge_level=0.5))
     await upsert_owl_dna(tmp_db, "scout", OwlDNA(challenge_level=0.8), table="owl_dna")
     apply_dna_overlay(reg, "scout", OwlDNA(challenge_level=0.8))
     out = await cmd.handle("reset-dna scout YES", _state())
-    assert "reset" in out.lower()
-    assert reg.get("scout").dna.challenge_level == pytest.approx(0.5)
-    rows = await tmp_db.fetch_all(
-        "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)
-    )
-    assert rows[0]["challenge_level"] == pytest.approx(0.5)
+    assert "pending" in out.lower()
+    assert reg.get("scout").dna.challenge_level == pytest.approx(0.8)  # unchanged, still parked
 
 
 @pytest.mark.asyncio
 async def test_reset_dna_no_authored_baseline(tmp_db):
+    """Story 4.9 — the command parks BEFORE the handler's own "no authored
+    baseline" refusal can run; see the handler-level test for that coverage."""
     cmd, _ = _cmd(tmp_db)
     out = await cmd.handle("reset-dna scout YES", _state())
-    assert "no authored" in out.lower()
+    assert "pending" in out.lower()
 
 
 @pytest.mark.asyncio
@@ -150,6 +153,10 @@ async def test_dna_restore_requires_confirm(tmp_db):
 
 @pytest.mark.asyncio
 async def test_dna_restore_reverts_to_checkpoint_and_live_refreshes(tmp_db):
+    """Story 4.9 — ``owl.dna_restore`` is ``severity="consequential"``, which
+    ALWAYS parks for owner step-up rather than restoring inline. See
+    ``tests/commands/test_owl_dna_and_objective_commands.py`` for the
+    handler-level coverage of the real restore."""
     cmd, reg = _cmd(tmp_db)
     store = LearningArtifactStore(tmp_db)
     checkpoint_id = await store.checkpoint(
@@ -161,13 +168,8 @@ async def test_dna_restore_reverts_to_checkpoint_and_live_refreshes(tmp_db):
 
     out = await cmd.handle(f"dna-restore scout {checkpoint_id} YES", _state())
 
-    assert "restored" in out.lower()
-    assert checkpoint_id in out
-    assert reg.get("scout").dna.challenge_level == pytest.approx(0.3)
-    rows = await tmp_db.fetch_all(
-        "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)
-    )
-    assert rows[0]["challenge_level"] == pytest.approx(0.3)
+    assert "pending" in out.lower()
+    assert reg.get("scout").dna.challenge_level == pytest.approx(0.9)  # unchanged, still parked
 
 
 @pytest.mark.asyncio
@@ -192,13 +194,17 @@ async def test_dna_restore_unconfirmed_leaves_dna_unchanged(tmp_db):
 
 @pytest.mark.asyncio
 async def test_dna_restore_unknown_checkpoint_fails_loud(tmp_db):
+    """Story 4.9 — the command parks BEFORE the handler's own "unknown
+    checkpoint" refusal can run (a bad checkpoint id genuinely cannot be
+    validated until step-up runs the handler); see the handler-level test
+    for that fail-loud coverage."""
     cmd, reg = _cmd(tmp_db)
     await upsert_owl_dna(tmp_db, "scout", OwlDNA(challenge_level=0.9), table="owl_dna")
     apply_dna_overlay(reg, "scout", OwlDNA(challenge_level=0.9))
 
     out = await cmd.handle("dna-restore scout not-a-real-checkpoint YES", _state())
 
-    assert out.startswith("✗ /owls dna-restore:")
+    assert "pending" in out.lower()
     assert reg.get("scout").dna.challenge_level == pytest.approx(0.9)
     rows = await tmp_db.fetch_all(
         "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)

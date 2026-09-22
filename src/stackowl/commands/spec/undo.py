@@ -128,10 +128,33 @@ async def request_undo(db: DbPool, command_id: str) -> UndoOutcome:
     # a validated pydantic model dumped via ``model_dump_json``, always valid
     # JSON. A payload with no ``job_id`` key (a future non-scheduling command
     # type) yields ``None`` and the exact-payload match applies, unchanged.
-    target_job_id = json.loads(payload).get("job_id")
+    #
+    # Story 4.9 -- an owl-targeted type (owls.build.rename/.edit) carries no
+    # job_id either, but DOES carry the owl's own ``name`` (rename) or a
+    # nested ``manifest.name`` (edit/grant/create/restore) as its target
+    # identity -- checked in that order, falling through to the unchanged
+    # exact-payload match when neither is present.
+    decoded = json.loads(payload)
+    target_job_id = decoded.get("job_id")
+    target_key = "job_id"
+    if target_job_id is None and isinstance(decoded.get("name"), str):
+        target_job_id = decoded["name"]
+        target_key = "name"
+    elif target_job_id is None and isinstance(decoded.get("manifest"), dict):
+        manifest_name = decoded["manifest"].get("name")
+        if isinstance(manifest_name, str):
+            target_job_id = manifest_name
+            target_key = "manifest.name"
     superseded = await store.has_later_completed_command(
         payload=payload, after=delivered_at, exclude_task_id=original.task_id,
-        target_job_id=target_job_id,
+        target_job_id=target_job_id, target_key=target_key,
+        # Story 4.9 review finding (2026-09-22 pass): scope the target-key
+        # match to THIS command's own type, so an unrelated command sharing
+        # the same target field value (e.g. two different skill.* types on
+        # the same skill name) never falsely supersedes an undo. Ignored by
+        # the store when target_job_id is None (exact-payload match already
+        # has no cross-type collision risk).
+        command_type=command_type,
     )
     decision: UndoDecision = decide_undo(elapsed=elapsed, superseded=superseded)
     if not decision.allowed:

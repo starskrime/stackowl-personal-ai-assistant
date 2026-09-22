@@ -79,8 +79,10 @@ class TestItAsksBeforeItWidens:
 
         assert "_WIDENING_CATEGORY" in src
         assert "_consent_or_refuse" in src
-        # The refusal must come BEFORE anything is persisted.
-        assert src.index("_consent_or_refuse") < src.index("persist_owl")
+        # The refusal must come BEFORE the command (and thus any persist) is
+        # ever submitted — Story 4.9 moved the actual persist/register call
+        # into owl_build_commands.py's handler, reached only via submit_command.
+        assert src.index("_consent_or_refuse") < src.index("submit_command")
 
     async def test_it_widens_the_CEILING_not_only_the_bounds(self) -> None:
         """Widening bounds alone would be undone by the next edit, which re-clamps

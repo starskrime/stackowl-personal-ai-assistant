@@ -2332,10 +2332,22 @@ class StartupOrchestrator:
         # delivery command types (the ONLY module that ever calls
         # ProactiveDeliverer.deliver/.transport or ProactiveJobDeliverer.
         # deliver_for_job on the migrated surfaces' behalf).
+        # Story 4.9 — same shape again, for owl_build's 6 owls.build.* types,
+        # the 4 owl.*(dna/objective) types, tool_build's 2 owls.build_tool.*
+        # types, and skill_manage/synthesize_skills/skill_command's 12
+        # shared skill.* types (the ONLY modules that ever call persist_owl/
+        # registry.replace/.register/.deregister, delete_owl,
+        # ToolRegistry.register/.unregister (learned tools), or
+        # record_skill_mutation/SkillIndexStore.delete/.set_enabled/
+        # .set_pinned on the migrated surfaces' behalf).
         import stackowl.authz.commands  # noqa: F401
+        import stackowl.commands.owls_dna_commands  # noqa: F401
         import stackowl.notifications.commands  # noqa: F401
         import stackowl.objectives.commands  # noqa: F401
         import stackowl.scheduler.commands  # noqa: F401
+        import stackowl.tools.knowledge.skill_commands  # noqa: F401
+        import stackowl.tools.meta.owl_build_commands  # noqa: F401
+        import stackowl.tools.meta.tool_build_commands  # noqa: F401
         from stackowl.authz.delivery_grandfather import (
             grandfather_existing_job_delivery_authority,
         )

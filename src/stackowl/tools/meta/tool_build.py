@@ -38,27 +38,19 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from stackowl.commands.spec.submit import submit_command
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.knowledge.skill_validation import security_scan_gate
-from stackowl.tools.meta.learned_shell_tool import LearnedShellTool
+from stackowl.tools.meta.tool_build_commands import CREATE, DELETE, DeleteToolPayload
 from stackowl.tools.meta.tool_spec import LearnedToolSpec, validate_spec
-
-if TYPE_CHECKING:  # pragma: no cover — typing-only
-    from stackowl.skills.manifest import SkillSource
 
 # Isolated toolset group so a read-only owl never gets self-extension hydrated.
 _TOOLSET_GROUP = "meta_write"
-# Source name under which learned tools register (so they unregister cleanly).
-_SOURCE_NAME = "learned_tools"
-# Audit source — reuses the skills audit sink's "learned" lane for provenance.
-_AUDIT_SOURCE: SkillSource = "learned"
-_ACTOR = "agent_self:tool_build"
 # A NON-dangerous consent category — the author may not mint a dangerous one.
 _CONSENT_CATEGORY = "tool_build"
 
@@ -144,7 +136,7 @@ class ToolBuildTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
-            command_types=("owls.build_tool",),
+            command_types=(CREATE, DELETE),
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
         )
@@ -216,8 +208,6 @@ class ToolBuildTool(Tool):
                 t0,
             )
 
-        spec_text = spec.model_dump_json(indent=2)
-
         # 4. HARD security scan (fail-closed on its own crash). Stage a synthetic
         # scannable doc embedding the description + argv + params, then gate it.
         blocked = self._scan_or_block(spec, name)
@@ -229,32 +219,23 @@ class ToolBuildTool(Tool):
         if refusal is not None:
             return self._err(refusal, t0)
 
-        # 6. PERSIST with provenance (audit + restorable snapshot).
-        try:
-            spec_path.parent.mkdir(parents=True, exist_ok=True)
-            spec_path.write_text(spec_text, encoding="utf-8")
-        except OSError as exc:
-            return self._err(f"BLOCKED — could not persist tool '{name}': {exc}", t0)
-        await self._audit("create", name, snapshot={f"{name}.json": spec_text})
-
-        # 7. REGISTER LIVE (the dangerous-shadow guard is the 2nd net — if it
-        # raises, remove the just-written file to stay consistent).
-        if registry is not None:
-            try:
-                registry.register(LearnedShellTool(spec), source_name=_SOURCE_NAME)
-            except Exception as exc:  # B5 — roll back the persisted file
-                log.tool.error(
-                    "tool_build.execute: live registration failed — rolling back file",
-                    exc_info=exc,
-                    extra={"_fields": {"tool": name}},
-                )
-                spec_path.unlink(missing_ok=True)
-                await self._audit("delete", name, snapshot={f"{name}.json": spec_text})
-                return self._err(
-                    f"BLOCKED — could not register tool '{name}' ({exc}); the "
-                    "persisted spec was rolled back.",
-                    t0,
-                )
+        # 6/7. AD-1 — submit the declared command instead of writing the spec
+        # file + registering it live directly. The handler
+        # (tool_build_commands.py::_create_handler) does the persist +
+        # register with rollback and writes the audit row itself.
+        db = get_services().db_pool
+        if db is None:
+            return self._err("no database configured — cannot register a new tool.", t0)
+        submission = await submit_command(db, CREATE, spec)
+        if submission.outcome is None:
+            return self._ok(
+                f"Tool '{name}' is pending approval before it is registered.", t0,
+                extra={"tool": name, "op": "create", "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(
+                submission.outcome.error or f"BLOCKED — could not register tool '{name}'.", t0,
+            )
 
         # 8. Success.
         return self._ok(
@@ -272,46 +253,24 @@ class ToolBuildTool(Tool):
         spec_path = StackowlHome.learned_tools_dir() / f"{name}.json"
         if not spec_path.exists():
             return self._err(f"No learned tool named '{name}' to delete.", t0)
-        # Snapshot BEFORE removing so the audit row can resurrect it.
-        try:
-            spec_text = spec_path.read_text(encoding="utf-8")
-        except OSError:
-            spec_text = ""
-        try:
-            spec_path.unlink(missing_ok=True)
-        except OSError as exc:
-            return self._err(f"Could not delete learned tool '{name}': {exc}", t0)
-        # Drop it from the running registry too (best-effort: registry has no
-        # single-name unregister, so re-register the rest under the source).
-        self._drop_from_registry(name)
-        await self._audit("delete", name, snapshot={f"{name}.json": spec_text})
-        return self._ok(f"Deleted learned tool '{name}'.", t0, extra={"tool": name, "op": "delete"})
-
-    def _drop_from_registry(self, name: str) -> None:
-        """Remove ``name`` from the live registry if present (self-healing)."""
-        registry = get_services().tool_registry
-        if registry is None:
-            return
-        tool = registry.get(name)
-        if tool is None:
-            return
-        try:
-            # Public single-name removal (F044) — atomically drops the name→tool
-            # entry AND its source-map references under the registry lock, instead
-            # of poking the private _tools/_source_map (which races a concurrent
-            # dispatch and bypasses the hardened unregister contract).
-            removed = registry.unregister(name)
-            if not removed:
-                log.tool.warning(
-                    "tool_build.execute: registry.unregister no-op (already gone or refused)",
-                    extra={"_fields": {"tool": name}},
-                )
-        except Exception as exc:  # B5 — never raise on cleanup
-            log.tool.warning(
-                "tool_build.execute: registry drop failed — file already removed",
-                exc_info=exc,
-                extra={"_fields": {"tool": name}},
+        # AD-1 — submit the declared command instead of unlinking the spec
+        # file + dropping the registry entry directly. The handler
+        # (tool_build_commands.py::_delete_handler) does both with the same
+        # provenance snapshot, and captures the undo payload (undo=create).
+        db = get_services().db_pool
+        if db is None:
+            return self._err("no database configured — cannot delete a tool.", t0)
+        submission = await submit_command(db, DELETE, DeleteToolPayload(name=name))
+        if submission.outcome is None:
+            return self._ok(
+                f"Deletion of tool '{name}' is pending approval.", t0,
+                extra={"tool": name, "op": "delete", "pending": True},
             )
+        if not submission.outcome.success:
+            return self._err(
+                submission.outcome.error or f"Could not delete learned tool '{name}'.", t0,
+            )
+        return self._ok(f"Deleted learned tool '{name}'.", t0, extra={"tool": name, "op": "delete"})
 
     # ------------------------------------------------------------------ list
 
@@ -434,36 +393,9 @@ class ToolBuildTool(Tool):
             return f"declined by user — tool '{name}' was not registered."
         return None
 
-    async def _audit(self, op: str, name: str, *, snapshot: dict[str, str]) -> None:
-        """Append a restorable audit row via the skill audit sink (best-effort).
-
-        Reuses :meth:`SkillIndexStore.audit_write` (source='learned') so a learned
-        tool's create/delete is provenance-tracked + resurrectable, the same way
-        agent-authored skills are. A missing store degrades to a log line — the
-        persist itself already succeeded.
-        """
-        store = get_services().skill_store
-        if store is None:
-            log.tool.warning(
-                "tool_build.execute: no skill store — audit skipped (write still persisted)",
-                extra={"_fields": {"tool": name, "op": op}},
-            )
-            return
-        try:
-            await store.audit_write(
-                skill_name=name,
-                source=_AUDIT_SOURCE,
-                op=op,
-                actor=_ACTOR,
-                details={"kind": "learned_tool"},
-                snapshot=snapshot,
-            )
-        except Exception as exc:  # B5 — never fail the build on an audit hiccup
-            log.tool.warning(
-                "tool_build.execute: audit_write failed — write persisted, audit pending",
-                exc_info=exc,
-                extra={"_fields": {"tool": name, "op": op}},
-            )
+    # AD-1 — the audit write (source='learned') now lives in
+    # tool_build_commands.py's handlers, alongside the mutation itself; this
+    # tool no longer writes to the audit sink directly.
 
     # ------------------------------------------------------------------ results
 

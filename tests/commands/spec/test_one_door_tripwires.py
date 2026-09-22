@@ -186,18 +186,26 @@ def test_the_import_boundary_detector_does_not_flag_type_checking_imports() -> N
 #: `scheduler/commands.py` — the ONE handler-registry caller — belongs to
 #: EVERY group (Story 4.3's pilot pair; Story 4.7's remaining five). The
 #: other names are each group's own PRE-EXISTING, still-unmigrated
-#: exception, explicitly out of scope: `tools/meta/owl_build.py` (owl
-#: create/dna management, owned by 4.9 per the 4.2 census) still calls
-#: `.pause`/`.resume` directly; `webhooks/receiver.py`'s `create_job` call
-#: is explicitly named OUT of this story's scope (spec-4-7 Boundaries: "Do
-#: not migrate webhooks/receiver.py's direct create_job call"). Neither
-#: `tools/scheduling/cronjob.py` NOR `tools/scheduling/owl_schedule.py`
-#: appears in ANY group — both are now FULLY migrated (Story 4.3's pilot
-#: pair plus this story's remaining five mutators).
+#: exception, explicitly out of scope: `webhooks/receiver.py`'s
+#: `create_job` call is explicitly named OUT of this story's scope
+#: (spec-4-7 Boundaries: "Do not migrate webhooks/receiver.py's direct
+#: create_job call"). Neither `tools/scheduling/cronjob.py` NOR
+#: `tools/scheduling/owl_schedule.py` appears in ANY group — both are now
+#: FULLY migrated (Story 4.3's pilot pair plus Story 4.7's remaining five
+#: mutators). `tools/meta/owl_build.py` no longer appears in the
+#: pause/resume group either (Story 4.9): it now submits
+#: `scheduling.pause_owl_job`/`resume_owl_job` through `submit_command`
+#: instead of calling `JobScheduler.pause`/`.resume` directly.
 _MUTATOR_GROUPS: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {
+    # Story 4.9 — `tools/meta/owl_build.py` REMOVED from this allowlist: its
+    # pause/resume actions now submit `scheduling.pause_owl_job`/
+    # `resume_owl_job` (already-registered Story 4.7 types) through
+    # `submit_command` instead of calling `JobScheduler.pause`/`.resume`
+    # directly — `scheduler/commands.py`'s own handlers are the only
+    # remaining direct callers.
     "pause/resume": (
         ("pause", "resume"),
-        frozenset({"scheduler/commands.py", "tools/meta/owl_build.py"}),
+        frozenset({"scheduler/commands.py"}),
     ),
     "snooze": (
         ("snooze",),
@@ -243,6 +251,45 @@ def _calls_any(py: Path, method_names: tuple[str, ...]) -> bool:
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr in method_names:
                 return True
+    return False
+
+
+def _calls_scoped(py: Path, method_names: tuple[str, ...], receiver_substr: str) -> bool:
+    """True iff *py* contains a ``<expr>.<name>(...)`` CALL for any name in
+    *method_names* whose RECEIVER expression's source text contains
+    *receiver_substr* (case-insensitive) — e.g. ``registry.replace(...)`` or
+    ``self._registry.replace(...)`` both match ``receiver_substr="registry"``,
+    but an unrelated ``text.replace(...)`` does not. Needed for Story 4.9's
+    groups (``OwlRegistry.replace``/``ToolRegistry.register``/
+    ``SkillIndexStore.delete``, ...) — their method names (``replace``,
+    ``register``, ``delete``, ``unregister``) are common enough on unrelated
+    objects that :func:`_calls_any`'s bare name match alone would be noisy."""
+    tree = ast.parse(py.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr in method_names:
+                try:
+                    receiver = ast.unparse(func.value).lower()
+                except Exception:  # pragma: no cover — defensive only
+                    receiver = ""
+                if receiver_substr in receiver:
+                    return True
+    return False
+
+
+def _calls_bare(py: Path, function_names: tuple[str, ...]) -> bool:
+    """True iff *py* contains a bare ``<name>(...)`` CALL (never ``<expr>.
+    <name>(...)``) for any name in *function_names* — for Story 4.9's
+    ``owls_helpers.persist_owl``/``.delete_owl``/``.restore_owl`` group,
+    which are free functions, not methods."""
+    tree = ast.parse(py.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in function_names
+        ):
+            return True
     return False
 
 
@@ -584,3 +631,233 @@ def test_proactive_job_deliverer_deliver_for_job_is_called_only_from_the_allowli
         f"the allowlist names caller(s) that no longer call deliver_for_job: "
         f"{sorted(stale)} — a subset check would not catch this drift"
     )
+
+
+# =============================================================================
+# 8. OwlRegistry.replace/.register/.deregister — Story 4.9
+# =============================================================================
+
+_OWL_REGISTRY_MUTATOR_METHODS: tuple[str, ...] = ("replace", "register", "deregister")
+
+#: Every PRE-EXISTING, legitimately-out-of-scope caller (boot-time wiring/
+#: assembly, DNA evolution/hydration/revalidation, skill-ownership sync —
+#: none of them the `owl_build` mutation flow this story migrates) plus
+#: `tools/meta/owl_build_commands.py` — the ONE new handler-registry caller.
+_ALLOWED_OWL_REGISTRY_CALLERS = frozenset({
+    "commands/assembly.py",
+    "commands/owls_command.py",
+    "commands/parliament_command.py",
+    "memory/assembly.py",
+    "owls/dna_hydrator.py",
+    "owls/owl_revalidator.py",
+    "owls/shadow_validator.py",
+    "owls/skill_ownership.py",
+    "scheduler/assembly.py",
+    "scheduler/handlers/evolution.py",
+    "skills/loader.py",
+    "startup/orchestrator.py",
+    "startup/wiring_audit.py",
+    "tools/meta/owl_build_commands.py",
+})
+
+
+def test_owl_registry_mutator_is_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in _files_referencing(("OwlRegistry",)):
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "owls/registry.py":
+            continue  # the definition site — never calls itself
+        if _calls_scoped(py, _OWL_REGISTRY_MUTATOR_METHODS, "registry"):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_OWL_REGISTRY_CALLERS
+    assert not unexpected, (
+        "OwlRegistry.replace/.register/.deregister called from a caller not "
+        f"on the allowlist: {sorted(unexpected)}"
+    )
+    assert "tools/meta/owl_build.py" not in actual, (
+        "owl_build.py still calls OwlRegistry.replace/.register/.deregister "
+        "directly — its migration (Story 4.9) has regressed"
+    )
+    stale = _ALLOWED_OWL_REGISTRY_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call replace/register/"
+        f"deregister: {sorted(stale)} — a subset check would not catch this drift"
+    )
+
+
+# =============================================================================
+# 9. owls_helpers.persist_owl/.delete_owl/.restore_owl — Story 4.9
+# =============================================================================
+
+_OWLS_HELPERS_MUTATOR_FUNCTIONS: tuple[str, ...] = (
+    "persist_owl", "delete_owl", "restore_owl",
+)
+
+#: `commands/owls_command.py` — Boundaries: `OwlsCommand._edit`/`._remove` are
+#: verified DEAD CODE (`/owls` is unregistered), explicitly NOT migrated by
+#: this story; `scheduler/handlers/capability_gap_escalation.py` — a
+#: pre-existing, unrelated caller; `tools/meta/owl_build_commands.py` — the
+#: ONE new handler-registry caller.
+_ALLOWED_OWLS_HELPERS_CALLERS = frozenset({
+    "commands/owls_command.py",
+    "scheduler/handlers/capability_gap_escalation.py",
+    "tools/meta/owl_build_commands.py",
+})
+
+
+def test_owls_helpers_mutator_is_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in sorted(_SRC_ROOT.rglob("*.py")):
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "commands/owls_helpers.py":
+            continue  # the definition site — never calls itself
+        if _calls_bare(py, _OWLS_HELPERS_MUTATOR_FUNCTIONS):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_OWLS_HELPERS_CALLERS
+    assert not unexpected, (
+        "owls_helpers.persist_owl/.delete_owl/.restore_owl called from a "
+        f"caller not on the allowlist: {sorted(unexpected)}"
+    )
+    assert "tools/meta/owl_build.py" not in actual, (
+        "owl_build.py still calls persist_owl/delete_owl/restore_owl "
+        "directly — its migration (Story 4.9) has regressed"
+    )
+    stale = _ALLOWED_OWLS_HELPERS_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call persist_owl/"
+        f"delete_owl/restore_owl: {sorted(stale)} — a subset check would not "
+        "catch this drift"
+    )
+
+
+# =============================================================================
+# 10. ToolRegistry.register/.unregister (learned tools) — Story 4.9
+# =============================================================================
+
+_TOOL_REGISTRY_MUTATOR_METHODS: tuple[str, ...] = ("register", "unregister")
+
+#: Every PRE-EXISTING, legitimately-out-of-scope caller (boot-time wiring/
+#: assembly, MCP tool bridging, the skills loader's own tool registration)
+#: plus `tools/meta/tool_build_commands.py` — the ONE new handler-registry
+#: caller for LEARNED tools specifically.
+_ALLOWED_TOOL_REGISTRY_CALLERS = frozenset({
+    "commands/assembly.py",
+    "commands/owls_command.py",
+    "mcp/client.py",
+    "mcp/server.py",
+    "scheduler/assembly.py",
+    "skills/loader.py",
+    "startup/orchestrator.py",
+    "tools/meta/learned_tool_loader.py",
+    "tools/meta/tool_build_commands.py",
+})
+
+
+def test_tool_registry_mutator_is_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in _files_referencing(("ToolRegistry",)):
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "tools/registry.py":
+            continue  # the definition site — never calls itself
+        if _calls_scoped(py, _TOOL_REGISTRY_MUTATOR_METHODS, "registry"):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_TOOL_REGISTRY_CALLERS
+    assert not unexpected, (
+        "ToolRegistry.register/.unregister called from a caller not on the "
+        f"allowlist: {sorted(unexpected)}"
+    )
+    assert "tools/meta/tool_build.py" not in actual, (
+        "tool_build.py still calls ToolRegistry.register/.unregister "
+        "directly — its migration (Story 4.9) has regressed"
+    )
+    stale = _ALLOWED_TOOL_REGISTRY_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call register/"
+        f"unregister: {sorted(stale)} — a subset check would not catch this drift"
+    )
+
+
+# =============================================================================
+# 11. SkillIndexStore.delete/.set_enabled/.set_pinned — Story 4.9
+# =============================================================================
+
+_SKILL_STORE_MUTATOR_METHODS: tuple[str, ...] = ("delete", "set_enabled", "set_pinned")
+
+#: `skills/consolidation.py` — the `/skill dedupe` engine `skill_commands.py`'s
+#: own `skill.dedupe` handler calls; its INTERNAL deletes are a pre-existing,
+#: out-of-scope caller (this story migrates the COMMAND surface, not
+#: `SkillConsolidator`'s own implementation). `tools/knowledge/skill_commands.py`
+#: is the ONE new handler-registry caller.
+_ALLOWED_SKILL_STORE_CALLERS = frozenset({
+    "skills/consolidation.py",
+    "tools/knowledge/skill_commands.py",
+})
+
+
+def test_skill_store_mutator_is_called_only_from_the_allowlist() -> None:
+    actual: set[str] = set()
+    for py in _files_referencing(("SkillIndexStore",)):
+        rel = py.relative_to(_SRC_ROOT).as_posix()
+        if rel == "skills/store.py":
+            continue  # the definition site — never calls itself
+        if _calls_scoped(py, _SKILL_STORE_MUTATOR_METHODS, "store"):
+            actual.add(rel)
+
+    unexpected = actual - _ALLOWED_SKILL_STORE_CALLERS
+    assert not unexpected, (
+        "SkillIndexStore.delete/.set_enabled/.set_pinned called from a "
+        f"caller not on the allowlist: {sorted(unexpected)}"
+    )
+    for migrated in ("tools/knowledge/skill_manage.py", "commands/skill_command.py"):
+        assert migrated not in actual, (
+            f"{migrated} still calls SkillIndexStore.delete/.set_enabled/"
+            ".set_pinned directly — its migration (Story 4.9) has regressed"
+        )
+    stale = _ALLOWED_SKILL_STORE_CALLERS - actual
+    assert not stale, (
+        f"the allowlist names caller(s) that no longer call delete/"
+        f"set_enabled/set_pinned: {sorted(stale)} — a subset check would not "
+        "catch this drift"
+    )
+
+
+def test_calls_scoped_and_calls_bare_actually_catch_a_violation() -> None:
+    """Self-check (red/green proof): the two Story 4.9 detectors are
+    actually flagged by a reintroduced direct call, not merely absent from
+    the real tree by accident — and a same-named call on an UNRELATED
+    receiver is correctly ignored by ``_calls_scoped``."""
+    scoped_source = (
+        "def f(registry, text):\n"
+        "    registry.replace(x)\n"
+        "    text.replace('a', 'b')\n"
+    )
+    tree = ast.parse(scoped_source)
+    hits = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+    ]
+    assert len(hits) == 2  # both calls exist in the source ...
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as fh:
+        fh.write(scoped_source)
+        scoped_path = Path(fh.name)
+    try:
+        assert _calls_scoped(scoped_path, ("replace",), "registry") is True
+        assert _calls_scoped(scoped_path, ("replace",), "nonexistent_receiver") is False
+    finally:
+        scoped_path.unlink(missing_ok=True)
+
+    bare_source = "def f():\n    persist_owl(manifest)\n"
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as fh:
+        fh.write(bare_source)
+        bare_path = Path(fh.name)
+    try:
+        assert _calls_bare(bare_path, ("persist_owl",)) is True
+        assert _calls_bare(bare_path, ("__never_matches__",)) is False
+    finally:
+        bare_path.unlink(missing_ok=True)

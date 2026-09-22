@@ -97,7 +97,17 @@ async def _run_grant(reg: OwlRegistry, db: DbPool, tool: str, *, tier=TrustTier.
 async def test_the_live_case_web_search_in_ceiling_missing_from_bounds(
     tmp_db: DbPool,
 ) -> None:
-    """THE DEFECT. Reported success, wrote nothing, owl still refused every run."""
+    """THE DEFECT (unchanged) — the grant is not short-circuited by the CEILING
+    check alone; the fix under test here still applies.
+
+    Story 4.9 — ``owls.build.grant`` now always submits through the command
+    door at ``severity="consequential"``, which ALWAYS parks for owner
+    step-up (AC2), even for a within-ceiling widening that needs no
+    ``authority_widening`` tool-level consent. So the grant no longer lands
+    SYNCHRONOUSLY inside this one call — it is reported as pending, and the
+    bounds are asserted UNCHANGED until that approval happens (Story 4.5's
+    own machinery, out of this test's scope).
+    """
     reg = OwlRegistry.with_default_secretary()
     reg.register(
         _owl_with(bounds={"memory", "tool_search"},
@@ -112,10 +122,15 @@ async def test_the_live_case_web_search_in_ceiling_missing_from_bounds(
         "the grant short-circuited on the CEILING: web_search is in the ceiling but "
         f"NOT in bounds, so there was real work to do. Output: {result.output!r}"
     )
+    assert "pending" in result.output.lower(), (
+        f"a consequential grant must park for step-up (AC2), not claim success "
+        f"in this same call: {result.output!r}"
+    )
     held = set(reg.get("sysdesign").bounds.tools)
-    assert "web_search" in held, f"bounds were never widened: {sorted(held)}"
-    assert {"memory", "tool_search"} <= held, "the grant dropped what it already had"
-    assert landed, "reported success but the owl never reached the store"
+    assert "web_search" not in held, (
+        "the grant widened bounds BEFORE owner step-up — AC2 requires it never "
+        "run at once"
+    )
 
 
 async def test_a_within_ceiling_grant_does_NOT_require_the_operator(
@@ -138,8 +153,11 @@ async def test_a_within_ceiling_grant_does_NOT_require_the_operator(
     result, landed = await _run_grant(reg, tmp_db, "web_search", tier=TrustTier.NEVER)
 
     assert result.success, f"a within-ceiling grant was blocked by consent: {result.error}"
-    assert "web_search" in set(reg.get("sysdesign").bounds.tools)
-    assert landed
+    # Story 4.9 — parks for owner step-up (AC2) rather than landing inline;
+    # the property under test (no `authority_widening` consent was needed)
+    # still holds since `result.success` is True despite `tier=NEVER`.
+    assert "pending" in result.output.lower()
+    assert "web_search" not in set(reg.get("sysdesign").bounds.tools)
 
 
 async def test_a_grant_CROSSING_the_ceiling_STILL_ASKS_the_operator(
@@ -198,8 +216,10 @@ async def test_a_WITHIN_ceiling_grant_does_not_ask_at_all(
 
     assert asked == [], f"a within-ceiling grant asked the operator: {asked}"
     assert result.success, result.error
-    assert "web_search" in set(reg.get("sysdesign").bounds.tools)
-    assert landed
+    # Story 4.9 — parks for owner step-up (AC2); the tool-level
+    # `authority_widening` consent still never fired (asked == []).
+    assert "pending" in result.output.lower()
+    assert "web_search" not in set(reg.get("sysdesign").bounds.tools)
 
 
 async def test_a_genuinely_held_tool_is_still_a_no_op(tmp_db: DbPool) -> None:

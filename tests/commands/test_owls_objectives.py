@@ -62,6 +62,12 @@ async def test_objective_shows_subgoals_and_log(migrated_db: DbPool) -> None:
 
 
 async def test_objective_cancel_requires_confirmation(migrated_db: DbPool) -> None:
+    """Story 4.9 — after the YES confirmation, ``owl.cancel_objective`` is
+    ``severity="consequential"``, which ALWAYS parks for owner step-up
+    (per ``authz.action_policy.decide``'s own unconditional rule) rather
+    than abandoning the objective inline. See
+    ``tests/commands/test_owl_dna_and_objective_commands.py`` for the
+    handler-level coverage of the real state transition."""
     store = ObjectiveStore(migrated_db, DEFAULT_PRINCIPAL_ID)
     await _seed(store, "obj-3", "cancellable", subgoals=["x"])
     cmd = OwlsCommand(db=migrated_db)
@@ -72,7 +78,8 @@ async def test_objective_cancel_requires_confirmation(migrated_db: DbPool) -> No
 
     done = await cmd.handle("objective-cancel obj-3 YES", make_state())
     assert "obj-3" in done
-    assert (await store.get("obj-3")).status == "abandoned"
+    assert "pending" in done.lower()
+    assert (await store.get("obj-3")).status == "active"  # still parked, not yet abandoned
 
 
 async def test_objectives_no_db_is_friendly_note() -> None:
@@ -110,13 +117,13 @@ async def test_objective_merge_full_completion(tmp_path: Path, migrated_db: DbPo
 
     cmd = OwlsCommand(db=migrated_db)
     result = await cmd.handle("objective-merge obj-m1 YES", make_state())
-    assert "merged" in result.lower()
+    # Story 4.9 — owl.merge_objective is severity="consequential", which
+    # ALWAYS parks for owner step-up rather than merging inline. See
+    # tests/commands/test_owl_dna_and_objective_commands.py for the
+    # handler-level coverage of the real merge.
+    assert "pending" in result.lower()
     reloaded = await store.get("obj-m1")
-    assert reloaded.status == "done"
-    current = subprocess.run(
-        ["git", "branch", "--show-current"], cwd=repo, check=True, capture_output=True, text=True,
-    ).stdout.strip()
-    assert current == "main"
+    assert reloaded.status == "blocked"  # still parked, not yet merged
 
 
 async def test_objective_merge_refuses_when_not_ready(migrated_db: DbPool) -> None:

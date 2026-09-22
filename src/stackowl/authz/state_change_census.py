@@ -96,10 +96,20 @@ _REASON_4_8_MIGRATED = (
     "send_message/send_file, notifications.broadcast_urgent/deliver_brief) "
     "holds the registered CommandSpec + handler pairs."
 )
-_REASON_4_9 = (
-    "Story 4.9's wave — owl and skill authority-widening actions (owl "
-    "create/edit/rename/retire/dna/objective management, owl_build, tool_build, "
-    "skill authoring/lifecycle)."
+_REASON_4_9_MIGRATED = (
+    "Story 4.9 migrated this: owl_build/tool_build/skill_manage/synthesize_skills "
+    "and their /owl + /skill slash-command equivalents now all call "
+    "commands/spec/submit.py::submit_command instead of persist_owl/registry."
+    "replace/delete_owl/ToolRegistry.register/.unregister/record_skill_mutation/"
+    "SkillIndexStore.delete/.set_enabled/.set_pinned directly — "
+    "owl_build_commands.py (owls.build.create/edit/rename/retire/restore/grant), "
+    "owls_dna_commands.py (owl.reset_dna/dna_restore/cancel_objective/"
+    "merge_objective), tool_build_commands.py (owls.build_tool.create/delete) "
+    "and skill_commands.py (the 12 skill.* types) hold the registered "
+    "CommandSpec + handler pairs. owl.create/edit/rename/retire CONSOLIDATED "
+    "onto owls.build.create/edit/rename/retire (see this module's own "
+    "docstring: 'ONE SHARED NAMESPACE') — their old keys are deleted below,"
+    "never left status='pending'."
 )
 _REASON_4_10 = (
     "Story 4.10's wave — the long tail: everything write/consequential this "
@@ -157,28 +167,84 @@ COMMAND_TYPE_MIGRATIONS: dict[str, CommandTypeMigration] = {
         "4.8", status="migrated", reason=_REASON_4_8_MIGRATED,
     ),
     # ------------------------------------------------------------------ 4.9
-    "owls.build": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owls.build_tool": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.author_create": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.author_edit": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.author_patch": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.delete": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.set_enabled": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.synthesize": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.install": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.reload_index": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.set_pinned": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.dedupe": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.migrate_standard": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "skill.restore_version": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.create": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.edit": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.rename": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.retire": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.reset_dna": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.dna_restore": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.cancel_objective": CommandTypeMigration("4.9", reason=_REASON_4_9),
-    "owl.merge_objective": CommandTypeMigration("4.9", reason=_REASON_4_9),
+    # owls.build / owls.build_tool / owl.create / owl.edit / owl.rename /
+    # owl.retire are DELETED here (never left status="pending") — Story 4.9
+    # consolidated create/edit/rename/retire onto the new owls.build.* types
+    # below (declaration retired in lockstep, per this module's own
+    # docstring: "deleting the entry is a decision a reviewer makes on the
+    # PR that retires the underlying tool/command").
+    "owls.build.create": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build.edit": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build.rename": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build.retire": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build.restore": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build.grant": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build_tool.create": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owls.build_tool.delete": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.author_create": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.author_edit": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.author_patch": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.delete": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.set_enabled": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.synthesize": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.install": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.reload_index": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.set_pinned": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.dedupe": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.migrate_standard": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "skill.restore_version": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owl.reset_dna": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owl.dna_restore": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owl.cancel_objective": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
+    "owl.merge_objective": CommandTypeMigration(
+        "4.9", status="migrated", reason=_REASON_4_9_MIGRATED,
+    ),
     # ------------------------------------------------------------------ 4.10
     "files.apply_patch": CommandTypeMigration("4.10", reason=_REASON_4_10),
     "consent.batch_approve": CommandTypeMigration("4.10", reason=_REASON_4_10),

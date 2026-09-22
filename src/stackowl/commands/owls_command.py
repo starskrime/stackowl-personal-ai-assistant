@@ -557,20 +557,14 @@ class OwlsCommand(SlashCommand):
             )
         if self._db is None:
             return "DNA store unavailable."
-        from stackowl.owls.directive_latch import DIRECTIVE_LATCH
-        from stackowl.owls.dna_authored import read_authored_dna
-        from stackowl.owls.dna_hydrator import apply_dna_overlay
-        from stackowl.owls.dna_storage import upsert_owl_dna
-        authored = await read_authored_dna(self._db, name)
-        if authored is None:
-            log.gateway.debug(
-                "[commands] owls.reset_dna: no authored baseline",
-                extra={"_fields": {"name": name}},
-            )
-            return f"No authored baseline recorded for '{name}' — nothing to reset to."
-        await upsert_owl_dna(self._db, name, authored, table="owl_dna")
-        apply_dna_overlay(self._registry, name, authored)
-        DIRECTIVE_LATCH.reset_owl(name)
+        from stackowl.commands.owls_dna_commands import RESET_DNA, OwlNamePayload
+        from stackowl.commands.spec.submit import submit_command
+
+        submission = await submit_command(self._db, RESET_DNA, OwlNamePayload(name=name))
+        if submission.outcome is None:
+            return f"⚠ DNA reset for '{name}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /owls reset-dna: {submission.outcome.error or 'reset failed'}"
         log.gateway.info(
             "[commands] owls.reset_dna: exit — DNA reset to authored baseline",
             extra={"_fields": {"name": name}},
@@ -603,17 +597,16 @@ class OwlsCommand(SlashCommand):
             )
         if self._db is None:
             return "DNA store unavailable."
-        from stackowl.owls.directive_latch import DIRECTIVE_LATCH
-        from stackowl.owls.dna import OwlDNA
-        from stackowl.owls.dna_hydrator import apply_dna_overlay
-        from stackowl.owls.dna_storage import upsert_owl_dna
-        from stackowl.owls.learning_artifact_store import LearningArtifactStore
-        store = LearningArtifactStore(self._db)
-        payload = await store.restore("dna", name, checkpoint_id)  # ManifestValidationError propagates
-        restored_dna = OwlDNA.model_validate(payload)
-        await upsert_owl_dna(self._db, name, restored_dna, table="owl_dna")
-        apply_dna_overlay(self._registry, name, restored_dna)
-        DIRECTIVE_LATCH.reset_owl(name)
+        from stackowl.commands.owls_dna_commands import DNA_RESTORE, DnaRestorePayload
+        from stackowl.commands.spec.submit import submit_command
+
+        submission = await submit_command(
+            self._db, DNA_RESTORE, DnaRestorePayload(name=name, checkpoint_id=checkpoint_id),
+        )
+        if submission.outcome is None:
+            return f"⚠ DNA restore for '{name}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /owls dna-restore: {submission.outcome.error or 'restore failed'}"
         log.gateway.info(
             "[commands] owls.dna_restore: exit — DNA restored to checkpoint",
             extra={"_fields": {"name": name, "checkpoint_id": checkpoint_id}},
@@ -719,7 +712,7 @@ class OwlsCommand(SlashCommand):
         objective_id = tokens[0]
         store = ObjectiveStore(self._db, DEFAULT_PRINCIPAL_ID)
         try:
-            objective = await store.get(objective_id)
+            await store.get(objective_id)  # existence check only — the handler re-reads it
         except ObjectiveNotFoundError:
             return f"✗ no such objective: {objective_id!r}"
         confirmed = len(tokens) > 1 and tokens[1] == "YES"
@@ -728,15 +721,16 @@ class OwlsCommand(SlashCommand):
                 f"⚠ This will abandon objective '{objective_id}'.\n"
                 f"   Type: /owls objective-cancel {objective_id} YES to confirm."
             )
-        if objective.repo:
-            from stackowl.tools.system.git_tool import GitTool
+        from stackowl.commands.owls_dna_commands import CANCEL_OBJECTIVE, ObjectivePayload
+        from stackowl.commands.spec.submit import submit_command
 
-            git = GitTool()
-            for sg in await store.list_subgoals(objective_id):
-                if sg.worktree_path:
-                    await git(operation="worktree_remove", repo=objective.repo, path=sg.worktree_path, force=True)
-        await store.update_status(objective_id, "abandoned")
-        await store.append_event(objective_id, "abandoned", "cancelled by owner")
+        submission = await submit_command(
+            self._db, CANCEL_OBJECTIVE, ObjectivePayload(objective_id=objective_id),
+        )
+        if submission.outcome is None:
+            return f"⚠ Cancelling objective '{objective_id}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /owls objective-cancel: {submission.outcome.error or 'cancel failed'}"
         log.gateway.info(
             "[commands] owls.objective_cancel: abandoned",
             extra={"_fields": {"objective_id": objective_id}},
@@ -776,38 +770,25 @@ class OwlsCommand(SlashCommand):
                 f"   Type: /owls objective-merge {objective_id} YES to confirm."
             )
 
-        from stackowl.tools.system.git_tool import GitTool
-        from stackowl.tools.system.shell import run_argv
+        from stackowl.commands.owls_dna_commands import MERGE_OBJECTIVE, ObjectivePayload
+        from stackowl.commands.spec.submit import submit_command
 
-        checkout = await run_argv(
-            ["git", "checkout", objective.base_branch or ""],
-            tool_name="git", workdir=objective.repo, intent="write",
+        submission = await submit_command(
+            self._db, MERGE_OBJECTIVE, ObjectivePayload(objective_id=objective_id),
         )
-        if not checkout.success:
-            return f"✗ could not check out '{objective.base_branch}': {checkout.error}"
-        merge = await run_argv(
-            ["git", "merge", "--no-ff", objective.integration_branch],
-            tool_name="git", workdir=objective.repo, intent="write",
-        )
-        if not merge.success:
-            return f"✗ final merge failed (left blocked for manual resolution): {merge.error}"
-
-        git = GitTool()
-        done_ids = {sg.subgoal_id for sg in done}
-        for sg in subgoals:
-            if sg.subgoal_id not in done_ids and sg.worktree_path:
-                await git(operation="worktree_remove", repo=objective.repo, path=sg.worktree_path, force=True)
-
-        await store.update_status(objective_id, "done")
-        await store.append_event(
-            objective_id, "epic_merged",
-            f"{len(done)}/{len(subgoals)} stories merged into {objective.base_branch}",
-        )
+        if submission.outcome is None:
+            return f"⚠ Merging objective '{objective_id}' is pending your approval."
+        if not submission.outcome.success:
+            return f"✗ /owls objective-merge: {submission.outcome.error or 'merge failed'}"
+        result = submission.outcome.result
+        merged = result.get("merged", len(done))
+        total = result.get("total", len(subgoals))
+        base_branch = result.get("base_branch", objective.base_branch)
         log.gateway.info(
             "[commands] owls.objective_merge: merged",
-            extra={"_fields": {"objective_id": objective_id, "done": len(done), "total": len(subgoals)}},
+            extra={"_fields": {"objective_id": objective_id, "done": merged, "total": total}},
         )
-        return f"✓ merged {len(done)}/{len(subgoals)} stories into '{objective.base_branch}'."
+        return f"✓ merged {merged}/{total} stories into '{base_branch}'."
 
     # ----------------------------------------------------------- yaml helpers
     def _upsert_to_yaml(self, entry: dict[str, Any]) -> None:

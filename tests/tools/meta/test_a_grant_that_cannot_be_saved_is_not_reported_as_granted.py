@@ -86,28 +86,15 @@ async def test_a_successful_persist_still_returns_True(tmp_db) -> None:  # noqa:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_a_grant_to_an_EXISTING_owl_actually_lands(tmp_db) -> None:  # noqa: ANN001
-    """NO GRANT HAS EVER SURVIVED, and it was one word.
-
-    `_grant` called `registry.register(updated)`. `register` guards against
-    DUPLICATES — and a grant is by definition applied to an owl that ALREADY
-    EXISTS, so it raised ManifestValidationError("duplicate owl name") on every
-    single attempt. The surrounding `except` then rolled the durable write back,
-    so the owl kept its old bounds and the operator's approval evaporated.
-
-    Measured live on 2026-08-22, after `persist_owl` was made to raise and the
-    failure stopped being silent: three consecutive grant attempts on `mailbutler`
-    at 01:26:50, 01:34:31 and 01:45:01, every one rolled back on that exception.
-    That is Bakir's "agents forget granted accesses ... never saved permanently".
-
-    Every sibling mutation already had it right — `_edit` and both rebuild paths
-    call `replace`, which documents itself as "the dual of register's duplicate
-    guard". This one call site reached for the wrong verb.
-
-    The test asserts the EFFECT: the tool is in the owl's bounds after the grant,
-    and the change reached the store. Asserting only `result.success` would have
-    passed against the broken version's rollback-then-report path.
-    """
+async def test_the_tool_reports_the_grant_as_PENDING_never_landed_inline(
+    tmp_db,  # noqa: ANN001
+) -> None:
+    """Story 4.9 — ``owls.build.grant`` is ``severity="consequential"``, which
+    ALWAYS parks for owner step-up (AC2), even for a request the tool-level
+    ``authority_widening`` consent already auto-approved. So the tool-level
+    call itself must report the grant as PENDING and must NOT widen the
+    owl's bounds inline — the real land-it-or-roll-it-back fix (below) now
+    lives in the command handler, exercised once it actually runs."""
     from stackowl.authz import BoundsSpec
     from stackowl.infra.trace import TraceContext
     from stackowl.owls.registry import OwlRegistry
@@ -144,15 +131,83 @@ async def test_a_grant_to_an_EXISTING_owl_actually_lands(tmp_db) -> None:  # noq
         result = await OwlBuildTool().execute(
             action="grant", name="mailbutler", explicit_tools=["read_file"],
         )
-        # Read the store INSIDE the services scope — `owl_is_persisted` resolves
-        # its db from the ambient services, so asserting after `reset_services`
-        # reads no database and reports False for a row that is really there.
-        landed = await owl_is_persisted("mailbutler")
     finally:
         TraceContext.reset(trace)
         reset_services(token)
 
     assert result.success, result.error
+    assert "pending" in result.output.lower()
+    held = set(reg.get("mailbutler").bounds.tools)
+    assert "read_file" not in held, "the grant widened bounds before owner step-up"
+
+
+@pytest.mark.asyncio
+async def test_the_grant_handler_replaces_not_registers_an_EXISTING_owl(
+    tmp_db,  # noqa: ANN001
+) -> None:
+    """NO GRANT HAS EVER SURVIVED, and it was one word.
+
+    `_grant` used to call `registry.register(updated)`. `register` guards
+    against DUPLICATES — and a grant is by definition applied to an owl that
+    ALREADY EXISTS, so it raised ManifestValidationError("duplicate owl
+    name") on every single attempt. The surrounding `except` then rolled the
+    durable write back, so the owl kept its old bounds and the operator's
+    approval evaporated.
+
+    Measured live on 2026-08-22, after `persist_owl` was made to raise and the
+    failure stopped being silent: three consecutive grant attempts on `mailbutler`
+    at 01:26:50, 01:34:31 and 01:45:01, every one rolled back on that exception.
+    That is Bakir's "agents forget granted accesses ... never saved permanently".
+
+    Story 4.9 moved the actual persist+register into
+    `owl_build_commands.py::_grant_handler` — this test exercises THAT
+    handler directly (the layer the fix now lives in, since the tool itself
+    always parks before reaching it — see the sibling test above).
+    """
+    from stackowl.authz import BoundsSpec
+    from stackowl.commands.spec.context import CommandContext
+    from stackowl.owls.registry import OwlRegistry
+    from stackowl.pipeline.streaming import StreamRegistry
+    from stackowl.tools.meta.owl_build_commands import OwlManifestPayload, _grant_handler
+    from stackowl.tools.registry import ToolRegistry
+
+    narrow = BoundsSpec(tools=frozenset({"web_search"}))
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(
+        OwlAgentManifest(
+            name="mailbutler", role="assistant", system_prompt="s",
+            model_tier="fast", bounds=narrow, creation_ceiling=narrow,
+            tools=["web_search"],
+        ),
+        source_name="t",
+    )
+    widened = OwlAgentManifest(
+        name="mailbutler", role="assistant", system_prompt="s",
+        model_tier="fast",
+        bounds=BoundsSpec(tools=frozenset({"web_search", "read_file"})),
+        creation_ceiling=BoundsSpec(tools=frozenset({"web_search", "read_file"})),
+        tools=["read_file", "web_search"],
+    )
+
+    token = set_services(StepServices(
+        tool_registry=ToolRegistry.with_defaults(),
+        owl_registry=reg,
+        stream_registry=StreamRegistry(),
+        db_pool=tmp_db,
+    ))
+    try:
+        outcome = await _grant_handler(
+            OwlManifestPayload(manifest=widened, actor="secretary"),
+            CommandContext(
+                command_id="cmd-1", command_type="owls.build.grant",
+                requester_kind="owner",
+            ),
+        )
+        landed = await owl_is_persisted("mailbutler")
+    finally:
+        reset_services(token)
+
+    assert outcome.success, outcome.error
     held = set(reg.get("mailbutler").bounds.tools)
     assert "read_file" in held, f"the granted tool is not held: {sorted(held)}"
     assert "web_search" in held, "the grant must not drop what the owl already had"

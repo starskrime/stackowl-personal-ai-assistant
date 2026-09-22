@@ -1691,7 +1691,8 @@ class DurableTaskStore(OwnedRepository):
 
     async def has_later_completed_command(
         self, *, payload: str, after: datetime, exclude_task_id: str,
-        target_job_id: str | None = None,
+        target_job_id: str | None = None, target_key: str = "job_id",
+        command_type: str | None = None,
     ) -> bool:
         """True when a DIFFERENT completed COMMAND row shares the same target
         and completed strictly after *after* -- FR88's "a later command that
@@ -1709,27 +1710,54 @@ class DurableTaskStore(OwnedRepository):
         whose payload carries more than its target's identity (an edit
         command also carries the new schedule/goal, so two edits of the SAME
         job never share an identical ``command_payload``). When given, the
-        match is instead ``json_extract(command_payload, '$.job_id') = ?``
-        (confirmed working against this repo's SQLite build) -- "same job_id"
-        rather than "identical payload text". ``None`` (every 4.3/4.5/4.6
-        caller) keeps the exact-payload match, byte-identical to before.
+        match is instead ``json_extract(command_payload, '$.<target_key>') = ?``
+        (confirmed working against this repo's SQLite build; the path is
+        itself a bound parameter, never string-interpolated) -- "same
+        target field" rather than "identical payload text". ``target_key``
+        (Story 4.9) generalizes WHICH field names the target — ``"job_id"``
+        (the default, byte-identical to before) for every scheduling type,
+        ``"name"`` for an owl-targeted type (e.g. ``owls.build.rename``,
+        whose payload carries the owl name, not a job_id). ``target_job_id``
+        left ``None`` (every 4.3/4.5/4.6 caller) keeps the exact-payload
+        match, unchanged.
+
+        ``command_type`` (Story 4.9 review finding, 2026-09-22 pass) scopes
+        the ``target_job_id``-keyed match to rows of the SAME command type —
+        without it, an unrelated command sharing the same target field value
+        (e.g. a ``skill.set_pinned`` on a skill named "foo" landing after a
+        ``skill.author_edit`` on the SAME skill "foo") falsely supersedes an
+        otherwise-valid undo. ``None`` (the caller's choice, never defaulted
+        here) keeps the unscoped match for a caller that genuinely wants it.
         """
         # 1. ENTRY
         log.tasks.debug(
             "[commands] store.has_later_completed_command: entry",
             extra={"_fields": {
                 "exclude_task_id": exclude_task_id, "after": after.isoformat(),
-                "by_job_id": target_job_id is not None,
+                "by_job_id": target_job_id is not None, "target_key": target_key,
+                "command_type": command_type or "",
             }},
         )
         if target_job_id is not None:
-            rows = await self._fetch_owned(
-                self._table,
-                "kind='command' AND status='completed' "
-                "AND json_extract(command_payload, '$.job_id') = ? "
-                "AND task_id != ? AND delivered_at > ?",
-                (target_job_id, exclude_task_id, after.isoformat()),
-            )
+            if command_type is not None:
+                rows = await self._fetch_owned(
+                    self._table,
+                    "kind='command' AND status='completed' "
+                    "AND json_extract(command_payload, ?) = ? "
+                    "AND command_type = ? AND task_id != ? AND delivered_at > ?",
+                    (
+                        f"$.{target_key}", target_job_id, command_type,
+                        exclude_task_id, after.isoformat(),
+                    ),
+                )
+            else:
+                rows = await self._fetch_owned(
+                    self._table,
+                    "kind='command' AND status='completed' "
+                    "AND json_extract(command_payload, ?) = ? "
+                    "AND task_id != ? AND delivered_at > ?",
+                    (f"$.{target_key}", target_job_id, exclude_task_id, after.isoformat()),
+                )
         else:
             rows = await self._fetch_owned(
                 self._table,

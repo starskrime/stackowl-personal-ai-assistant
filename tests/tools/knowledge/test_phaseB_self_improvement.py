@@ -272,10 +272,14 @@ async def synth_services(
     yield services, skills_root
 
 
-async def test_synthesize_skills_runs_real_handler_and_authors_skill(
+async def test_synthesize_skills_tool_call_parks_for_owner_step_up(
     tmp_db: DbPool, synth_services,  # noqa: ANN001
 ) -> None:
-    services, skills_root = synth_services
+    """Story 4.9 — ``skill.synthesize`` is irreversible (it can create/refine/
+    deprecate an unknown number of skills in one run, with no natural
+    single-step undo), so the TOOL-level call always parks for owner
+    step-up rather than running the real handler inline."""
+    services, _skills_root = synth_services
     await _seed_success_cluster(tmp_db, sequence=("web_fetch", "shell"), n=3)
 
     token = set_services(services)
@@ -285,8 +289,38 @@ async def test_synthesize_skills_runs_real_handler_and_authors_skill(
         reset_services(token)
 
     assert res.success, res.error
+    assert "pending" in res.output.lower()
+
+
+async def test_synthesize_skills_runs_real_handler_and_authors_skill(
+    tmp_db: DbPool, synth_services,  # noqa: ANN001
+) -> None:
+    """Exercises the REAL handler directly (skill_commands.py::
+    _synthesize_handler) — the layer the actual synthesis run now lives in,
+    since the tool itself always parks before reaching it (see the sibling
+    test above)."""
+    from stackowl.commands.spec.context import CommandContext
+    from stackowl.tools.knowledge.skill_commands import (
+        SYNTHESIZE,
+        SkillSynthesizePayload,
+        _synthesize_handler,
+    )
+
+    services, skills_root = synth_services
+    await _seed_success_cluster(tmp_db, sequence=("web_fetch", "shell"), n=3)
+
+    token = set_services(services)
+    try:
+        outcome = await _synthesize_handler(
+            SkillSynthesizePayload(),
+            CommandContext(command_id="cmd-1", command_type=SYNTHESIZE, requester_kind="owner"),
+        )
+    finally:
+        reset_services(token)
+
+    assert outcome.success, outcome.error
     # The real handler's JobResult.output reports the discovery summary.
-    assert "created:1" in res.output
+    assert "created:1" in outcome.result.get("output", "")
     # A learned skill was genuinely authored on disk (the real handler ran).
     written = skills_root / "learned" / "scrape-and-process" / "SKILL.md"
     assert written.exists()
@@ -297,10 +331,21 @@ async def test_synthesize_skills_denied_consent_reports_created_zero(
     tmp_db: DbPool, synth_services,  # noqa: ANN001
 ) -> None:
     """Reviewer Finding 1b: invoked mid-turn (an interactive TraceContext — the
-    live path), a DENIED consent must make the on-demand tool report
-    created:0, never a stale/incorrect success. Also proves (Finding 1a,
-    end-to-end) the inner gate call used the LIVE identity/channel/session_key
-    — not the scheduled fallback — by recording the request kwargs."""
+    live path), a DENIED consent must make the handler report created:0,
+    never a stale/incorrect success. Also proves (Finding 1a, end-to-end)
+    the inner gate call used the LIVE identity/channel/session_key — not the
+    scheduled fallback — by recording the request kwargs.
+
+    Story 4.9 — exercises the handler directly (see the sibling
+    tool-level-parks test above for why the tool call itself never reaches
+    this code inline any more)."""
+    from stackowl.commands.spec.context import CommandContext
+    from stackowl.tools.knowledge.skill_commands import (
+        SYNTHESIZE,
+        SkillSynthesizePayload,
+        _synthesize_handler,
+    )
+
     services, skills_root = synth_services
     await _seed_success_cluster(tmp_db, sequence=("web_fetch", "shell"), n=3)
 
@@ -320,13 +365,16 @@ async def test_synthesize_skills_denied_consent_reports_created_zero(
     trace_token = TraceContext.start("live-session-2", interactive=True, channel="telegram")
     services_token = set_services(services)
     try:
-        res = await SynthesizeSkillsTool().execute()
+        outcome = await _synthesize_handler(
+            SkillSynthesizePayload(),
+            CommandContext(command_id="cmd-1", command_type=SYNTHESIZE, requester_kind="owner"),
+        )
     finally:
         reset_services(services_token)
         TraceContext.reset(trace_token)
 
-    assert res.success, res.error
-    assert "created:0" in res.output
+    assert outcome.success, outcome.error
+    assert "created:0" in outcome.result.get("output", "")
     assert not (skills_root / "learned" / "scrape-and-process").exists()
     # The gate WAS consulted, with the LIVE identity — proves the live branch
     # of resolve_consent_identity() actually fired end-to-end for this caller.

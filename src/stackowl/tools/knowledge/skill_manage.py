@@ -41,16 +41,24 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from stackowl.commands.skill_helpers import record_skill_mutation, reindex_after_change
-from stackowl.exceptions import ToolRegistrationError
+from stackowl.commands.spec.submit import submit_command
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
-from stackowl.skills.loader import SkillLoader
 from stackowl.skills.manifest import SkillManifest, SkillSource
 from stackowl.skills.nudge import note_skill_written
 from stackowl.skills.skill_md import parse_skill_md
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.knowledge.skill_commands import (
+    AUTHOR_CREATE,
+    AUTHOR_EDIT,
+    AUTHOR_PATCH,
+    DELETE,
+    SET_ENABLED,
+    SkillContentPayload,
+    SkillDeletePayload,
+    SkillSetEnabledPayload,
+)
 from stackowl.tools.knowledge.skill_validation import (
     security_scan_gate,
     validate_category,
@@ -261,25 +269,30 @@ class SkillManageTool(Tool):
         if blocked is not None:
             return self._err(blocked, t0)
 
-        async def _mutate() -> None:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            (target_dir / _SKILL_MD).write_text(self._normalized(content), encoding="utf-8")
-
-        await record_skill_mutation(
-            store,
-            skill_name=name,
-            source=_SELF_SOURCE,
-            op="create",
-            actor=_ACTOR,
-            target_dir=target_dir,
-            mutate=_mutate,
-            snapshot_when="after",
-            details={"category": category} if category else None,
+        db = get_services().db_pool
+        if db is None:
+            return self._unavailable("store", "no database configured", t0)
+        submission = await submit_command(
+            db, AUTHOR_CREATE,
+            SkillContentPayload(
+                name=name, content=content, source=_SELF_SOURCE,
+                target_dir=str(target_dir), op="create", actor=_ACTOR, category=category,
+                skills_root=str(StackowlHome.skills_dir()),
+            ),
         )
-        reindex_note = await self._reindex(store)
+        if submission.outcome is None:
+            return self._ok(
+                f"Skill '{name}' creation is pending approval.", t0,
+                extra={"skill": name, "op": "create", "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(
+                submission.outcome.error or f"failed to create skill '{name}'.", t0,
+            )
         # Stamp the on-disk SKILL.md as the artifact locator so verify() (TS2) can
         # re-read the world and confirm the skill truly persisted. Only create stamps
         # it → verify() is a no-op for edit/patch/delete/enable/disable.
+        reindex_note = str(submission.outcome.result.get("reindex_note") or "")
         return self._ok(
             f"Created skill '{name}'." + reindex_note, t0,
             extra={"skill": name, "op": "create"},
@@ -311,22 +324,25 @@ class SkillManageTool(Tool):
         if blocked is not None:
             return self._err(blocked, t0)
 
-        async def _mutate() -> None:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            (target_dir / _SKILL_MD).write_text(self._normalized(content), encoding="utf-8")
-
-        await record_skill_mutation(
-            store,
-            skill_name=name,
-            source=_SELF_SOURCE,
-            op="update",
-            actor=_ACTOR,
-            target_dir=target_dir,
-            mutate=_mutate,
-            snapshot_when="after",
-            skill_id=existing.skill_id,
+        db = get_services().db_pool
+        if db is None:
+            return self._unavailable("store", "no database configured", t0)
+        submission = await submit_command(
+            db, AUTHOR_EDIT,
+            SkillContentPayload(
+                name=name, content=content, source=_SELF_SOURCE,
+                target_dir=str(target_dir), op="update", actor=_ACTOR,
+                skill_id=existing.skill_id, skills_root=str(StackowlHome.skills_dir()),
+            ),
         )
-        reindex_note = await self._reindex(store)
+        if submission.outcome is None:
+            return self._ok(
+                f"Skill '{name}' edit is pending approval.", t0,
+                extra={"skill": name, "op": "edit", "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(submission.outcome.error or f"failed to edit skill '{name}'.", t0)
+        reindex_note = str(submission.outcome.result.get("reindex_note") or "")
         return self._ok(
             f"Edited skill '{name}'." + reindex_note, t0,
             extra={"skill": name, "op": "edit"},
@@ -378,22 +394,26 @@ class SkillManageTool(Tool):
         if blocked is not None:
             return self._err(blocked, t0)
 
-        async def _mutate() -> None:
-            skill_md.write_text(self._normalized(new_content), encoding="utf-8")
-
-        await record_skill_mutation(
-            store,
-            skill_name=name,
-            source=_SELF_SOURCE,
-            op="update",
-            actor=_ACTOR,
-            target_dir=target_dir,
-            mutate=_mutate,
-            snapshot_when="after",
-            skill_id=existing.skill_id,
-            details={"patch": True},
+        db = get_services().db_pool
+        if db is None:
+            return self._unavailable("store", "no database configured", t0)
+        submission = await submit_command(
+            db, AUTHOR_PATCH,
+            SkillContentPayload(
+                name=name, content=new_content, source=_SELF_SOURCE,
+                target_dir=str(target_dir), op="update", actor=_ACTOR,
+                skill_id=existing.skill_id, is_patch=True,
+                skills_root=str(StackowlHome.skills_dir()),
+            ),
         )
-        reindex_note = await self._reindex(store)
+        if submission.outcome is None:
+            return self._ok(
+                f"Skill '{name}' patch is pending approval.", t0,
+                extra={"skill": name, "op": "patch", "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(submission.outcome.error or f"failed to patch skill '{name}'.", t0)
+        reindex_note = str(submission.outcome.result.get("reindex_note") or "")
         return self._ok(
             f"Patched skill '{name}'." + reindex_note, t0,
             extra={"skill": name, "op": "patch"},
@@ -416,26 +436,24 @@ class SkillManageTool(Tool):
         target_dir = Path(existing.path)
         skill_id = existing.skill_id
 
-        # snapshot_when="before" so /skill restore can resurrect the deleted dir.
-        async def _mutate() -> None:
-            import shutil
-
-            shutil.rmtree(target_dir, ignore_errors=True)
-            await store.delete(skill_id)
-
-        await record_skill_mutation(
-            store,
-            skill_name=name,
-            source=_SELF_SOURCE,
-            op="delete",
-            actor=_ACTOR,
-            target_dir=target_dir,
-            mutate=_mutate,
-            snapshot_when="before",
-            skill_id=skill_id,
-            details={"path": str(target_dir)},
+        db = get_services().db_pool
+        if db is None:
+            return self._unavailable("store", "no database configured", t0)
+        submission = await submit_command(
+            db, DELETE,
+            SkillDeletePayload(
+                name=name, source=_SELF_SOURCE, target_dir=str(target_dir),
+                skill_id=skill_id, actor=_ACTOR, skills_root=str(StackowlHome.skills_dir()),
+            ),
         )
-        reindex_note = await self._reindex(store)
+        if submission.outcome is None:
+            return self._ok(
+                f"Skill '{name}' deletion is pending approval.", t0,
+                extra={"skill": name, "op": "delete", "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(submission.outcome.error or f"failed to delete skill '{name}'.", t0)
+        reindex_note = str(submission.outcome.result.get("reindex_note") or "")
         return self._ok(
             f"Deleted skill '{name}'." + reindex_note, t0,
             extra={"skill": name, "op": "delete"},
@@ -459,23 +477,23 @@ class SkillManageTool(Tool):
         target_dir = Path(existing.path)
         skill_id = existing.skill_id
 
-        # No content change — route the toggle through the provenance chokepoint
-        # (snapshot_when="none") so the audit trail covers enable/disable too.
-        async def _mutate() -> None:
-            await store.set_enabled(skill_id, enabled=enabled)
-
-        await record_skill_mutation(
-            store,
-            skill_name=name,
-            source=_SELF_SOURCE,
-            op=verb,
-            actor=_ACTOR,
-            target_dir=target_dir,
-            mutate=_mutate,
-            snapshot_when="none",
-            skill_id=skill_id,
+        db = get_services().db_pool
+        if db is None:
+            return self._unavailable("store", "no database configured", t0)
+        submission = await submit_command(
+            db, SET_ENABLED,
+            SkillSetEnabledPayload(
+                name=name, source=_SELF_SOURCE, target_dir=str(target_dir),
+                skill_id=skill_id, enabled=enabled, actor=_ACTOR,
+            ),
         )
-        # No reindex: enable/disable is a flag toggle, not a tree change.
+        if submission.outcome is None:
+            return self._ok(
+                f"'{verb}' for skill '{name}' is pending approval.", t0,
+                extra={"skill": name, "op": verb, "pending": True},
+            )
+        if not submission.outcome.success:
+            return self._err(submission.outcome.error or f"failed to {verb} skill '{name}'.", t0)
         return self._ok(
             f"{verb.capitalize()}d skill '{name}'.", t0,
             extra={"skill": name, "op": verb},
@@ -569,54 +587,11 @@ class SkillManageTool(Tool):
         root = StackowlHome.skills_dir() / _SELF_SOURCE
         return (root / category / name) if category else (root / name)
 
-    async def _reindex(self, store: SkillIndexStore) -> str:
-        """Reindex once per mutation so the change is searchable.
-
-        Coalescing across calls within one turn needs turn-level state (E5
-        follow-up) — NOT built here. On failure: retried once, then degrades to a
-        structured "reindex pending" note surfaced IN THE RESULT (party #5) so the
-        agent knows the skill saved but is not yet searchable.
-
-        Returns a string fragment to append to the success message (empty when
-        reindex succeeded).
-        """
-        services = get_services()
-        loader = SkillLoader(
-            tool_registry=services.tool_registry,
-            owl_registry=services.owl_registry,
-        )
-        skills_root = StackowlHome.skills_dir()
-        for attempt in (1, 2):
-            try:
-                await reindex_after_change(
-                    loader, store, skills_root,
-                    embedding_registry=services.embedding_registry,
-                )
-                return ""
-            except ToolRegistrationError as exc:
-                # PLUG-3/F047 — a tool-name collision is NOT a transient reindex
-                # failure: retrying will never resolve it and the misleading
-                # "reindex pending" note hid the real cause. Surface a distinct,
-                # actionable collision message and do not retry.
-                log.tool.warning(
-                    "skill_manage.execute: reindex blocked by tool-name collision",
-                    extra={"_fields": {"tool": exc.tool_name, "reason": exc.reason}},
-                )
-                return (
-                    f" NOTE: the skill was saved but its tool {exc.tool_name!r} "
-                    f"could not be registered — {exc.reason}. The skill is NOT yet "
-                    "active; rename the conflicting tool and re-author."
-                )
-            except Exception as exc:  # B5 — retry once, then degrade
-                log.tool.warning(
-                    "skill_manage.execute: reindex failed",
-                    exc_info=exc,
-                    extra={"_fields": {"attempt": attempt}},
-                )
-        return (
-            " NOTE: the skill was saved and audited but is not yet searchable "
-            "(reindex pending — retrieval will pick it up on next boot)."
-        )
+    # AD-1 — the reindex-with-retry-and-ToolRegistrationError-note logic that
+    # used to live here (self._reindex) now lives in skill_commands.py's
+    # shared `_reindex` helper, alongside the mutation itself; every one of
+    # this tool's write paths reads its note back off
+    # `submission.outcome.result["reindex_note"]` instead.
 
     async def verify(
         self, args: dict[str, object], result: ToolResult, *, started_at: float

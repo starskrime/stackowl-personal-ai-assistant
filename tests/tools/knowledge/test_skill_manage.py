@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+import stackowl.tools.knowledge.skill_commands as skc
 import stackowl.tools.knowledge.skill_manage as sm
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.skills.store import SkillIndexStore
@@ -72,7 +73,9 @@ def wired(
         reindex_calls.append(1)
         return []
 
-    monkeypatch.setattr(sm, "reindex_after_change", _fake_reindex)
+    # Story 4.9 — reindex now runs inside skill_commands.py's shared
+    # `_reindex` helper (the command handler), not in skill_manage.py itself.
+    monkeypatch.setattr(skc, "reindex_after_change", _fake_reindex)
 
     services = StepServices(skill_store=store, db_pool=tmp_db)
     token = set_services(services)
@@ -304,7 +307,7 @@ async def test_reindex_failure_surfaces_pending(
     async def _boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
         raise RuntimeError("embed pass exploded")
 
-    monkeypatch.setattr(sm, "reindex_after_change", _boom)
+    monkeypatch.setattr(skc, "reindex_after_change", _boom)
     token = set_services(StepServices(skill_store=store, db_pool=tmp_db))
     try:
         tool = SkillManageTool()
